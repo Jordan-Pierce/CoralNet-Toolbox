@@ -537,7 +537,7 @@ class Base(QDialog):
 
         self.setWindowIcon(get_window_icon("coralnet.svg"))
         self.setWindowTitle("Import Dataset")
-        self.resize(500, 350)
+        self.resize(500, 450)
 
         self.task = None
         self.progress_bar = None
@@ -548,6 +548,7 @@ class Base(QDialog):
 
         self.layout = QVBoxLayout(self)
         self.setup_info_layout()
+        self.setup_options_layout()
         self.setup_yaml_layout()
         self.setup_output_layout()
         self.setup_buttons_layout()
@@ -556,6 +557,15 @@ class Base(QDialog):
         self.advanced_options_frame.setVisible(False)
 
     def setup_info_layout(self):
+        """
+        Set up the layout and widgets for the info layout.
+        """
+        raise NotImplementedError("Subclasses must implement method.")
+
+    def setup_options_layout(self):
+        """
+        Set up the layout and widgets for the task's import options.
+        """
         raise NotImplementedError("Subclasses must implement method.")
 
     def setup_yaml_layout(self):

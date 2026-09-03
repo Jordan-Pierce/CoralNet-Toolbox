@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import (QGroupBox, QLabel, QFormLayout)
+from PyQt5.QtWidgets import (QGroupBox, QLabel, QFormLayout, QVBoxLayout)
 
 from coralnet_toolbox.MachineLearning.ImportDataset.QtBase import Base
 
@@ -18,6 +18,27 @@ class Semantic(Base):
         self.task = 'semantic'
 
     def setup_info_layout(self):
+        """Setup the info layout"""
+        group_box = QGroupBox("Information")
+        layout = QVBoxLayout()
+
+        # Create a QLabel with explanatory text and hyperlink
+        info_text = ("Import a YOLO-formatted Semantic Segmentation dataset. Single-channel masks are converted "
+                     "to one Mask annotation per image, where each pixel value is the class ID.\n"
+                     "Masks must share the base name of their image, and only lossless formats are read "
+                     "(PNG, TIF, TIFF). Pixel value 255 is the reserved ignore label.")
+        info_label = QLabel(info_text)
+
+        info_label.setOpenExternalLinks(True)
+        info_label.setWordWrap(True)
+        info_label.setToolTip("Every image in the dataset is copied into the project directory;\n"
+                              "the original files are left untouched.")
+        layout.addWidget(info_label)
+
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
+
+    def setup_options_layout(self):
         group_box = QGroupBox("Import Options")
         layout = QFormLayout(group_box)
 
@@ -31,4 +52,4 @@ class Semantic(Base):
                                "Each pixel value is the class ID it belongs to.")
         layout.addRow(import_as_label, description)
 
-        self.layout.insertWidget(0, group_box)
+        self.layout.addWidget(group_box)

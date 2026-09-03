@@ -5,6 +5,7 @@ from PyQt5.QtWidgets import (QMenu, QMenuBar, QToolBar, QWidget,
                              QStatusBar, QSizePolicy, QVBoxLayout)
 
 from coralnet_toolbox import theme as app_theme
+from coralnet_toolbox.Layout.QtDockTooltips import DOCK_TOOLTIPS
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -16,13 +17,21 @@ class DockWrapper(ads.CDockWidget):
     Safely encapsulates a widget inside an ADS dock without crashing the C++ layout engine.
     Uses a standard QVBoxLayout to safely stack menus, toolbars, and the payload.
     """
-    def __init__(self, title: str, object_name: str, main_widget: QWidget, parent=None, icon=None):
+    def __init__(self, title: str, object_name: str, main_widget: QWidget, parent=None, icon=None,
+                 tooltip=None):
         # Do NOT pass parent here. ADS must take exclusive memory ownership.
         super().__init__(title)
-        
+
         self.setObjectName(object_name)
         self.setWindowTitle(title)
-        
+
+        # Hover help on the tab itself. Falls back to the shared table keyed by
+        # object name, so the standard docks need no per-call-site text.
+        if tooltip is None:
+            tooltip = DOCK_TOOLTIPS.get(object_name)
+        if tooltip:
+            self.set_tab_tooltip(tooltip)
+
         # Store parent reference for potential icon updates
         self._parent = parent
         
@@ -63,7 +72,25 @@ class DockWrapper(ads.CDockWidget):
         self.inner_widget.setStyleSheet(app_theme.build_panel_stylesheet())
 
     # --- UI COMPONENT MOUNTING ---
-    
+
+    def set_tab_tooltip(self, text: str):
+        """
+        Attach hover help to the dock's tab -- the title label users click.
+
+        Deliberately not setToolTip(): that one covers the whole dock, so it
+        would fire over the payload widget and shadow the tooltips the inner
+        controls set for themselves.
+        """
+        # setTabToolTip is the supported path; older PyQtAds builds only expose
+        # the tab widget, which takes an ordinary QWidget tooltip.
+        if hasattr(self, 'setTabToolTip'):
+            self.setTabToolTip(text)
+            return
+
+        tab = self.tabWidget()
+        if tab is not None:
+            tab.setToolTip(text)
+
     def add_menu(self, menu: QMenu):
         if not hasattr(self, '_local_menubar'):
             self._local_menubar = QMenuBar()

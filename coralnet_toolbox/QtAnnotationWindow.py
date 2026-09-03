@@ -278,12 +278,15 @@ class AnnotationWindow(BaseCanvas):
         self.mouse_position_label = QLabel("Mouse: X: 0, Y: 0")
         self.mouse_position_label.setMinimumWidth(app_theme.scale_int(150))
         self.mouse_position_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self.mouse_position_label.setToolTip("Cursor position within the image, in pixels.\nMeasured from the top-left corner of the image.")
         self.image_dimensions_label = QLabel("Image: 0 x 0")
         self.image_dimensions_label.setMinimumWidth(app_theme.scale_int(150))
         self.image_dimensions_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self.image_dimensions_label.setToolTip("Dimensions of the loaded image, in pixels.\nShown as height x width.")
         self.view_dimensions_label = QLabel("View: 0 x 0")
         self.view_dimensions_label.setMinimumWidth(app_theme.scale_int(150))
         self.view_dimensions_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self.view_dimensions_label.setToolTip("Dimensions of the visible area, in pixels.\nShown as height x width, clipped to the image bounds, so it shrinks as you zoom in.")
 
         # --- Scale ---
         self.scaled_dimensions_label = QLabel("Scale: 0 x 0")
