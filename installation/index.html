@@ -529,10 +529,27 @@
   <a href="#macos-users" class="md-nav__link">
     <span class="md-ellipsis">
       
-        ⚠️ MacOS Users
+        ⚠️ macOS Users
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="⚠️ macOS Users">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#docker-on-macos" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Docker on macOS
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -880,10 +897,27 @@
   <a href="#macos-users" class="md-nav__link">
     <span class="md-ellipsis">
       
-        ⚠️ MacOS Users
+        ⚠️ macOS Users
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="⚠️ macOS Users">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#docker-on-macos" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Docker on macOS
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1001,15 +1035,15 @@ pip<span class="w"> </span>install<span class="w"> </span>coralnet-toolbox
 <h3 id="upgrade">🔄 Upgrade<a class="headerlink" href="#upgrade" title="Permanent link">&para;</a></h3>
 <p>When opening the <code>toolbox</code>, you will be notified if there is an update available. To upgrade to a specific version, run:</p>
 <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
-<span class="normal">2</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># Upgrade to latest version</span>
-uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-U<span class="w"> </span>coralnet-toolbox
+<span class="normal">2</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># Upgrade to latest version (coralnet-toolbox only)</span>
+uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>--upgrade<span class="w"> </span>coralnet-toolbox
 </code></pre></div></td></tr></table></div>
 <p>Or upgrade to a specific version:
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span></pre></div></td><td class="code"><div><pre><span></span><code>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-U<span class="w"> </span>coralnet-toolbox<span class="o">==[</span>version_number<span class="o">]</span>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span></pre></div></td><td class="code"><div><pre><span></span><code>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>coralnet-toolbox<span class="o">==[</span>version_number<span class="o">]</span>
 </code></pre></div></td></tr></table></div></p>
 <blockquote>
-<p><strong>Fallback</strong>: If <code>uv</code> fails, use <code>pip</code> instead: <code>pip install -U coralnet-toolbox</code></p>
-<p><strong>Note</strong>: If you have <code>torch</code> installed with <code>CUDA</code>, adding <code>-U</code> may trigger a regression to the CPU version. If this occurs, uninstall <code>torch</code> and <code>torchvision</code>, and reinstall the CUDA versions.</p>
+<p><strong>Fallback</strong>: If <code>uv</code> fails, use <code>pip</code> instead: <code>pip install --upgrade coralnet-toolbox</code></p>
+<p><strong>Note</strong>: Using <code>-U</code> or <code>--upgrade-all</code> upgrades <strong>all packages</strong>, which may trigger a regression to the CPU version of <code>torch</code>. To avoid this, use the commands above to upgrade only coralnet-toolbox. If you do experience a regression, uninstall <code>torch</code> and <code>torchvision</code>, and reinstall the CUDA versions.</p>
 </blockquote>
 <h2 id="install-from-source-github-repository">🐍 Install from Source (GitHub Repository)<a class="headerlink" href="#install-from-source-github-repository" title="Permanent link">&para;</a></h2>
 <p>If you prefer to clone the repository and run the <code>toolbox</code> from the source code:</p>
@@ -1127,8 +1161,7 @@ y
 <h2 id="alternative-one-command-install-with-pixi">🧊 Alternative: One-Command Install with <code>pixi</code><a class="headerlink" href="#alternative-one-command-install-with-pixi" title="Permanent link">&para;</a></h2>
 <blockquote>
 <p>The <code>conda</code> + <code>uv</code> steps above are the supported default and what most users should follow.
-<code>pixi</code> and Docker (below) are alternatives for those already comfortable
-with those tools.</p>
+<code>pixi</code> is an alternative for those already comfortable with that tool.</p>
 </blockquote>
 <p><a href="https://pixi.sh"><code>pixi</code></a> builds the whole environment -- Python, <code>Qt</code>, <code>GDAL</code>, and a <code>CUDA</code> build of
 <code>PyTorch</code> -- from a committed lock file, so every machine resolves to identical dependencies. No
@@ -1154,17 +1187,14 @@ pixi<span class="w"> </span>run<span class="w"> </span>start
 <p>GPU support is automatic: <code>pixi</code> selects a <code>CUDA</code> build of <code>PyTorch</code> when your driver supports it,
 including Blackwell (RTX 50-series).</p>
 <blockquote>
-<p><strong>Platforms</strong>: Windows and Linux only. macOS is not yet supported on this path because
-<code>conda-forge</code> has no <code>qt5-advanced-docking-system</code> build for Apple Silicon.</p>
+<p><strong>Platforms</strong>: Windows and Linux only. macOS is not supported because <code>conda-forge</code> has no <code>qt5-advanced-docking-system</code> build for Apple Silicon. <strong>macOS users should use Docker</strong> (see below).</p>
 </blockquote>
-<h2 id="macos-users">⚠️ MacOS Users<a class="headerlink" href="#macos-users" title="Permanent link">&para;</a></h2>
+<h2 id="macos-users">⚠️ macOS Users<a class="headerlink" href="#macos-users" title="Permanent link">&para;</a></h2>
 <blockquote>
 <p><strong>Version 1.0.0 and later</strong> rely heavily on <code>PyQtADS</code>, which cannot be installed on macOS. <strong>Do not upgrade from version 0.0.105</strong> until this is resolved.</p>
 </blockquote>
-<p>An optional workaround is to run the <code>toolbox</code> through Docker (see below). This
-sidesteps the problem entirely: <code>PyQtADS</code> and <code>Qt</code> run inside the Linux
-container and only the rendered interface reaches your browser, so nothing Qt
-related is installed on macOS at all.</p>
+<p>The recommended workaround is to run the <code>toolbox</code> through Docker (see below). This sidesteps the problem entirely: <code>PyQtADS</code> and <code>Qt</code> run inside the Linux container and only the rendered interface reaches your browser, so nothing Qt related is installed on macOS at all.</p>
+<h3 id="docker-on-macos">Docker on macOS<a class="headerlink" href="#docker-on-macos" title="Permanent link">&para;</a></h3>
 <p>Two macOS caveats:</p>
 <ul>
 <li><strong>Build for <code>amd64</code>.</strong> There is no <code>arm64</code> build of <code>PyQtADS</code> from any source,
@@ -1342,7 +1372,7 @@ application's own file dialogs. That is what level 3 is for.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="August 31, 2026 16:52:37 UTC"><span class="timeago" datetime="2026-08-31T16:52:37+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="August 31, 2026 16:52:37 UTC">2026-08-31</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="September 2, 2026 21:17:28 UTC"><span class="timeago" datetime="2026-09-02T21:17:28+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="September 2, 2026 21:17:28 UTC">2026-09-02</span>
   </span>
 
     

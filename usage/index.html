@@ -762,6 +762,78 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#metadata-window" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Metadata Window
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Metadata Window">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#field-groups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Field Groups
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#field-management-toolbar" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Field Management Toolbar
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#filter-search_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Filter &amp; Search
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#editing-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Editing Behavior
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#schema-import-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Schema Import &amp; Export
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#image-window" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1486,6 +1558,78 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#metadata-window" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Metadata Window
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Metadata Window">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#field-groups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Field Groups
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#field-management-toolbar" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Field Management Toolbar
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#filter-search_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Filter &amp; Search
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#editing-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Editing Behavior
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#schema-import-export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Schema Import &amp; Export
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#image-window" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1780,12 +1924,12 @@ This guide provides instructions on how to use the application, including key fu
 <h3 id="z-channels-depth-maps-dems">Z-Channels (Depth Maps &amp; DEMs)<a class="headerlink" href="#z-channels-depth-maps-dems" title="Permanent link">&para;</a></h3>
 <p>Z-Channels overlay depth or elevation data on top of images for spatial analysis:</p>
 <p><strong>Supported Data Types</strong>
-- <strong>Depth Maps</strong>: 2D array representing depth/distance values (typically from sensors or stereo reconstruction)
+- <strong>Depth Maps</strong>: 2D array representing depth / distance values (typically from sensors or stereo reconstruction)
 - <strong>Digital Elevation Models (DEMs)</strong>: Georeferenced elevation data for terrain analysis
 - Supports GeoTIFF, PNG, and other raster formats that can be loaded with rasterio</p>
 <p><strong>Importing Z-Channel Data</strong>
 - <kbd>Right-Click</kbd> on highlighted images in Image Window
-- <strong>Import Z-Channel</strong>: Select depth/elevation file(s) to attach to image(s)
+- <strong>Import Z-Channel</strong>: Select depth / elevation file(s) to attach to image(s)
   - Files are automatically resized to match image dimensions if needed
   - Unit of measurement can be specified (meters, feet, centimeters, etc.)
 - <strong>Batch Import</strong>: Apply same Z-Channel to multiple selected images</p>
@@ -1793,10 +1937,10 @@ This guide provides instructions on how to use the application, including key fu
 - Overlay appears in the Annotation Window alongside image and annotations
 - <strong>Colormap Selection</strong>: Dropdown in Status Bar to choose visualization style
   - Available colormaps: viridis, plasma, inferno, magma, cividis, twilight, etc.
-  - Different colormaps highlight different depth/elevation patterns
-- <strong>Dynamic Range</strong>: Enable/disable dynamic recoloring via Status Bar button
-  - When enabled: colormap automatically rescales to current viewport's min/max values
-  - When disabled: colormap uses image's global min/max (better for comparing multiple images)
+  - Different colormaps highlight different depth / elevation patterns
+- <strong>Dynamic Range</strong>: Enable / disable dynamic recoloring via Status Bar button
+  - When enabled: colormap automatically rescales to current viewport's min / max values
+  - When disabled: colormap uses image's global min / max (better for comparing multiple images)
 - <strong>Opacity Control</strong>: Adjust Z-Channel overlay transparency via Status Bar slider
   - 0% (transparent) shows only the image
   - 100% (opaque) shows full Z-Channel visualization
@@ -1804,10 +1948,10 @@ This guide provides instructions on how to use the application, including key fu
 <p><strong>Measurement &amp; Analysis</strong>
 - <strong>Scale Tool</strong>: Distances and areas automatically account for Z-Channel (depth-corrected measurements)
 - <strong>Hover Tooltips</strong>: View exact Z value when mouse hovers over image
-- <strong>Nodata Handling</strong>: Automatically detects and masks NULL/missing values in Z data</p>
+- <strong>Nodata Handling</strong>: Automatically detects and masks NULL / missing values in Z data</p>
 <p><strong>Removing Z-Channel Data</strong>
 - <kbd>Right-Click</kbd> on highlighted images in Image Window
-- <strong>Remove Z-Channel</strong>: Clear depth/elevation data from selected image(s)
+- <strong>Remove Z-Channel</strong>: Clear depth / elevation data from selected image(s)
   - Annotation and other data remain intact</p>
 <h2 id="computer-vision-tasks">Computer Vision Tasks<a class="headerlink" href="#computer-vision-tasks" title="Permanent link">&para;</a></h2>
 <ul>
@@ -1839,10 +1983,11 @@ This guide provides instructions on how to use the application, including key fu
 - <strong>Label Window</strong>: Lists and manages labels with operations for editing, merging, and organizing
 - <strong>Image Window</strong>: Displays imported images with filtering and batch operations
 - <strong>Confidence Window</strong>: Displays cropped images and confidence charts for annotation predictions
+- <strong>Metadata Window</strong>: Displays and edits structured metadata for the selected annotation(s)
 - <strong>Performance Window</strong>: Real-time hardware monitor showing CPU, Memory, and GPU usage with historical sparkline graphs
 - <strong>Timer Window</strong>: Session timer with start, stop, and reset controls; tracks total work duration across sessions</p>
 <h3 id="advanced-docking-system">Advanced Docking System<a class="headerlink" href="#advanced-docking-system" title="Permanent link">&para;</a></h3>
-<p>All dock windows (Annotation Window, Label Window, Image Window, Confidence Window, Explorer, Performance, Timer) use an advanced docking system that allows complete layout customization:</p>
+<p>All dock windows (Annotation Window, Label Window, Image Window, Confidence Window, Metadata Window, Explorer, Performance, Timer) use an advanced docking system that allows complete layout customization:</p>
 <p><strong>Moving &amp; Rearranging Docks</strong>
 - <strong>Grab &amp; Drag</strong>: Click and drag the dock title bar to move the window
   - Drag to any dock area (left, right, top, bottom) to dock it
@@ -1862,16 +2007,21 @@ This guide provides instructions on how to use the application, including key fu
 - <strong>Dock a Float</strong>: Drag floating window title bar back to the main window to re-dock it</p>
 <p><strong>Closing &amp; Toggling Visibility</strong>
 - <strong>Close a Dock</strong>: Click the <kbd>✕</kbd> button on the dock title bar
-  - Docked windows can be closed/hidden without losing their configuration
+  - Docked windows can be closed / hidden without losing their configuration
   - Closed docks can be reopened via menu or keyboard shortcut
   - Data is preserved when docks are hidden
-- <strong>Toggle Dock Visibility</strong>: View menu contains options to show/hide all docks
+- <strong>Toggle Dock Visibility</strong>: View menu contains options to show / hide all docks
   - Use keyboard shortcuts or menu items to toggle dock visibility
   - Useful for maximizing workspace for specific tasks</p>
+<p><strong>Default Layout</strong>
+- A starting arrangement ships with the application and is used until a layout is saved
+- Docks that are closed in it, such as Performance and Timer, can be opened from <strong>View</strong> &gt; <strong>Windows</strong></p>
 <p><strong>Layout Persistence</strong>
-- Dock positions, sizes, and floating state are automatically saved
-- Layout is restored when the application restarts
-- Can reset to default layout if needed</p>
+- Dock positions, sizes, and floating state are automatically saved on exit and restored on the next launch
+- Saved layouts are written to <code>.cache/layout/</code>, next to the other cache directories
+- <strong>View</strong> &gt; <strong>Layout</strong> &gt; <strong>Save</strong>: Store the current arrangement under a name of your choosing
+- <strong>View</strong> &gt; <strong>Layout</strong> &gt; <strong>Load</strong>: Switch to any previously saved arrangement
+- <strong>View</strong> &gt; <strong>Layout</strong> &gt; <strong>Reset</strong>: Return to the default layout that ships with the application</p>
 <h2 id="menu-bar-actions">Menu Bar Actions<a class="headerlink" href="#menu-bar-actions" title="Permanent link">&para;</a></h2>
 <h3 id="file">File<a class="headerlink" href="#file" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1883,7 +2033,7 @@ This guide provides instructions on how to use the application, including key fu
 <li>Choose between binary (.bin) or JSON (.json) format when saving</li>
 <li><strong>Binary Format (.bin)</strong>: <ul>
 <li>Smaller file size (significant space savings for large projects)</li>
-<li>Faster load/save times</li>
+<li>Faster load / save times</li>
 <li>Not human-readable (cannot be edited with a text editor)</li>
 <li>Recommended for production use and large datasets</li>
 </ul>
@@ -1922,26 +2072,40 @@ This guide provides instructions on how to use the application, including key fu
 </ul>
 </li>
 <li><strong>Masks</strong>: Import segmentation mask images as MaskAnnotations</li>
+<li><strong>Metadata</strong>: Import metadata field definitions from a YAML file</li>
 <li>
-<p><strong>Dataset</strong>: Import a YOLO dataset for machine learning (Detection, Instance Segmentation)</p>
+<p><strong>AI-Ready Datasets</strong>: Import a YOLO dataset for machine learning (Detect, Segment, Semantic)</p>
 <ul>
 <li><strong>Image Copying</strong>: All images from the dataset are copied into the project directory</li>
 <li>Creates a copy in your project workspace (original files remain untouched)</li>
-<li>Supports PNG, JPG, BMP, TIF and other common image formats</li>
-<li>Images organized by split (train, val, test) during import</li>
+<li>Supports PNG, JPG, JPEG, JFIF, BMP, TIF, TIFF, and WebP images</li>
+<li>Every split (train, val, test) is imported, and the copies are flattened into a single <code>images</code> folder</li>
+<li>Images sharing a base name across splits would overwrite each other, so a rename option is offered when duplicates are detected</li>
 <li><strong>Annotation Importing</strong>: YOLO format annotations are converted and imported</li>
 <li>Detection datasets: Bounding boxes converted to Rectangle annotations</li>
-<li>Segmentation datasets: Polygon masks converted to Polygon annotations</li>
+<li>Instance segmentation datasets: Polygon masks converted to Polygon annotations</li>
+<li>Semantic segmentation datasets: Single-channel mask images converted to Mask annotations (one per image)</li>
 <li>Labels automatically created from dataset class names</li>
-<li>Annotations linked to corresponding images by filename</li>
-<li><strong>Dataset Organization</strong>:</li>
-<li>Select train/val/test splits to import (can choose subsets)</li>
-<li>Dataset folder structure automatically recognized</li>
-<li>Handles standard YOLO directory layout automatically</li>
+<li>Each image is paired with the sidecar file at the matching path: <code>labels</code> for Detect and Segment, <code>masks</code> for Semantic</li>
+<li><strong>Dataset Organization</strong>: Both standard YOLO directory layouts are recognized automatically</li>
+<li><strong>Split first</strong>: <code>train/images/</code>, <code>train/labels/</code>, <code>val/images/</code>, <code>val/labels/</code></li>
+<li><strong>Images first</strong>: <code>images/train/</code>, <code>images/val/</code>, <code>labels/train/</code>, <code>labels/val/</code></li>
+<li>The <code>train</code>, <code>val</code>, and <code>test</code> entries in the YAML are used to locate the data</li>
+<li>An entry naming the split folder itself (<code>train: train</code>) resolves to the <code>images</code> folder inside it</li>
+<li>If those entries point somewhere that does not exist (common when a dataset is moved after being exported with an absolute path), the same folders are looked for alongside the YAML file instead</li>
+<li>If the YAML has no split entries at all, the dataset folder is scanned for <code>images</code> directories</li>
+<li>Semantic datasets substitute <code>masks</code> for <code>images</code> in the same way; the folder name is taken from the YAML's <code>masks_dir</code> entry when present</li>
 <li><strong>Supported Dataset Types</strong>:</li>
-<li>Detection (bounding boxes)</li>
-<li>Instance Segmentation (polygon masks)</li>
-<li>Classification (organized in class subdirectories)</li>
+<li><strong>Detect</strong> (bounding boxes): importable as Rectangle or Polygon annotations</li>
+<li><strong>Segment</strong> (polygon masks): importable as Polygon or Rectangle annotations</li>
+<li><strong>Semantic</strong> (single-channel class-ID masks): imported as Mask annotations</li>
+<li><strong>Semantic Segmentation Specifics</strong>:</li>
+<li>Masks must share the base name of their image (<code>image1.jpg</code> pairs with <code>image1.png</code>)</li>
+<li>Only lossless mask formats are read (PNG, TIF, TIFF); JPEG compression would corrupt the class values</li>
+<li>Each pixel value is the class ID, matching the index in the YAML's <code>names</code></li>
+<li>Pixel value 255 is the reserved ignore label and is imported as background</li>
+<li>A class named <code>background</code> at index 0 is treated as background, and no label is created for it</li>
+<li>Classes unchecked in Advanced Options are left as background</li>
 </ul>
 </li>
 <li>
@@ -1960,7 +2124,7 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Viscore (CSV, JSON)</strong>: Save annotation data in Viscore format</li>
 <li><strong>TagLab (JSON)</strong>: Save annotation data to a TagLab JSON file</li>
 <li><strong>GeoJSON (JSON)</strong>: Save annotations as GeoJSON for mapping software (only for GeoTIFFs with CRS and Transforms data)</li>
-<li><strong>Masks (PNG/BMP/TIF/RLE)</strong>: Save annotations as segmentation mask images</li>
+<li><strong>Masks (PNG / BMP / TIF / RLE)</strong>: Save annotations as segmentation mask images</li>
 <li>
 <p><strong>Export Modes</strong> (choose one):</p>
 <ul>
@@ -1968,7 +2132,7 @@ This guide provides instructions on how to use the application, including key fu
 <li>Best for: Training semantic segmentation models</li>
 <li>Background value configurable (0 = Background, 255 = Ignore Index)</li>
 <li>Use 255 for sparse annotations (model ignores unlabeled areas), 0 for exhaustive labeling</li>
-<li><strong>Structure from Motion (SfM) Binary Mask</strong>: Binary foreground/background masks</li>
+<li><strong>Structure from Motion (SfM) Binary Mask</strong>: Binary foreground / background masks</li>
 <li>Best for: 3D reconstruction software (Metashape, Agisoft, etc.)</li>
 <li>Foreground value: 255 (objects to keep), Background: 0 (areas to ignore)</li>
 <li>Preserves depth information for photogrammetry pipelines</li>
@@ -2007,11 +2171,11 @@ This guide provides instructions on how to use the application, including key fu
 <li>
 <p><strong>Label Configuration</strong>:</p>
 <ul>
-<li><strong>Include/Exclude Labels</strong>: Select which labels to include in export</li>
+<li><strong>Include / Exclude Labels</strong>: Select which labels to include in export</li>
 <li><strong>Layer Order</strong>: Control rendering order for overlapping annotations</li>
 <li>Labels higher in list drawn first (behind), lower in list drawn last (on top)</li>
 <li>Important for complex scenes with overlapping annotations</li>
-<li><strong>Mask Values</strong> (Semantic/SfM): Assign integer value (0-255) per label</li>
+<li><strong>Mask Values</strong> (Semantic / SfM): Assign integer value (0-255) per label</li>
 <li><strong>Colors</strong> (Visualization): Automatically use label colors or customize</li>
 </ul>
 </li>
@@ -2023,7 +2187,10 @@ This guide provides instructions on how to use the application, including key fu
 <li>Handles images with no annotations based on your settings</li>
 </ul>
 </li>
-<li><strong>Dataset</strong>: Create a YOLO dataset for machine learning</li>
+<li><strong>Metadata</strong>:</li>
+<li><strong>Schema (YAML)</strong>: Save metadata field definitions for reuse in another project</li>
+<li><strong>Data Table (CSV)</strong>: Save one row per annotation, combining built-in metrics with custom fields</li>
+<li><strong>AI-Ready Datasets</strong>: Create a YOLO dataset for machine learning</li>
 <li><strong>Classify</strong>: Export classification dataset</li>
 <li>Exports Patches, Rectangles, and Polygons as classified samples</li>
 <li>Each annotation becomes a single classified crop</li>
@@ -2038,19 +2205,18 @@ This guide provides instructions on how to use the application, including key fu
 <li>Each polygon becomes a labeled instance in the mask</li>
 <li><strong>Semantic</strong>: Export semantic segmentation dataset</li>
 <li>Exports Mask annotations for semantic segmentation</li>
-<li>Handles unlabeled/background regions</li>
+<li>Handles unlabeled / background regions</li>
 <li>Useful for training pixel-wise segmentation models</li>
 </ul>
 <p><strong>Export Dataset Features</strong> (all export types):
-- <strong>Train/Validation/Test Split</strong>: Configurable ratios (default 70/20/10)
+- <strong>Train / Validation / Test Split</strong>: Configurable ratios (default 70 / 20 / 10)
   - Split by image for static images
   - Split by frame for video data
 - <strong>Label Selection</strong>: Filter by specific labels or export all
 - <strong>Video Frame Sampling</strong>: Optional frame stride to sample every Nth frame
 - <strong>Automatic Crop Generation</strong>: Crops are automatically generated and organized
 - <strong>Output Directory</strong>: Specify custom export location
-- <strong>Format Compliance</strong>: Exports follow YOLO format standards for compatibility
-  - <strong>Spatial Metrics</strong>: Export spatial metrics and statistics</p>
+- <strong>Format Compliance</strong>: Exports follow YOLO format standards for compatibility</p>
 </li>
 </ul>
 <h3 id="utilities">Utilities<a class="headerlink" href="#utilities" title="Permanent link">&para;</a></h3>
@@ -2122,7 +2288,24 @@ This guide provides instructions on how to use the application, including key fu
 <h3 id="machine-learning">Machine Learning<a class="headerlink" href="#machine-learning" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Machine Learning</strong>:</li>
-<li><strong>Merge Datasets</strong>: Merge multiple Classification datasets together</li>
+<li><strong>Merge Datasets</strong>: Combine multiple datasets of the same task into a single dataset<ul>
+<li><strong>Classify</strong>: Merge classification datasets</li>
+<li><strong>Detect</strong>: Merge detection datasets</li>
+<li><strong>Segment</strong>: Merge instance segmentation datasets</li>
+<li><strong>Semantic</strong>: Merge semantic segmentation datasets</li>
+<li><strong>Selecting Datasets</strong>: Choose each dataset by its <code>data.yaml</code> (Classify uses the dataset folder)</li>
+<li>An adjacent <code>class_mapping.json</code> is picked up automatically</li>
+<li>The <strong>Merged Classes</strong> table previews the combined class list and the ID each source dataset used for it</li>
+<li><strong>Class Resolution</strong>: Classes are matched across datasets by name, not by ID</li>
+<li>The same ID usually means a different class in each dataset, so every annotation is rewritten to the merged numbering</li>
+<li>Classification datasets merge by class folder name; no file contents change</li>
+<li><strong>Filename Collisions</strong>: Images sharing a name are renamed rather than overwritten, and their label or mask file is renamed to match</li>
+<li><strong>Semantic Specifics</strong>:</li>
+<li>A class named <code>background</code> is placed at ID 0, and pixel value 255 stays the reserved ignore label</li>
+<li>Pixels holding a class that no dataset contributes are set to ignore</li>
+<li><strong>Output</strong>: <code>data.yaml</code> with the merged class list, and <code>class_mapping.json</code> combining the label colors and codes from every source dataset</li>
+</ul>
+</li>
 <li><strong>Tile Dataset</strong>: Split datasets into tiles for large-image processing<ul>
 <li><strong>Classify</strong>: Tile classification datasets</li>
 <li><strong>Detect</strong>: Tile detection datasets</li>
@@ -2167,7 +2350,7 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Live Mode</strong>: Display inference results in real-time as the model processes</li>
 <li><strong>Save Annotations</strong>: Optional toggle to save generated annotations to the project</li>
 <li>When disabled: Preview mode shows results without persisting to the project</li>
-<li>When enabled: Annotations are added to the project for each image/frame</li>
+<li>When enabled: Annotations are added to the project for each image / frame</li>
 </ul>
 </li>
 </ul>
@@ -2210,17 +2393,19 @@ This guide provides instructions on how to use the application, including key fu
 - <strong>Image</strong>: Group by image filename
 - <strong>Confidence</strong>: Group by confidence buckets (0-10%, 10-20%, ... 90-100%, plus Verified)
 - <strong>Area</strong>: Sort by annotation area (smallest to largest)
-- <strong>Cluster</strong>: Sort by K-Means clustering results from Embedding Viewer (enabled when clusters available)</p>
+- <strong>Cluster</strong>: Sort by K-Means clustering results from Embedding Viewer (enabled when clusters available)
+- <strong>Similarity</strong>: Sort by distance to the Embedding Viewer's last similarity anchor (enabled after a neighbour expansion)
+  - Anchors are grouped first, then bands of cosine similarity, with unranked annotations last</p>
 <p><strong>Display Controls</strong>
 - <strong>Isolate Selection</strong>: Show only selected annotations (double-click empty space to exit)
 - <strong>Size Adjustment</strong>: <kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd> to resize gallery thumbnails (32-256px range)
 - <strong>Sticky Headers</strong>: Automatically highlights the current group header as you scroll</p>
 <p><strong>Selection &amp; Navigation</strong>
 - <kbd>Left-Click</kbd>: Select a single annotation
-- <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add/remove from selection
+- <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add / remove from selection
 - <kbd>Shift</kbd> + <kbd>Left-Click</kbd>: Select range between two annotations
 - <kbd>Ctrl</kbd> + <kbd>Drag</kbd>: Box-select multiple annotations
-- <kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Navigate to annotation in Annotation Window (zoomed/centered)
+- <kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Navigate to annotation in Annotation Window (zoomed / centered), leaving the current selection intact
 - <kbd>Double-Click</kbd>: Unselect all, exit isolation view
 - <kbd>Ctrl</kbd> + <kbd>A</kbd>: Select all annotations in current filtered view
 - <kbd>Ctrl</kbd> + <kbd>Space</kbd>: Confirm selected annotations with top machine confidence prediction</p>
@@ -2233,7 +2418,7 @@ This guide provides instructions on how to use the application, including key fu
 - <strong>Dimensionality</strong>: 2D (faster) or 3D (interactive rotation)
 - <strong>Apply Embeddings Button</strong>: Extract features and run dimensionality reduction pipeline (shows progress)</p>
 <p><strong>Advanced Embedding Settings</strong> (expandable "Advanced" panel)
-- <strong>PCA before reduction</strong>: Apply PCA dimensionality reduction before TSNE/UMAP/LDA (auto-disabled for PCA)
+- <strong>PCA before reduction</strong>: Apply PCA dimensionality reduction before TSNE / UMAP / LDA (auto-disabled for PCA)
 - <strong>PCA components</strong>: Number of intermediate PCA dimensions (default 50; reduces high-dim features before final reduction)
 - <strong>UMAP settings</strong>:
   - <strong>n_neighbors</strong>: Number of neighbors for UMAP (2-150; default 15; higher = more global structure)
@@ -2248,18 +2433,25 @@ This guide provides instructions on how to use the application, including key fu
 - <strong>Clear Button</strong>: Remove cluster boundaries and disable Cluster sort option
 - Cluster results are colored and can be sorted via the Annotation Viewer's "Cluster" sort option</p>
 <p><strong>Display &amp; Navigation</strong>
-- <strong>Display Mode Toggle</strong>: Switch between dots and sprite/thumbnail view
+- <strong>Display Mode Toggle</strong>: Switch between dots and sprite / thumbnail view
 - <strong>Locate Button</strong>: Show crosshair pointer to selected annotation
 - <strong>Center Button</strong>: Pan and zoom view to center on selected point(s)
-- <strong>Home Button</strong>: Reset view to fit all points</p>
+- <strong>Home Button</strong>: Reset view to fit all points
+- <strong>Magnifier Lens</strong>: Annotations nearest the cursor are always drawn as thumbnails, the rest stay dots
+  - Thumbnail size follows the current point / sprite size; the lens radius tightens as thumbnails grow</p>
 <p><strong>Interactive Controls</strong>
 - <kbd>Left-Click</kbd>: Select an annotation
-- <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add/remove from selection
+- <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add / remove from selection
 - <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd> + <kbd>Drag</kbd>: Box-select multiple points
 - <kbd>Right-Click</kbd> + <kbd>Drag</kbd>: Pan the view
-- <kbd>Mouse Wheel</kbd>: Zoom in/out
+- <kbd>Mouse Wheel</kbd>: Zoom in / out
 - <kbd>Ctrl</kbd> + <kbd>Wheel</kbd>: Adjust point size
-- <kbd>Double-Click</kbd>: Unselect all, exit isolation mode</p>
+- <kbd>Double-Click</kbd>: Unselect all, exit isolation mode
+- <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Wheel</kbd>: Grow / shrink the selection by similarity to the selected annotation(s)
+  - Ranking uses the full feature vectors, falling back to the 2D projection when features are unavailable
+  - An overlay reports the neighbour count and the cosine cutoff it implies
+  - <kbd>Escape</kbd>: Restore the selection the expansion started from
+- <kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Navigate to the annotation in the Annotation Window (zoomed / centered), leaving the current selection intact</p>
 <p><strong>Mislabel Detection &amp; Analysis</strong>
 - Outlier detection is performed manually by examining points that are visually distant from their label cluster in the embedding space
 - Points far from their label cluster can be selected and examined in detail for potential mislabels
@@ -2276,27 +2468,29 @@ This guide provides instructions on how to use the application, including key fu
 - First time running a model: features extracted and automatically cached
 - Second time with same model: features loaded from cache (much faster)
 - Deleting annotations: cache entries removed automatically
-- Changing model/settings: stale cache detected and rebuilt as needed</p>
+- Changing model / settings: stale cache detected and rebuilt as needed</p>
 <p><strong>Multi-Model Support</strong>
 - Cache supports multiple models simultaneously
 - Each model has its own FAISS index file (<code>features_{model_key}.faiss</code>)
 - Switching between models uses corresponding cached features</p>
 <p><strong>Performance</strong>
-- <strong>Color Features</strong>: 70 dims (8×8 Hue-Saturation histogram + H/S/V moments), instant CPU extraction
+- <strong>Color Features</strong>: 70 dims (8×8 Hue-Saturation histogram + H / S / V moments), instant CPU extraction
 - <strong>YOLO / Transformer / TIMM / OpenCLIP</strong>: Model-dependent feature dimensions, GPU-accelerated (if CUDA available)
 - <strong>Batch Processing</strong>: Default batch size 512 annotations; cache flush every 4 batches to balance memory and I/O
-- <strong>Thread-Safety</strong>: Concurrent access via SQLite locks prevents cache corruption during multi-threaded operations</p>
+- <strong>Thread-Safety</strong>: Concurrent access via SQLite locks prevents cache corruption during multi-threaded operations
+- <strong>Feature Storage</strong>: Retained feature matrices are reduced to 128 dimensions for ranking and clustering; the cache keeps the full-width vectors</p>
 <p><strong>Tips</strong>
 - Use dual monitors: place Annotation Viewer and Annotation Window side-by-side to review selected annotations
 - For exploring mislabels: use Embedding Viewer to identify visual outliers (points far from their label cluster), isolate them, and examine in the gallery
-- Larger clusters often indicate common features; smaller/scattered points may be edge cases or mislabels
-- Apply filter in Annotation Viewer before running embeddings to focus on specific images/labels
-- Use Cluster sort in the Annotation Viewer after running K-Means to organize results by cluster membership</p>
+- Larger clusters often indicate common features; smaller / scattered points may be edge cases or mislabels
+- Apply filter in Annotation Viewer before running embeddings to focus on specific images / labels
+- Use Cluster sort in the Annotation Viewer after running K-Means to organize results by cluster membership
+- To gather more of a class: select a known-good annotation, expand by similarity, then switch the Annotation Viewer to Similarity sort and trim the tail where the crops stop matching</p>
 <h2 id="tool-bar-tools">Tool Bar Tools<a class="headerlink" href="#tool-bar-tools" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Select Tool</strong>: After selecting the tool</li>
 <li><kbd>Left-Click</kbd>: Select an annotation drag to move it</li>
-<li><kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add/remove annotation to current selection</li>
+<li><kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add / remove annotation to current selection</li>
 <li><kbd>Ctrl</kbd> + <kbd>Delete</kbd> / <kbd>Backspace</kbd>: Remove selected annotation(s)</li>
 <li><kbd>Ctrl</kbd> + <kbd>Drag</kbd>: Create rectangle selection to select multiple annotations</li>
 <li><kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd>: Change size of the selected annotation</li>
@@ -2457,7 +2651,7 @@ This guide provides instructions on how to use the application, including key fu
 <ul>
 <li><kbd>Ctrl</kbd> + <kbd>Alt</kbd>: Toggle between Binary and Multi-class mode</li>
 <li><kbd>N</kbd>: Refresh the yellow crosshair point suggestion</li>
-<li><kbd>Space</kbd>: Finalize and create a Polygon/Mask annotation</li>
+<li><kbd>Space</kbd>: Finalize and create a Polygon / Mask annotation</li>
 <li><kbd>Backspace</kbd>: Clear all points and start over</li>
 </ul>
 </li>
@@ -2500,7 +2694,7 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Zoom</strong>: Use the <kbd>Mouse Wheel</kbd> to zoom in and out</li>
 <li><strong>Pan</strong>: <kbd>Right-Click</kbd> and hold the <kbd>Mouse Button</kbd> to pan the image</li>
 <li><strong>Rotate</strong>: <kbd>Ctrl</kbd> + <kbd>Right-Click</kbd> + <kbd>Drag</kbd></li>
-<li>Drag left/right to rotate; drag up/down to adjust rotation speed</li>
+<li>Drag left / right to rotate; drag up / down to adjust rotation speed</li>
 <li>Useful for examining annotations at different angles</li>
 </ul>
 <h3 id="baking-and-unbaking-annotations">Baking and Unbaking Annotations<a class="headerlink" href="#baking-and-unbaking-annotations" title="Permanent link">&para;</a></h3>
@@ -2519,25 +2713,25 @@ This guide provides instructions on how to use the application, including key fu
 </ul>
 <h3 id="video-playback-controls">Video Playback Controls<a class="headerlink" href="#video-playback-controls" title="Permanent link">&para;</a></h3>
 <p>When a video is loaded, additional playback controls appear:
-- <strong>Play/Pause</strong>: Toggle video playback
+- <strong>Play / Pause</strong>: Toggle video playback
 - <strong>Stop</strong>: Stop playback and return to paused state
-- <strong>Step Back/Forward</strong>: Move one frame at a time (disabled during playback)
-- <strong>Jump to First/Last Frame</strong>: Jump to the beginning or end of the video
-- <strong>Jump to Previous/Next Annotated Frame</strong>: Navigate between frames with annotations
-- <strong>Jump to Previous/Next Keyframe</strong>: Navigate between marked keyframe frames
+- <strong>Step Back / Forward</strong>: Move one frame at a time (disabled during playback)
+- <strong>Jump to First / Last Frame</strong>: Jump to the beginning or end of the video
+- <strong>Jump to Previous / Next Annotated Frame</strong>: Navigate between frames with annotations
+- <strong>Jump to Previous / Next Keyframe</strong>: Navigate between marked keyframe frames
 - <strong>Seek Slider</strong>: Scrub through video frames with visual feedback
   - Red tick marks indicate frames with annotations
   - Gold tick marks indicate keyframe frames
   - <kbd>Ctrl</kbd> + <kbd>Hover</kbd>: Preview frame at cursor position
   - <kbd>Ctrl</kbd> + <kbd>Click</kbd>: Jump to frame directly
-- <strong>Keyframe Toggle</strong>: Star button to mark/unmark the current frame as a keyframe
+- <strong>Keyframe Toggle</strong>: Star button to mark / unmark the current frame as a keyframe
   - Keyframes appear as gold tick marks on the slider
   - Useful for marking important frames for review or processing
 - <strong>Frame Counter</strong>: Displays current frame number and total frame count</p>
 <h2 id="label-window">Label Window<a class="headerlink" href="#label-window" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Move Label</strong>: <kbd>Right-Click</kbd> and drag to reorder labels in the window</li>
-<li><strong>Label Visibility</strong>: Each label has a checkbox to show/hide annotations of that label</li>
+<li><strong>Label Visibility</strong>: Each label has a checkbox to show / hide annotations of that label</li>
 <li>Hidden labels retain their data and can be shown again at any time</li>
 <li>Transparency slider affects all labels (both visible and hidden)</li>
 </ul>
@@ -2545,7 +2739,7 @@ This guide provides instructions on how to use the application, including key fu
 <p>Action buttons for label operations:
 - <strong>Add Label</strong> (<kbd>+</kbd> icon): Create a new label with custom name and color
 - <strong>Delete Label</strong> (<kbd>-</kbd> icon): Delete the selected label (disabled if no selection)
-- <strong>Edit Label</strong> / <strong>Merge Labels</strong>: Modify the selected label's name/color, or merge multiple labels into one (disabled if no selection)
+- <strong>Edit Label</strong> / <strong>Merge Labels</strong>: Modify the selected label's name / color, or merge multiple labels into one (disabled if no selection)
 - <strong>Map Labels</strong> (bulk): Perform bulk mapping to merge multiple source labels into a single target label (disabled if no selection)
 - <strong>Lock Label</strong> (lock icon): Lock the currently selected label to prevent accidental modifications
   - Locked labels remain locked until manually unlocked
@@ -2567,6 +2761,76 @@ This guide provides instructions on how to use the application, including key fu
 <li>When multiple annotations selected: Number of selected annotations</li>
 <li><strong>Editable</strong>: Click and edit to navigate to a specific annotation by index (when in Select mode)</li>
 </ul>
+<h2 id="metadata-window">Metadata Window<a class="headerlink" href="#metadata-window" title="Permanent link">&para;</a></h2>
+<p>The Metadata Window is a property grid showing structured metadata for the currently selected annotation(s). It is docked on the right, tabbed with the Confidence Window, and updates with the selection made in the Annotation Window or the Explorer.
+- <strong>Selection Driven</strong>: Displays the annotation(s) currently selected; the grid is read-only context until a selection exists
+- <strong>Vector Annotations Only</strong>: Patches, Rectangles, Polygons, and MultiPolygons; Mask annotations are excluded (a mask is a per-image raster, not a discrete object)
+- <strong>Multiple Selection</strong>: Fields can be edited across many annotations at once; a single edit writes to every selected annotation</p>
+<h3 id="field-groups">Field Groups<a class="headerlink" href="#field-groups" title="Permanent link">&para;</a></h3>
+<p>The grid is organized into three collapsible groups, each showing a count of its rows:
+- <strong>Custom</strong>: User-defined typed fields governed by the project's metadata schema
+  - Editable, including across a multi-selection
+  - Shows <code>&lt;multiple values&gt;</code> when the selected annotations disagree; viewing a mixed selection never overwrites anything
+- <strong>Built-in</strong>: Read-only values derived from the annotation's geometry and its raster
+  - <strong>Identity</strong>: Annotation ID, Annotation Type, Label, Full Name
+  - <strong>Confidence</strong>: User Confidence, Machine Confidence, Verified
+  - <strong>Source</strong>: Source Image, Cropped Dimensions
+  - <strong>Geometry</strong>: Area, Perimeter, Scale
+  - <strong>Morphology</strong>: Length, Width, Orientation, Hull Area, Hull Perimeter
+  - <strong>3D</strong> (requires a Z-Channel): Volume, 3D Surface Area, Z Coverage
+  - Recomputed on every refresh, so they can never go stale against the geometry they describe
+  - Expressed in the unit selected in the Status Bar; a note is shown when a scale unit cannot be converted to the display unit
+- <strong>Raw Data</strong>: Read-only leftovers from <code>annotation.data</code> that could not be promoted into a typed field (nested structures such as lists and dictionaries)
+  - With multiple annotations selected, only the keys shared by all of them are listed</p>
+<p>Group expansion is remembered as you move between annotations, and computed rows display <code>&lt;multiple annotations selected&gt;</code> when more than one annotation is selected.</p>
+<h3 id="field-management-toolbar">Field Management Toolbar<a class="headerlink" href="#field-management-toolbar" title="Permanent link">&para;</a></h3>
+<p>Action buttons for schema operations:
+- <strong>Add Field</strong> (<kbd>+</kbd> icon): Define a new field for the project
+  - <strong>Name</strong>: Unique key for the field, used as the column name in exports
+  - <strong>Display Name</strong>: Optional label shown in the panel (defaults to the name)
+  - <strong>Description</strong>: Optional text shown as a tooltip on the field row
+  - <strong>Type</strong>: Short Text, Long Text, Yes / No, Whole Number, Decimal Number, Dropdown (one), Checklist (many), or Date
+  - <strong>Options / Range / Default</strong>: Only the settings that apply to the chosen type are shown
+- <strong>Delete Field</strong> (<kbd>-</kbd> icon): Delete the selected field and its stored values across the project (disabled if no field selected)
+  - Confirmation reports how many annotations hold a value for the field
+  - A progress bar appears for projects with more than 200 annotations
+- <strong>Edit Field</strong>: Modify the selected field's name, type, or settings (disabled if no field selected)
+  - Renaming migrates stored values to the new name
+  - Changing type re-coerces stored values; values that do not fit the new definition are discarded, and the confirmation appears only when the change actually costs data
+- <strong>Show / Hide Fields</strong> (eye icon): Choose which custom fields the grid shows, and in what order
+  - Dual transfer list: move fields between <strong>Hidden</strong> and <strong>Visible</strong>, and use the arrows to set display order
+  - Hiding affects display only; stored values are kept and still saved with the project
+  - Built-in and Raw Data rows are always shown and are not listed here
+- <strong>Adopt Fields</strong> (magic icon): Promote imported data into real typed fields
+  - Scalar keys in <code>annotation.data</code> become typed fields, with the type inferred from every value observed
+  - Known importer keys (TagLab instance / blob names and notes, Viscore Dot, Reprojection Error, View Index, View Count) adopt a pre-defined type and label
+  - Nested values are left behind in the Raw Data group
+  - Keys duplicating a built-in value (bbox, centroid, area, perimeter, class name) are dropped rather than stored as a stale copy
+  - Importers run this automatically after an import; the toolbar button re-runs it on demand</p>
+<h3 id="filter-search_1">Filter &amp; Search<a class="headerlink" href="#filter-search_1" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Filter Fields</strong>: Type in the filter box to search rows by name across all three groups</li>
+<li>Results update in real-time as you type</li>
+</ul>
+<h3 id="editing-behavior">Editing Behavior<a class="headerlink" href="#editing-behavior" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Each field type maps to its own editor (line edit, text box, checkbox, spin box, dropdown, checklist, or date picker)</li>
+<li>Edits are committed on a short delay, so holding a key does not trigger one write per keystroke across a large selection</li>
+<li>Pending edits are flushed automatically when the selection changes, when the dock is hidden, and before any field dialog opens</li>
+<li>The annotation selection is cleared when a field dialog opens, since <kbd>Backspace</kbd> and <kbd>Delete</kbd> would otherwise delete the selected annotation</li>
+<li>Changing the display unit in the Status Bar re-renders the Built-in values in place</li>
+</ul>
+<h3 id="schema-import-export">Schema Import &amp; Export<a class="headerlink" href="#schema-import-export" title="Permanent link">&para;</a></h3>
+<p>The schema (the field definitions) travels separately from the values:
+- <strong>Import</strong>: <strong>File</strong> &gt; <strong>Import</strong> &gt; <strong>Metadata</strong> merges field definitions from a YAML file
+  - Merging is by field name; existing definitions are never silently replaced
+  - On a collision, choose <strong>Replace</strong> (overwrite definitions, keeping values that still fit) or <strong>Keep</strong> (import only the new fields)
+- <strong>Export Schema</strong>: <strong>File</strong> &gt; <strong>Export</strong> &gt; <strong>Metadata</strong> &gt; <strong>Schema (YAML)</strong> writes the definitions only, as a reusable template for another project
+- <strong>Export Data Table</strong>: <strong>File</strong> &gt; <strong>Export</strong> &gt; <strong>Metadata</strong> &gt; <strong>Data Table (CSV)</strong> writes one row per annotation
+  - Combines built-in metrics computed from geometry with the custom fields you defined
+  - <strong>Columns</strong>: Select from Location, Size, Shape, and 3D metrics, plus your custom fields
+  - <strong>Filters</strong>: Restrict the export by Images, Labels, and Annotation Types
+  - Identity columns (annotation id, image name, label codes, color) are always included</p>
 <h2 id="image-window">Image Window<a class="headerlink" href="#image-window" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Select Image</strong>: <kbd>Double-Click</kbd> on a row to load the image in the annotation window</li>
@@ -2636,7 +2900,7 @@ This guide provides instructions on how to use the application, including key fu
 <ul>
 <li><strong>Hover over any tool button, image row, or window</strong> to see helpful tooltips explaining functionality</li>
 <li><strong>Many controls use <kbd>Ctrl</kbd></strong> as a modifier key for enhanced functionality</li>
-<li><strong>Work Area and SAM/YOLOE tools use <kbd>Space</kbd></strong> as a quick confirm key</li>
+<li><strong>Work Area and SAM / YOLOE tools use <kbd>Space</kbd></strong> as a quick confirm key</li>
 <li><strong>Interactive hotkey map available</strong> at <a href="https://jordan-pierce.github.io/CoralNet-Toolbox/hot-keys">Hotkeys Map</a> with visual keyboard layout</li>
 </ul>
 <h3 id="general">General<a class="headerlink" href="#general" title="Permanent link">&para;</a></h3>
@@ -2648,14 +2912,14 @@ This guide provides instructions on how to use the application, including key fu
 </ul>
 <h3 id="navigation">Navigation<a class="headerlink" href="#navigation" title="Permanent link">&para;</a></h3>
 <ul>
-<li><kbd>Alt</kbd> + <kbd>Up</kbd>/<kbd>Down</kbd>: Cycle through images</li>
-<li><kbd>Ctrl</kbd> + <kbd>Up</kbd>/<kbd>Down</kbd>: Cycle through labels</li>
-<li><kbd>Ctrl</kbd> + <kbd>Left</kbd>/<kbd>Right</kbd>: Cycle through annotations</li>
+<li><kbd>Alt</kbd> + <kbd>Up</kbd> / <kbd>Down</kbd>: Cycle through images</li>
+<li><kbd>Ctrl</kbd> + <kbd>Up</kbd> / <kbd>Down</kbd>: Cycle through labels</li>
+<li><kbd>Ctrl</kbd> + <kbd>Left</kbd> / <kbd>Right</kbd>: Cycle through annotations</li>
 </ul>
 <h3 id="selection-annotation-editing">Selection &amp; Annotation Editing<a class="headerlink" href="#selection-annotation-editing" title="Permanent link">&para;</a></h3>
 <ul>
 <li><kbd>Ctrl</kbd> + <kbd>A</kbd>: Select all annotations, unselect all annotations (press twice to toggle)</li>
-<li><kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add/remove annotation to current selection</li>
+<li><kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add / remove annotation to current selection</li>
 <li><kbd>Ctrl</kbd> + <kbd>Drag</kbd>: Create rectangle selection to select multiple annotations</li>
 <li><kbd>Ctrl</kbd> + <kbd>Delete</kbd> / <kbd>Backspace</kbd>: Remove selected annotation(s)</li>
 <li><kbd>Ctrl</kbd> + <kbd>Space</kbd>: Confirm prediction for selected annotation with top machine confidence</li>
@@ -2673,7 +2937,7 @@ This guide provides instructions on how to use the application, including key fu
 <li>Switch from SelectTool to active annotation tool (e.g., PatchTool when PatchAnnotation selected)</li>
 <li>Switch from annotation tool back to SelectTool</li>
 <li>Toggle between Brush and Erase tools</li>
-<li>Toggle Feature Select Tool binary/multi-class mode</li>
+<li>Toggle Feature Select Tool binary / multi-class mode</li>
 <li><kbd>Ctrl</kbd> + <kbd>Alt</kbd>: Create temporary work area from current view (hold to maintain)</li>
 </ul>
 <h3 id="work-areas">Work Areas<a class="headerlink" href="#work-areas" title="Permanent link">&para;</a></h3>
@@ -2701,9 +2965,9 @@ This guide provides instructions on how to use the application, including key fu
 <li><kbd>Ctrl</kbd> + <kbd>Alt</kbd>: Toggle between Binary and Multi-class mode</li>
 <li><kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add positive prototype (binary) / assign patch to selected label (multi-class)</li>
 <li><kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Add negative prototype (binary) / undo last point for label (multi-class)</li>
-<li><kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd>: Adjust similarity/reject threshold</li>
+<li><kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd>: Adjust similarity / reject threshold</li>
 <li><kbd>N</kbd>: Refresh the yellow crosshair point suggestion</li>
-<li><kbd>Space</kbd>: Finalize and create Polygon/Mask annotation</li>
+<li><kbd>Space</kbd>: Finalize and create Polygon / Mask annotation</li>
 <li><kbd>Backspace</kbd>: Clear all points and start over</li>
 </ul>
 <h3 id="model-predictions">Model Predictions<a class="headerlink" href="#model-predictions" title="Permanent link">&para;</a></h3>
@@ -2721,23 +2985,23 @@ This guide provides instructions on how to use the application, including key fu
 </ul>
 <h3 id="mouse-controls">Mouse Controls<a class="headerlink" href="#mouse-controls" title="Permanent link">&para;</a></h3>
 <ul>
-<li><kbd>Left-Click</kbd>: Select annotation, add point, start/end shape</li>
+<li><kbd>Left-Click</kbd>: Select annotation, add point, start / end shape</li>
 <li><kbd>Left-Click</kbd> + <kbd>Drag</kbd>: Move selected annotation, draw shape</li>
-<li><kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add/remove from selection, add positive point/prototype</li>
+<li><kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add / remove from selection, add positive point / prototype</li>
 <li><kbd>Shift</kbd> + <kbd>Left-Click</kbd>: Select range of items (Image Window)</li>
 <li><kbd>Ctrl</kbd> + <kbd>Drag</kbd>: Box-select multiple annotations</li>
 <li><kbd>Right-Click</kbd> + <kbd>Drag</kbd>: Pan the image viewer</li>
 <li><kbd>Right-Click</kbd>: Open context menu (Image Window)</li>
 <li><kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Center Annotation Window on selected annotation</li>
-<li><kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Add negative point/prototype</li>
+<li><kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Add negative point / prototype</li>
 <li><kbd>Double-Click</kbd>: Load image (Image Window)</li>
-<li><kbd>Mouse Wheel</kbd>: Zoom in/out, adjust patch/brush size (with Ctrl)</li>
+<li><kbd>Mouse Wheel</kbd>: Zoom in / out, adjust patch / brush size (with Ctrl)</li>
 </ul>
 <h3 id="annotation-window-navigation">Annotation Window Navigation<a class="headerlink" href="#annotation-window-navigation" title="Permanent link">&para;</a></h3>
 <ul>
 <li><kbd>Mouse Wheel</kbd>: Zoom in and out</li>
 <li><kbd>Right-Click</kbd> + <kbd>Hold</kbd> + <kbd>Drag</kbd>: Pan the image</li>
-<li><kbd>Ctrl</kbd> + <kbd>Right-Click</kbd> + <kbd>Drag</kbd>: Rotate the image (left/right drag for rotation, up/down for speed)</li>
+<li><kbd>Ctrl</kbd> + <kbd>Right-Click</kbd> + <kbd>Drag</kbd>: Rotate the image (left / right drag for rotation, up / down for speed)</li>
 </ul>
 
 
@@ -2761,7 +3025,7 @@ This guide provides instructions on how to use the application, including key fu
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="July 9, 2026 17:22:37 UTC"><span class="timeago" datetime="2026-07-09T17:22:37+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="July 9, 2026 17:22:37 UTC">2026-07-09</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="September 3, 2026 16:51:38 UTC"><span class="timeago" datetime="2026-09-03T16:51:38+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="September 3, 2026 16:51:38 UTC">2026-09-03</span>
   </span>
 
     
