@@ -6,10 +6,10 @@ from coralnet_toolbox.MachineLearning.MergeDatasets.QtBase import Base
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class Classify(Base):
+class Detect(Base):
     # Read by Base during setup, so it has to be a class attribute rather than
     # something assigned after super().__init__ has already built the layout.
-    task = 'classify'
+    task = 'detect'
 
     def __init__(self, parent=None):
         """
@@ -18,4 +18,4 @@ class Classify(Base):
         :param parent: Parent widget, default is None.
         """
         super().__init__(parent)
-        self.setWindowTitle("Merge Classification Datasets")
+        self.setWindowTitle("Merge Detection Datasets")

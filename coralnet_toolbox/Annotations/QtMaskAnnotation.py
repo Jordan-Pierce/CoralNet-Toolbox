@@ -1998,3 +1998,78 @@ class MaskAnnotation(Annotation):
     def __repr__(self):
         return (f"MaskAnnotation(id={self.id}, image_path={self.image_path}, "
                 f"shape={self.mask_data.shape})")
+
+
+def build_mask_annotation(image_path,
+                          source_mask,
+                          value_to_label,
+                          project_labels,
+                          shape=None,
+                          rasterio_src=None,
+                          transparency=128):
+    """Build a MaskAnnotation from an externally authored mask array.
+
+    Importers read masks whose pixel values mean whatever the producing tool
+    decided -- a YOLO class index, or an RGB colour. Those values carry no
+    weight internally: a MaskAnnotation stores its own class IDs, assigned by
+    `sync_label_map` in project-label order. This translates one to the other,
+    and is shared by every importer so the translation exists in one place.
+
+    Args:
+        image_path (str): Image the mask belongs to.
+        source_mask (np.ndarray): The mask as read from disk. 2D for
+            integer-valued (semantic) masks, HxWx3 for RGB ones.
+        value_to_label (dict): External pixel value -> Label. Keys are ints for
+            a 2D mask and (r, g, b) tuples for an RGB one. Any value absent
+            from this mapping stays background, which is how "ignore" values
+            and classes the user unchecked are dropped.
+        project_labels (list): Every Label in the project, in order.
+        shape (tuple): (height, width) for the annotation, when it must match
+            the image rather than the mask file. Defaults to the mask's own.
+        rasterio_src: Open rasterio dataset for the image, if there is one.
+        transparency (int): Initial display transparency.
+
+    Returns:
+        MaskAnnotation: The annotation, with its canvas built.
+
+    Raises:
+        ValueError: If the mask's dimensions do not match `shape`.
+    """
+    height, width = shape if shape else source_mask.shape[:2]
+
+    if source_mask.shape[:2] != (height, width):
+        raise ValueError(
+            f"Mask is {source_mask.shape[1]}x{source_mask.shape[0]}, "
+            f"but the image is {width}x{height}."
+        )
+
+    internal_mask = np.zeros((height, width), dtype=np.uint8)
+
+    annotation = MaskAnnotation(
+        image_path=image_path,
+        mask_data=internal_mask,
+        initial_labels=project_labels,
+        transparency=transparency,
+        rasterio_src=rasterio_src,
+    )
+
+    for external_value, label in value_to_label.items():
+        class_id = annotation.label_id_to_class_id_map.get(label.id)
+        if class_id is None:
+            continue
+
+        if isinstance(external_value, (tuple, list)):
+            red, green, blue = external_value
+            matches = ((source_mask[:, :, 0] == red)
+                       & (source_mask[:, :, 1] == green)
+                       & (source_mask[:, :, 2] == blue))
+        else:
+            matches = source_mask == external_value
+
+        internal_mask[matches] = class_id
+
+    annotation.mask_data = internal_mask
+    annotation._initialize_canvas()
+
+    return annotation
+

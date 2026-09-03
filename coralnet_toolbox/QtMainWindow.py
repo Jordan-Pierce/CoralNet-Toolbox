@@ -89,6 +89,7 @@ from coralnet_toolbox.MachineLearning import (
     BatchInference as BatchInferenceDialog,
     ImportDetect as DetectImportDatasetDialog,
     ImportSegment as SegmentImportDatasetDialog,
+    ImportSemantic as SemanticImportDatasetDialog,
     ExportClassify as ClassifyExportDatasetDialog,
     ExportDetect as DetectExportDatasetDialog,
     ExportSegment as SegmentExportDatasetDialog,
@@ -98,6 +99,9 @@ from coralnet_toolbox.MachineLearning import (
     EvalSegment as SegmentEvaluateModelDialog,
     EvalSemantic as SemanticEvaluateModelDialog,
     MergeClassify as ClassifyMergeDatasetsDialog,
+    MergeDetect as DetectMergeDatasetsDialog,
+    MergeSegment as SegmentMergeDatasetsDialog,
+    MergeSemantic as SemanticMergeDatasetsDialog,
     OptimizeModel as OptimizeModelDialog,
     TileClassifyDataset as ClassifyTileDatasetDialog,
     TileDetectDataset as DetectTileDatasetDialog,
@@ -280,11 +284,15 @@ class MainWindow(QMainWindow):
         # Create dialogs (Machine Learning)
         self.detect_import_dataset_dialog = DetectImportDatasetDialog(self)
         self.segment_import_dataset_dialog = SegmentImportDatasetDialog(self)
+        self.semantic_import_dataset_dialog = SemanticImportDatasetDialog(self)
         self.classify_export_dataset_dialog = ClassifyExportDatasetDialog(self)
         self.detect_export_dataset_dialog = DetectExportDatasetDialog(self)
         self.segment_export_dataset_dialog = SegmentExportDatasetDialog(self)
         self.semantic_export_dataset_dialog = SemanticExportDatasetDialog(self)
         self.classify_merge_datasets_dialog = ClassifyMergeDatasetsDialog(self)
+        self.detect_merge_datasets_dialog = DetectMergeDatasetsDialog(self)
+        self.segment_merge_datasets_dialog = SegmentMergeDatasetsDialog(self)
+        self.semantic_merge_datasets_dialog = SemanticMergeDatasetsDialog(self)
         self.pretrain_model_dialog = PreTrainModelDialog(self)
         self.classify_train_model_dialog = ClassifyTrainModelDialog(self)
         self.detect_train_model_dialog = DetectTrainModelDialog(self)
@@ -423,8 +431,8 @@ class MainWindow(QMainWindow):
         # Add a separator
         self.import_menu.addSeparator()
 
-        # Dataset submenu
-        self.import_dataset_menu = self.import_menu.addMenu("Dataset")
+        # AI-Ready Datasets submenu
+        self.import_dataset_menu = self.import_menu.addMenu("AI-Ready Datasets")
         # Import Detection Dataset submenu
         self.import_detect_dataset_action = QAction("Detect", self)
         self.import_detect_dataset_action.setToolTip("Import object detection dataset (YOLO format)")
@@ -432,9 +440,14 @@ class MainWindow(QMainWindow):
         self.import_dataset_menu.addAction(self.import_detect_dataset_action)
         # Import Segmentation Dataset submenu
         self.import_segment_dataset_action = QAction("Segment", self)
-        self.import_segment_dataset_action.setToolTip("Import segmentation dataset (YOLO format)")
+        self.import_segment_dataset_action.setToolTip("Import instance segmentation dataset (YOLO format)")
         self.import_segment_dataset_action.triggered.connect(self.segment_import_dataset_dialog.exec_)
         self.import_dataset_menu.addAction(self.import_segment_dataset_action)
+        # Import Semantic Segmentation Dataset submenu
+        self.import_semantic_dataset_action = QAction("Semantic", self)
+        self.import_semantic_dataset_action.setToolTip("Import semantic segmentation dataset (YOLO format, PNG masks)")
+        self.import_semantic_dataset_action.triggered.connect(self.semantic_import_dataset_dialog.exec_)
+        self.import_dataset_menu.addAction(self.import_semantic_dataset_action)
 
         # Export menu
         self.export_menu = self.file_menu.addMenu("Export")
@@ -505,8 +518,8 @@ class MainWindow(QMainWindow):
         # Add a separator
         self.export_menu.addSeparator()
 
-        # Dataset submenu
-        self.export_dataset_menu = self.export_menu.addMenu("Dataset")
+        # AI-Ready Datasets submenu
+        self.export_dataset_menu = self.export_menu.addMenu("AI-Ready Datasets")
         # Export Classification Dataset
         self.export_classify_dataset_action = QAction("Classify", self)
         self.export_classify_dataset_action.setToolTip("Export classification dataset (YOLO format)")
@@ -644,7 +657,22 @@ class MainWindow(QMainWindow):
         self.ml_classify_merge_datasets_action.setToolTip("Merge multiple classification datasets together")
         self.ml_classify_merge_datasets_action.triggered.connect(self.open_classify_merge_datasets_dialog)
         self.ml_merge_datasets_menu.addAction(self.ml_classify_merge_datasets_action)
-        
+        # Merge Detection Datasets
+        self.ml_detect_merge_datasets_action = QAction("Detect", self)
+        self.ml_detect_merge_datasets_action.setToolTip("Merge multiple detection datasets together")
+        self.ml_detect_merge_datasets_action.triggered.connect(self.open_detect_merge_datasets_dialog)
+        self.ml_merge_datasets_menu.addAction(self.ml_detect_merge_datasets_action)
+        # Merge Instance Segmentation Datasets
+        self.ml_segment_merge_datasets_action = QAction("Segment", self)
+        self.ml_segment_merge_datasets_action.setToolTip("Merge multiple instance segmentation datasets together")
+        self.ml_segment_merge_datasets_action.triggered.connect(self.open_segment_merge_datasets_dialog)
+        self.ml_merge_datasets_menu.addAction(self.ml_segment_merge_datasets_action)
+        # Merge Semantic Segmentation Datasets
+        self.ml_semantic_merge_datasets_action = QAction("Semantic", self)
+        self.ml_semantic_merge_datasets_action.setToolTip("Merge multiple semantic segmentation datasets together")
+        self.ml_semantic_merge_datasets_action.triggered.connect(self.open_semantic_merge_datasets_dialog)
+        self.ml_merge_datasets_menu.addAction(self.ml_semantic_merge_datasets_action)
+
         # Tile Dataset submenu
         self.tile_dataset_menu = self.ml_menu.addMenu("Tile Dataset")
         # Tile Classify Dataset
@@ -1298,34 +1326,54 @@ class MainWindow(QMainWindow):
         # 3. Explicitly arrange the docks using PyQtADS
         # --------------------------------------------------
 
-        # 1. Add Workspace dock first as the central anchor
+        # This mirrors Layout/factory_default.json, the layout restored on a
+        # normal launch. It is what users see when that file is missing or
+        # rejected, so the two are kept in step: three full-height columns --
+        # Labels, the workspace, and the inspector stack.
+
+        # 1. Workspace dock first: it anchors the middle column.
         annotation_area = self.dock_manager.addDockWidget(ads.TopDockWidgetArea, self.annotation_dock)
-        
-        # 2. Add Image dock to the right of the Annotation dock
-        raster_area = self.dock_manager.addDockWidget(ads.RightDockWidgetArea, self.rasters_dock, annotation_area)
-        
-        # 3. Add Label dock below the Image dock 
-        label_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.labels_dock, raster_area)
 
-        # 3. Add Confidence dock below the Label dock
-        conf_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.confidence_dock, label_area)
-        
-        # 3b. TAB the Metadata dock into Confidence -- both answer "what is
-        # this annotation?", so they share one tab group rather than stacking.
-        self.dock_manager.addDockWidget(ads.CenterDockWidgetArea, self.metadata_dock, conf_area)
-        conf_area.setCurrentDockWidget(self.confidence_dock)
+        # 2. Labels as the left column. Passing no target area adds it to the
+        # container rather than splitting a neighbour, so it runs full height.
+        label_area = self.dock_manager.addDockWidget(ads.LeftDockWidgetArea, self.labels_dock)
 
-        # 4. Add Performance dock below Confidence
-        perf_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.performance_dock, conf_area)
+        # 3. Rasters opens the right column, also container-level, also full height.
+        raster_area = self.dock_manager.addDockWidget(ads.RightDockWidgetArea, self.rasters_dock)
 
-        # 5. TAB the Timer dock into Performance, but hide it initially
-        timer_area = self.dock_manager.addDockWidget(ads.CenterDockWidgetArea, self.timer_dock, perf_area)
-        
-        # 6. Add Annotation Gallery to the Bottom of the WORKSPACE explicitly
+        # 4. Metadata below Rasters, with Confidence TABBED into it -- both
+        # answer "what is this annotation?", so they share one tab group
+        # rather than stacking. Metadata is the tab that opens.
+        meta_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.metadata_dock, raster_area)
+        conf_area = self.dock_manager.addDockWidget(ads.CenterDockWidgetArea, self.confidence_dock, meta_area)
+        meta_area.setCurrentDockWidget(self.metadata_dock)
+
+        # 5. Performance below that, with Timer tabbed alongside it.
+        perf_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.performance_dock, meta_area)
+        self.dock_manager.addDockWidget(ads.CenterDockWidgetArea, self.timer_dock, perf_area)
+
+        # 6. Gallery below the workspace, with Embeddings to its LEFT so the
+        # scatter plot sits beside the thumbnails it indexes, not past them.
         gallery_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.gallery_dock, annotation_area)
-        
-        # 7. Add Embedding Viewer to the Right of the Annotation Gallery
-        embed_area = self.dock_manager.addDockWidget(ads.RightDockWidgetArea, self.embeddings_dock, gallery_area)
+        embed_area = self.dock_manager.addDockWidget(ads.LeftDockWidgetArea, self.embeddings_dock, gallery_area)
+
+        # 7. Proportions, taken from the same saved layout. setSplitterSizes
+        # scales these against each splitter's real width, so they act as
+        # ratios and survive a different screen size.
+        try:
+            self.dock_manager.setSplitterSizes(label_area, [316, 1722, 464])
+            self.dock_manager.setSplitterSizes(annotation_area, [652, 651])
+            self.dock_manager.setSplitterSizes(embed_area, [859, 858])
+            self.dock_manager.setSplitterSizes(raster_area, [652, 651, 0])
+        except Exception as e:
+            # Cosmetic only, and the two supported ADS builds differ; equal
+            # splits are a fine outcome next to failing to start.
+            print(f"Could not apply default dock proportions: {e}")
+
+        # 8. Performance and Timer are diagnostics: present in the Windows
+        # menu, closed until asked for.
+        self.performance_dock.toggleView(False)
+        self.timer_dock.toggleView(False)
 
         # Populate the Windows menu with dock toggle actions
         dock_windows = [
@@ -1361,6 +1409,12 @@ class MainWindow(QMainWindow):
         # Load submenu
         self.load_layout_menu = self.layout_menu.addMenu("Load")
         self.populate_load_layout_menu()
+
+        # Reset action
+        self.reset_layout_action = QAction("Reset", self)
+        self.reset_layout_action.setToolTip("Restore the dock arrangement shipped with the application.")
+        self.reset_layout_action.triggered.connect(self.reset_layout_to_factory)
+        self.layout_menu.addAction(self.reset_layout_action)
 
         self.populate_scale_menu()
         
@@ -2795,13 +2849,33 @@ class MainWindow(QMainWindow):
         """Load a specific layout configuration."""
         success = QtLayoutManager.load_layout(self.dock_manager, layout_name)
         if success:
-            pass
+            self._post_layout_restore()
         else:
             QMessageBox.warning(
                 self,
                 "Load Failed",
                 f"Failed to load layout '{layout_name}'."
             )
+
+    def reset_layout_to_factory(self):
+        """Restore the factory layout shipped with the package."""
+        if QtLayoutManager.load_factory_default(self.dock_manager):
+            self._post_layout_restore()
+        else:
+            QMessageBox.warning(
+                self,
+                "Reset Failed",
+                "Failed to restore the default layout."
+            )
+
+    def _post_layout_restore(self):
+        """Fix up docks a restored layout could not place, and restyle splitters.
+
+        Dock menu checkmarks need no work here: each action tracks its dock's
+        visibilityChanged signal.
+        """
+        self._reattach_orphaned_docks()
+        self._apply_dock_splitter_width()
 
     def populate_scale_menu(self):
         """Populate the Scale submenu with auto and fixed percentage options."""
@@ -3257,6 +3331,30 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.classify_merge_datasets_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_detect_merge_datasets_dialog(self):
+        """Open the Detect Merge Datasets dialog to merge datasets."""
+        try:
+            self.untoggle_all_tools()
+            self.detect_merge_datasets_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_segment_merge_datasets_dialog(self):
+        """Open the Segment Merge Datasets dialog to merge datasets."""
+        try:
+            self.untoggle_all_tools()
+            self.segment_merge_datasets_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_semantic_merge_datasets_dialog(self):
+        """Open the Semantic Merge Datasets dialog to merge datasets."""
+        try:
+            self.untoggle_all_tools()
+            self.semantic_merge_datasets_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

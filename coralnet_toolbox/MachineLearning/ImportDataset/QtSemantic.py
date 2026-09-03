@@ -1,5 +1,4 @@
-from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import (QGroupBox, QLabel, QFormLayout, QComboBox, QVBoxLayout)
+from PyQt5.QtWidgets import (QGroupBox, QLabel, QFormLayout, QVBoxLayout)
 
 from coralnet_toolbox.MachineLearning.ImportDataset.QtBase import Base
 
@@ -9,14 +8,14 @@ from coralnet_toolbox.MachineLearning.ImportDataset.QtBase import Base
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class Segment(Base):
+class Semantic(Base):
     """
-    Dialog for importing datasets for instance segmentation.
+    Dialog for importing datasets for semantic segmentation.
     """
     def __init__(self, main_window, parent=None):
         super().__init__(main_window, parent)
-        self.setWindowTitle('Import Instance Segmentation Dataset')
-        self.task = 'segment'
+        self.setWindowTitle('Import Semantic Segmentation Dataset')
+        self.task = 'semantic'
 
     def setup_info_layout(self):
         """Setup the info layout"""
@@ -24,8 +23,10 @@ class Segment(Base):
         layout = QVBoxLayout()
 
         # Create a QLabel with explanatory text and hyperlink
-        info_text = ("Import a YOLO-formatted Instance Segmentation dataset. Polygon masks are converted to "
-                     "Polygon or Rectangle annotations, and labels are created from the dataset's class names.")
+        info_text = ("Import a YOLO-formatted Semantic Segmentation dataset. Single-channel masks are converted "
+                     "to one Mask annotation per image, where each pixel value is the class ID.\n"
+                     "Masks must share the base name of their image, and only lossless formats are read "
+                     "(PNG, TIF, TIFF). Pixel value 255 is the reserved ignore label.")
         info_label = QLabel(info_text)
 
         info_label.setOpenExternalLinks(True)
@@ -41,11 +42,14 @@ class Segment(Base):
         group_box = QGroupBox("Import Options")
         layout = QFormLayout(group_box)
 
-        # Import as combo box
+        # Unlike detection and instance segmentation there is no representation
+        # to pick: a semantic mask imports as one MaskAnnotation per image, so
+        # the "Import as" combo is deliberately absent. Base.start_processing
+        # checks for it rather than assuming every task has one.
         import_as_label = QLabel("Import as:")
-        self.import_as_combo = QComboBox()
-        self.import_as_combo.addItems(["Polygons (Default)", "Rectangles"])
-        self.import_as_combo.setToolTip("Format for imported annotations.\nPolygons (Default): Use precise polygon shapes from segmentation data.\nRectangles: Simplify to bounding boxes (faster, less precise).")
-        layout.addRow(import_as_label, self.import_as_combo)
+        description = QLabel("Masks (one per image)")
+        description.setToolTip("Semantic masks are imported as a single MaskAnnotation per image.\n"
+                               "Each pixel value is the class ID it belongs to.")
+        layout.addRow(import_as_label, description)
 
         self.layout.addWidget(group_box)

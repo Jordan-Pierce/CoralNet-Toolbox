@@ -95,6 +95,9 @@ class QtLayoutManager:
     CACHE_BASE = ".cache"
     LAYOUTS_SUBDIR = "layout"
     DEFAULT_LAYOUT_NAME = "default"
+
+    # Factory layout shipped with the package (read-only, never overwritten)
+    FACTORY_LAYOUT_FILE = "factory_default.json"
     
     @classmethod
     def get_cache_dir(cls) -> Path:
@@ -122,6 +125,19 @@ class QtLayoutManager:
         """
         cache_dir = cls.get_cache_dir()
         return cache_dir / f"{layout_name}.json"
+
+    @classmethod
+    def get_factory_layout_path(cls) -> Path:
+        """
+        Get the path to the factory layout shipped inside the package.
+
+        This file is read-only from the application's point of view: it is the
+        layout new users see on first launch, and the target of a layout reset.
+
+        Returns:
+            Path: Full path to the packaged factory layout JSON file
+        """
+        return Path(__file__).parent / cls.FACTORY_LAYOUT_FILE
     
     @classmethod
     def list_available_layouts(cls) -> list:
@@ -187,6 +203,56 @@ class QtLayoutManager:
             return False
     
     @classmethod
+    def _restore_from_path(cls, dock_manager, layout_path: Path) -> bool:
+        """
+        Restore a dock layout from a specific JSON file on disk.
+
+        Shared by the cached-layout and factory-layout entry points.
+
+        Args:
+            dock_manager: The PyQtAds CDockManager instance
+            layout_path: Path to the layout JSON file
+
+        Returns:
+            bool: True if restored successfully, False otherwise
+        """
+        try:
+            # Check if layout file exists
+            if not layout_path.exists():
+                print(f"ℹ️ Layout file not found: {layout_path}")
+                return False
+
+            # Read JSON and decode state
+            with open(layout_path, 'r') as f:
+                config = json.load(f)
+
+            state_b64 = config.get('dock_state')
+            if not state_b64:
+                print(f"⚠️ Invalid layout file (missing dock_state): {layout_path}")
+                return False
+
+            # Decode base64 back to QByteArray
+            state_bytes = base64.b64decode(state_b64.encode('utf-8'))
+            state = QByteArray(state_bytes)
+
+            # Restore using PyQtAds
+            success = dock_manager.restoreState(state)
+
+            if success:
+                print(f"✅ Layout restored from {layout_path}")
+            else:
+                print(f"⚠️ Failed to restore layout (PyQtAds rejected state): {layout_path}")
+
+            return success
+
+        except json.JSONDecodeError as e:
+            print(f"⚠️ Failed to parse layout JSON '{layout_path}': {e}")
+            return False
+        except Exception as e:
+            print(f"⚠️ Failed to load layout '{layout_path}': {e}")
+            return False
+
+    @classmethod
     def load_layout(cls, dock_manager, layout_name: str = DEFAULT_LAYOUT_NAME) -> bool:
         """
         Restore a dock layout from a saved configuration file.
@@ -198,43 +264,23 @@ class QtLayoutManager:
         Returns:
             bool: True if restored successfully, False otherwise
         """
-        try:
-            layout_path = cls.get_layout_path(layout_name)
-            
-            # Check if layout file exists
-            if not layout_path.exists():
-                print(f"ℹ️ Layout file not found: {layout_path}")
-                return False
-            
-            # Read JSON and decode state
-            with open(layout_path, 'r') as f:
-                config = json.load(f)
-            
-            state_b64 = config.get('dock_state')
-            if not state_b64:
-                print(f"⚠️ Invalid layout file (missing dock_state): {layout_path}")
-                return False
-            
-            # Decode base64 back to QByteArray
-            state_bytes = base64.b64decode(state_b64.encode('utf-8'))
-            state = QByteArray(state_bytes)
-            
-            # Restore using PyQtAds
-            success = dock_manager.restoreState(state)
-            
-            if success:
-                print(f"✅ Layout restored from {layout_path}")
-            else:
-                print(f"⚠️ Failed to restore layout (PyQtAds rejected state): {layout_path}")
-            
-            return success
-            
-        except json.JSONDecodeError as e:
-            print(f"⚠️ Failed to parse layout JSON '{layout_name}': {e}")
-            return False
-        except Exception as e:
-            print(f"⚠️ Failed to load layout '{layout_name}': {e}")
-            return False
+        return cls._restore_from_path(dock_manager, cls.get_layout_path(layout_name))
+
+    @classmethod
+    def load_factory_default(cls, dock_manager) -> bool:
+        """
+        Restore the factory layout shipped with the package.
+
+        Used on first launch (no cached layout yet) and by an explicit layout
+        reset. Never writes to the packaged file.
+
+        Args:
+            dock_manager: The PyQtAds CDockManager instance
+
+        Returns:
+            bool: True if restored successfully, False otherwise
+        """
+        return cls._restore_from_path(dock_manager, cls.get_factory_layout_path())
     
     @classmethod
     def save_and_close(cls, dock_manager, layout_name: str = DEFAULT_LAYOUT_NAME) -> None:
@@ -280,18 +326,27 @@ class QtLayoutManager:
     def restore_or_default(cls, dock_manager, layout_name: str = DEFAULT_LAYOUT_NAME,
                            fallback_fn=None) -> None:
         """
-        Restore layout, falling back to default if it fails.
-        
+        Restore layout, falling back to the packaged factory layout and then to
+        `fallback_fn` if that also fails.
+
+        On a first launch there is no cached layout, so the factory layout is
+        what new users see.
+
         Args:
             dock_manager: The PyQtAds CDockManager instance
             layout_name: Name of the layout to restore
-            fallback_fn: Optional callable to invoke if restore fails
+            fallback_fn: Optional callable to invoke if every restore fails
                         (e.g., reset_layout_to_default)
         """
         try:
             restored = cls.load_layout(dock_manager, layout_name)
+
+            if not restored:
+                print("🔄 Falling back to packaged factory layout")
+                restored = cls.load_factory_default(dock_manager)
+
             if not restored and fallback_fn:
-                print("🔄 Falling back to default layout")
+                print("🔄 Falling back to built-in dock arrangement")
                 fallback_fn()
         except Exception as e:
             print(f"⚠️ Error during automatic layout restore: {e}")

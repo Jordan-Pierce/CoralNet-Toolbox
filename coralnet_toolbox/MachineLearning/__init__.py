@@ -18,6 +18,7 @@ from .BatchInference.QtBatchInference import BatchInferenceDialog as BatchInfere
 
 from .ImportDataset.QtDetect import Detect as ImportDetect
 from .ImportDataset.QtSegment import Segment as ImportSegment
+from .ImportDataset.QtSemantic import Semantic as ImportSemantic
 
 from .ExportDataset.QtClassify import Classify as ExportClassify
 from .ExportDataset.QtDetect import Detect as ExportDetect
@@ -30,6 +31,9 @@ from .EvaluateModel.QtSegment import Segment as EvalSegment
 from .EvaluateModel.QtSemantic import Semantic as EvalSemantic
 
 from .MergeDatasets.QtClassify import Classify as MergeClassify
+from .MergeDatasets.QtDetect import Detect as MergeDetect
+from .MergeDatasets.QtSegment import Segment as MergeSegment
+from .MergeDatasets.QtSemantic import Semantic as MergeSemantic
 from .OptimizeModel.QtBase import Base as OptimizeModel
 
 from .TileDataset.QtClassify import Classify as TileClassifyDataset
@@ -52,6 +56,7 @@ __all__ = [
     'BatchInference',
     'ImportDetect', 
     'ImportSegment',
+    'ImportSemantic',
     'ExportClassify', 
     'ExportDetect', 
     'ExportSegment',
@@ -64,6 +69,9 @@ __all__ = [
     'TileDetectDataset',
     'TileSegmentDataset',
     'TileSemanticDataset',
-    'MergeClassify', 
+    'MergeClassify',
+    'MergeDetect',
+    'MergeSegment',
+    'MergeSemantic',
     'OptimizeModel'
 ]

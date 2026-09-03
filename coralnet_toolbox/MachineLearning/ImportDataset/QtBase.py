@@ -3,7 +3,7 @@ import warnings
 import os
 import uuid
 import yaml
-import glob
+import rasterio
 import shutil
 import ujson as json
 
@@ -15,14 +15,277 @@ from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QVBoxLayout
 
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
+from coralnet_toolbox.Annotations.QtMaskAnnotation import build_mask_annotation
+
+from coralnet_toolbox.IO.QtImportImages import SUPPORTED_IMAGE_EXTENSIONS
+
+# Semantic masks are single-channel class-ID rasters, so only lossless
+# formats are accepted: JPEG compression would rewrite the very integers
+# that carry the class.
+MASK_EXTENSIONS = ('.png', '.tif', '.tiff')
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
-from coralnet_toolbox.utilities import rasterio_open
 from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Dataset Discovery
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def _split_entries(data):
+    """Return the raw train/val/test entries from a parsed data.yaml.
+
+    Each key may hold a single path or a list of them, and any of them may be
+    absent. Everything is normalized to a flat list of strings.
+    """
+    entries = []
+    for key in ('train', 'val', 'valid', 'test'):
+        value = data.get(key)
+        if not value:
+            continue
+        if isinstance(value, (list, tuple)):
+            entries.extend(str(item) for item in value if item)
+        else:
+            entries.append(str(value))
+    return entries
+
+
+def _candidate_dirs(entry, root, yaml_dir):
+    """Yield the places an image directory named by an entry could actually be.
+
+    A data.yaml is a hint, not a guarantee. Exports from Roboflow and Colab
+    routinely carry an absolute path from the machine that produced them
+    (/content/datasets/...), which is dead as soon as the folder is copied
+    anywhere else. The YAML's own directory is the one location known to be
+    real -- the user just picked it in a file dialog -- so every candidate is
+    ultimately anchored there.
+
+    Ordering is most-trusted first: the YAML taken at its word, then the entry
+    relative to the YAML, then progressively longer tails of the entry
+    re-anchored at the YAML's directory, so that a stale
+    /content/datasets/coco8/images/train is retried as <yaml_dir>/train, then
+    <yaml_dir>/images/train, and so on.
+    """
+    entry = entry.strip().replace('\\', '/').rstrip('/')
+    if not entry:
+        return
+
+    if root:
+        yield os.path.normpath(os.path.join(root, entry))
+    yield os.path.normpath(os.path.join(yaml_dir, entry))
+
+    # Re-anchor the tail. Bounded because a single mis-rooted path never needs
+    # more than a handful of segments to line up.
+    parts = [part for part in entry.split('/') if part not in ('', '.', '..')]
+    for depth in range(1, min(len(parts), 6) + 1):
+        yield os.path.normpath(os.path.join(yaml_dir, *parts[-depth:]))
+
+
+def _resolve_image_dir(entry, root, yaml_dir):
+    """Return the first candidate directory that exists, or None.
+
+    A split entry is allowed to name a .txt file listing image paths rather
+    than a directory. That form is not supported here, so it resolves to None
+    and the caller falls back to scanning the tree.
+    """
+    seen = set()
+    for candidate in _candidate_dirs(entry, root, yaml_dir):
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if os.path.isdir(candidate):
+            return candidate
+    return None
+
+
+def _sidecar_dir_for(image_dir, sidecar_name):
+    """Map an image directory to the parallel directory holding its sidecars.
+
+    Substitutes the LAST path segment named 'images' with the sidecar's own
+    folder name, which is the rule the YOLO loaders themselves use. One rule
+    covers both accepted layouts, because in each of them the two directories
+    are siblings at the same depth:
+
+        split-first    train/images  ->  train/labels,  train/masks
+        images-first   images/train  ->  labels/train,  masks/train
+    """
+    parts = os.path.normpath(image_dir).replace('\\', '/').split('/')
+    for index in range(len(parts) - 1, -1, -1):
+        if parts[index].lower() == 'images':
+            parts[index] = sidecar_name
+            return os.path.normpath('/'.join(parts))
+    return None
+
+
+def _normalize_image_dir(resolved):
+    """Descend into an 'images' subfolder when a split entry names the split root.
+
+    This toolbox's detection and instance-segmentation exports write
+    ``train: train`` rather than ``train: train/images``, so the entry resolves
+    to the split folder itself. Walking that folder still finds the images, but
+    _sidecar_dir_for works by substituting a path segment named 'images', and
+    with none present it returns None -- leaving every image unpaired. Stepping
+    down to the folder the images actually live in restores the pairing.
+    """
+    if os.path.basename(os.path.normpath(resolved)).lower() != 'images':
+        nested = os.path.join(resolved, 'images')
+        if os.path.isdir(nested):
+            return nested
+    return resolved
+
+
+def _is_excluded(path, exclude_dirs):
+    """Return True if a path lies inside one of the excluded directories."""
+    if not exclude_dirs:
+        return False
+    resolved = os.path.normcase(os.path.abspath(path))
+    for excluded in exclude_dirs:
+        excluded = os.path.normcase(os.path.abspath(excluded))
+        if resolved == excluded or resolved.startswith(excluded + os.sep):
+            return True
+    return False
+
+
+def _iter_images(image_dir, exclude_dirs):
+    """Yield every supported image file under a directory, recursively."""
+    for current_root, dir_names, file_names in os.walk(image_dir):
+        if _is_excluded(current_root, exclude_dirs):
+            dir_names[:] = []
+            continue
+        for file_name in file_names:
+            if os.path.splitext(file_name)[1].lower() in SUPPORTED_IMAGE_EXTENSIONS:
+                yield os.path.join(current_root, file_name)
+
+
+def _pair(image_path, image_dir, sidecar_dir, sidecar_exts):
+    """Return the sidecar file mirroring an image, or None if there is none.
+
+    Pairing is by path relative to the image directory rather than by bare
+    basename, so an img1.jpg present in several splits keeps its own sidecar
+    instead of colliding with its namesakes. Only the stem has to match -- the
+    mask for img1.jpg is img1.png -- so each accepted extension is tried in
+    turn.
+    """
+    if not sidecar_dir:
+        return None
+    relative = os.path.relpath(image_path, image_dir)
+    stem = os.path.join(sidecar_dir, os.path.splitext(relative)[0])
+    for extension in sidecar_exts:
+        candidate = stem + extension
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def discover_dataset_files(yaml_path, image_import_policy='annotated_only', exclude_dirs=(),
+                           sidecar_kind='labels'):
+    """Find every image in a YOLO dataset and the sidecar file that goes with it.
+
+    Both accepted YOLO layouts are supported, since the substitution that
+    locates the sidecar directory is the same in either:
+
+        dataset/train/images/img1.jpg     dataset/images/train/img1.jpg
+        dataset/train/labels/img1.txt     dataset/labels/train/img1.txt
+
+    Detection and instance segmentation keep their annotations in .txt label
+    files; semantic segmentation keeps them in single-channel mask rasters,
+    under the folder the YAML names in masks_dir.
+
+    The data.yaml's own split entries are consulted first because they state
+    the layout outright; a tree scan is the fallback for when those entries are
+    missing or point somewhere that no longer exists.
+
+    Args:
+        yaml_path (str): Path to the dataset's data.yaml.
+        image_import_policy (str): 'all' keeps images with no sidecar file,
+            'annotated_only' keeps only images that have one.
+        exclude_dirs (iterable): Directories to skip. The import's own output
+            folder is passed here -- it defaults to a subdirectory of the
+            dataset, so without this a second import would re-ingest the copies
+            the first one made.
+        sidecar_kind (str): 'labels' for the .txt annotations used by detection
+            and instance segmentation, 'masks' for the class-ID rasters used by
+            semantic segmentation.
+
+    Returns:
+        dict: image path -> sidecar path, or None when the image has none.
+    """
+    yaml_dir = os.path.dirname(os.path.abspath(yaml_path))
+    exclude_dirs = list(exclude_dirs or ())
+
+    try:
+        with open(yaml_path, 'r') as file:
+            data = yaml.safe_load(file) or {}
+    except Exception:
+        data = {}
+
+    if not isinstance(data, dict):
+        data = {}
+
+    # A relative 'path' is itself relative to the YAML, and an absolute one is
+    # only usable if it survived the trip to this machine.
+    root = str(data.get('path') or '').strip()
+    if root:
+        root = root.replace('\\', '/')
+        if not os.path.isabs(root):
+            root = os.path.join(yaml_dir, root)
+        if not os.path.isdir(root):
+            root = None
+    else:
+        root = None
+
+    # Semantic datasets name their mask folder in the YAML; 'masks' is the
+    # conventional default, and only the folder name is used -- the rest of the
+    # path comes from the image directory it sits beside.
+    if sidecar_kind == 'masks':
+        sidecar_name = str(data.get('masks_dir') or 'masks').strip()
+        sidecar_name = os.path.basename(sidecar_name.replace(chr(92), '/').rstrip('/')) or 'masks'
+        sidecar_exts = MASK_EXTENSIONS
+    else:
+        sidecar_name = 'labels'
+        sidecar_exts = ('.txt',)
+
+    image_dirs = []
+    for entry in _split_entries(data):
+        resolved = _resolve_image_dir(entry, root, yaml_dir)
+        if not resolved:
+            continue
+        resolved = _normalize_image_dir(resolved)
+        if resolved not in image_dirs and not _is_excluded(resolved, exclude_dirs):
+            image_dirs.append(resolved)
+
+    # Fallback: no usable split entries, so scan for directories named 'images'.
+    # Covers a YAML with no split keys at all, and one whose every entry points
+    # at a location that does not exist here.
+    if not image_dirs:
+        for current_root, dir_names, _file_names in os.walk(yaml_dir):
+            if _is_excluded(current_root, exclude_dirs):
+                dir_names[:] = []
+                continue
+            for dir_name in dir_names:
+                if dir_name.lower() == 'images':
+                    candidate = os.path.join(current_root, dir_name)
+                    if not _is_excluded(candidate, exclude_dirs):
+                        image_dirs.append(candidate)
+
+    source_map = {}
+    for image_dir in image_dirs:
+        sidecar_dir = _sidecar_dir_for(image_dir, sidecar_name)
+        for image_path in _iter_images(image_dir, exclude_dirs):
+            normalized = os.path.normpath(image_path)
+            # An image reachable through two entries keeps the first sidecar found.
+            if normalized in source_map and source_map[normalized]:
+                continue
+            sidecar_path = _pair(image_path, image_dir, sidecar_dir, sidecar_exts)
+            if sidecar_path is None and image_import_policy != 'all':
+                continue
+            source_map[normalized] = sidecar_path
+
+    return source_map
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Worker Class for Threading
@@ -70,7 +333,6 @@ class DatasetProcessor(QObject):
 
             if not source_image_label_map:
                 self.error.emit("No valid image/label pairs found in the dataset.")
-                self.finished.emit()
                 return
 
             # --- Step 2: Copy files with progress reporting ---
@@ -78,7 +340,6 @@ class DatasetProcessor(QObject):
             image_label_paths = self._copy_files_with_progress(source_image_label_map)
 
             if not self.is_running:
-                self.finished.emit()
                 return
 
             # Step 3: Parse label files and create annotation data
@@ -86,7 +347,6 @@ class DatasetProcessor(QObject):
             raw_annotations = self._create_raw_annotations(image_label_paths, class_names)
 
             if not self.is_running:
-                self.finished.emit()
                 return
 
             # Step 4 (REMOVED): The JSON export is no longer done here.
@@ -101,33 +361,26 @@ class DatasetProcessor(QObject):
             self.finished.emit()
 
     def _find_source_files(self):
-        """Finds all source image and label paths based on the import policy."""
-        dir_path = os.path.dirname(self.yaml_path)
-        image_paths = glob.glob(f"{dir_path}/**/images/*.*", recursive=True)
-        label_paths = glob.glob(f"{dir_path}/**/labels/*.txt", recursive=True)
-
-        source_map = {}
-        if self.image_import_policy == 'all':
-            # Policy: Find all images, and match labels to them if they exist
-            label_basenames_map = {os.path.splitext(os.path.basename(p))[0]: p for p in label_paths}
-            for img_path in image_paths:
-                img_basename = os.path.splitext(os.path.basename(img_path))[0]
-                label_path = label_basenames_map.get(img_basename, None)  # Label can be None
-                source_map[img_path] = label_path
-        else:
-            # Policy: Only find images that have a corresponding label file
-            image_basenames_map = {os.path.splitext(os.path.basename(p))[0]: p for p in image_paths}
-            for label_path in label_paths:
-                label_basename_no_ext = os.path.splitext(os.path.basename(label_path))[0]
-                if label_basename_no_ext in image_basenames_map:
-                    src_image_path = image_basenames_map[label_basename_no_ext]
-                    source_map[src_image_path] = label_path
-        return source_map
+        """Finds all source image and sidecar paths based on the import policy."""
+        sidecar_kind = 'masks' if self.task == 'semantic' else 'labels'
+        return discover_dataset_files(self.yaml_path,
+                                      image_import_policy=self.image_import_policy,
+                                      exclude_dirs=[self.output_folder],
+                                      sidecar_kind=sidecar_kind)
 
     def _copy_files_with_progress(self, source_image_label_map):
-        """Copies files and reports progress for each file."""
+        """Copies files and reports progress for each file.
+
+        Semantic masks are copied too, and are renamed in lockstep with their
+        image so the pair stays together in the flattened output.
+        """
         img_out_dir = os.path.join(self.output_folder, "images")
         os.makedirs(img_out_dir, exist_ok=True)
+
+        copy_masks = self.task == 'semantic'
+        mask_out_dir = os.path.join(self.output_folder, "masks")
+        if copy_masks:
+            os.makedirs(mask_out_dir, exist_ok=True)
 
         dest_label_map = {}
         for i, (src_image_path, label_path) in enumerate(source_image_label_map.items()):
@@ -146,6 +399,15 @@ class DatasetProcessor(QObject):
             dest_image_path = os.path.join(img_out_dir, new_img_basename)
             shutil.copy(src_image_path, dest_image_path)
 
+            if copy_masks and label_path:
+                # The mask takes the image's (possibly renamed) stem and keeps
+                # its own extension, which is how it is found again on load.
+                mask_ext = os.path.splitext(label_path)[1]
+                mask_stem = os.path.splitext(new_img_basename)[0]
+                dest_mask_path = os.path.join(mask_out_dir, mask_stem + mask_ext)
+                shutil.copy(label_path, dest_mask_path)
+                label_path = dest_mask_path
+
             dest_label_map[dest_image_path.replace("\\", "/")] = label_path
             self.progress_updated.emit(i + 1)
 
@@ -156,6 +418,9 @@ class DatasetProcessor(QObject):
         Parses label files, converts format if needed, and creates raw annotation data.
         Returns a list of annotation dictionaries.
         """
+        if self.task == 'semantic':
+            return self._create_raw_mask_records(image_label_paths)
+
         all_raw_annotations = []
         for i, (image_path, label_path) in enumerate(image_label_paths.items()):
             if not self.is_running:
@@ -166,7 +431,12 @@ class DatasetProcessor(QObject):
                 self.progress_updated.emit(i + 1)
                 continue
 
-            image_height, image_width = rasterio_open(image_path).shape
+            # Opened directly rather than through rasterio_open: that helper
+            # caches the dataset and never closes it, which would leave one
+            # GDAL handle open per image, and pops a QMessageBox on failure,
+            # which must not happen off the GUI thread.
+            with rasterio.open(image_path) as src:
+                image_height, image_width = src.shape
             with open(label_path, 'r') as file:
                 lines = file.readlines()
 
@@ -231,6 +501,27 @@ class DatasetProcessor(QObject):
             self.progress_updated.emit(i + 1)
         return all_raw_annotations
 
+    def _create_raw_mask_records(self, image_mask_paths):
+        """Pair each copied image with its mask for the GUI thread to load.
+
+        The masks themselves are deliberately not decoded here. A
+        MaskAnnotation allocates a QImage canvas, which has to happen on the
+        GUI thread, so this stage only reports which file belongs to which
+        image and leaves the reading to on_processing_complete.
+        """
+        records = []
+        for i, (image_path, mask_path) in enumerate(image_mask_paths.items()):
+            if not self.is_running:
+                break
+
+            if mask_path:
+                records.append({"type": "MaskAnnotation",
+                                "image_path": image_path,
+                                "mask_path": mask_path})
+
+            self.progress_updated.emit(i + 1)
+        return records
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Dialog Classes
@@ -246,7 +537,7 @@ class Base(QDialog):
 
         self.setWindowIcon(get_window_icon("coralnet.svg"))
         self.setWindowTitle("Import Dataset")
-        self.resize(500, 350)
+        self.resize(500, 450)
 
         self.task = None
         self.progress_bar = None
@@ -257,6 +548,7 @@ class Base(QDialog):
 
         self.layout = QVBoxLayout(self)
         self.setup_info_layout()
+        self.setup_options_layout()
         self.setup_yaml_layout()
         self.setup_output_layout()
         self.setup_buttons_layout()
@@ -265,6 +557,15 @@ class Base(QDialog):
         self.advanced_options_frame.setVisible(False)
 
     def setup_info_layout(self):
+        """
+        Set up the layout and widgets for the info layout.
+        """
+        raise NotImplementedError("Subclasses must implement method.")
+
+    def setup_options_layout(self):
+        """
+        Set up the layout and widgets for the task's import options.
+        """
         raise NotImplementedError("Subclasses must implement method.")
 
     def setup_yaml_layout(self):
@@ -437,7 +738,11 @@ class Base(QDialog):
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            image_paths = glob.glob(f"{os.path.dirname(self.yaml_path_label.text())}/**/images/*.*", recursive=True)
+            # The same discovery the worker will use, so the conflict check
+            # sees exactly the files that are about to be copied.
+            image_paths = discover_dataset_files(self.yaml_path_label.text(),
+                                                 image_import_policy='all',
+                                                 exclude_dirs=[self.output_folder])
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -481,7 +786,12 @@ class Base(QDialog):
                     excluded_classes.add(cb.text())
                 
         image_import_policy = 'all' if self.import_all_images_radio.isChecked() else 'annotated_only'
-        import_as = 'polygon' if 'Polygon' in self.import_as_combo.currentText() else 'rectangle'
+        # Semantic imports have no geometry to choose a representation for,
+        # so those dialogs do not build the combo at all.
+        if getattr(self, 'import_as_combo', None) is None:
+            import_as = 'mask'
+        else:
+            import_as = 'polygon' if 'Polygon' in self.import_as_combo.currentText() else 'rectangle'
 
         self.button_box.setEnabled(False)
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -515,6 +825,10 @@ class Base(QDialog):
         self.progress_bar.set_value(value)
 
     def on_processing_complete(self, raw_annotations, image_paths, parsing_errors):
+        if self.task == 'semantic':
+            self.on_mask_processing_complete(raw_annotations, image_paths, parsing_errors)
+            return
+
         progress_bar = ProgressBar(self, title="Adding Data to Project...")
         progress_bar.show()
 
@@ -595,6 +909,118 @@ class Base(QDialog):
         else:
             QMessageBox.information(self, "Dataset Imported", summary_message)
             
+    def get_class_id_to_label(self):
+        """Map each YOLO class ID to the project Label it should import as.
+
+        The checkbox list is built from the YAML's names in order, so its index
+        is the class ID -- which is also the pixel value in a semantic mask.
+        Two kinds of class are deliberately absent from the result, and so stay
+        background: ones the user unchecked, and a class literally named
+        "background", which is what this toolbox's own semantic export writes
+        at index 0 to mean "nothing here".
+        """
+        class_id_to_label = {}
+        for class_id, checkbox in enumerate(self.class_checkboxes):
+            if not checkbox.isChecked():
+                continue
+
+            class_name = checkbox.text()
+            if class_id == 0 and class_name.strip().lower() == 'background':
+                continue
+
+            label = self.main_window.label_window.add_label_if_not_exists(class_name,
+                                                                         refresh_ui=False)
+            class_id_to_label[class_id] = label
+
+        self.main_window.label_window.refresh_after_batch_add()
+        return class_id_to_label
+
+    def on_mask_processing_complete(self, raw_records, image_paths, parsing_errors):
+        """Attach a MaskAnnotation to each imported image.
+
+        Reading happens here rather than in the worker because a
+        MaskAnnotation builds a QImage canvas, which belongs on the GUI thread.
+        """
+        progress_bar = ProgressBar(self, title="Adding Data to Project...")
+        progress_bar.show()
+
+        added_paths = []
+        progress_bar.set_title(f"Adding {len(image_paths)} images...")
+        progress_bar.start_progress(len(image_paths))
+
+        for path in image_paths:
+            if self.image_window.raster_manager.add_raster(path, emit_signal=False):
+                added_paths.append(path)
+            progress_bar.update_progress()
+
+        class_id_to_label = self.get_class_id_to_label()
+        project_labels = list(self.main_window.label_window.labels)
+
+        errors = list(parsing_errors)
+        imported = 0
+
+        progress_bar.set_title(f"Importing {len(raw_records)} masks...")
+        progress_bar.start_progress(len(raw_records))
+
+        for record in raw_records:
+            image_path = record["image_path"]
+            mask_path = record["mask_path"]
+            try:
+                raster = self.image_window.raster_manager.get_raster(image_path)
+                if raster is None:
+                    raise ValueError("Image was not added to the project.")
+
+                # Read band 1: a semantic mask is single-channel by definition,
+                # and a palette PNG still carries the class IDs as its indices.
+                with rasterio.open(mask_path) as src:
+                    source_mask = src.read(1)
+
+                mask_annotation = build_mask_annotation(
+                    image_path=image_path,
+                    source_mask=source_mask,
+                    value_to_label=class_id_to_label,
+                    project_labels=project_labels,
+                    shape=(raster.height, raster.width),
+                    rasterio_src=raster.rasterio_src,
+                    transparency=self.main_window.get_transparency_value(),
+                )
+
+                if raster.mask_annotation is not None:
+                    raster.mask_annotation.remove_from_scene()
+                raster.mask_annotation = mask_annotation
+                imported += 1
+
+            except Exception as e:
+                errors.append(f"Could not import mask '{os.path.basename(mask_path)}': {e}\n")
+
+            progress_bar.update_progress()
+
+        progress_bar.finish_progress()
+        progress_bar.stop_progress()
+        progress_bar.close()
+
+        # Manually perform a full UI update exactly once.
+        self.image_window.update_search_bars()
+        self.image_window.filter_images()
+
+        if added_paths:
+            last_image_path = added_paths[-1]
+            self.image_window.load_image_by_path(last_image_path)
+            for path in added_paths:
+                self.image_window.update_image_annotations(path)
+            self.annotation_window.load_annotations()
+            self.annotation_window.load_mask_annotation()
+
+        summary_message = f"Dataset has been successfully imported ({imported} mask(s))."
+        if errors:
+            QMessageBox.warning(self,
+                                "Import Complete with Warnings",
+                                f"{summary_message}\n\nHowever, {len(errors)} issue(s) were found. "
+                                "Please review them below.",
+                                details='\n'.join(errors))
+        else:
+            QMessageBox.information(self, "Dataset Imported", summary_message)
+
     def _export_annotations_to_json(self, annotations_list, output_dir):
         """
         Merges the list of annotation objects into an existing annotations.json file,
@@ -642,6 +1068,10 @@ class Base(QDialog):
         QMessageBox.warning(self, "Error", message)
 
     def on_worker_finished(self):
+        # Already torn down: a duplicate delivery is a no-op.
+        if self.thread is None:
+            return
+
         if self.progress_bar:
             self.progress_bar.stop_progress()
             self.progress_bar.close()

@@ -272,17 +272,15 @@ class AnnotationItemDelegate(QtWidgets.QStyledItemDelegate):
                                 viewer = None
                         try:
                             if viewer and hasattr(viewer, 'main_window') and hasattr(viewer, 'annotation_window'):
-                                # select in gallery
-                                try:
-                                    viewer.clear_selection()
-                                except Exception:
-                                    pass
-                                try:
-                                    viewer.render_selection_from_ids([ann.id])
-                                except Exception:
-                                    pass
+                                # Navigate only. This gesture answers "where is this
+                                # one?", so the gallery / embedding selection the user
+                                # has built up is deliberately left untouched.
+                                manager = getattr(viewer.main_window, 'selection_manager', None)
+                                if manager is not None and hasattr(manager, 'navigate_to_annotation'):
+                                    manager.navigate_to_annotation(ann.id)
+                                    return True
 
-                                # Change image if needed and select annotation in AnnotationWindow
+                                # Fallback for when no SelectionManager is wired up.
                                 try:
                                     if viewer.annotation_window.current_image_path != ann.image_path:
                                         viewer.annotation_window.set_image(ann.image_path)
@@ -293,8 +291,11 @@ class AnnotationItemDelegate(QtWidgets.QStyledItemDelegate):
                                 except Exception:
                                     pass
                                 try:
-                                    if hasattr(viewer.annotation_window, 'center_on_annotation'):
-                                        viewer.annotation_window.center_on_annotation(ann)
+                                    zoom = getattr(viewer.annotation_window, 'center_and_zoom_on_annotation', None)
+                                    if zoom is None:
+                                        zoom = getattr(viewer.annotation_window, 'center_on_annotation', None)
+                                    if zoom is not None:
+                                        zoom(ann)
                                 except Exception:
                                     pass
                                 try:

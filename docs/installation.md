@@ -70,18 +70,18 @@ If `CUDA` is installed and `PyTorch` was built with it properly, you'll see a de
 When opening the `toolbox`, you will be notified if there is an update available. To upgrade to a specific version, run:
 
 ```bash
-# Upgrade to latest version
-uv pip install -U coralnet-toolbox
+# Upgrade to latest version (coralnet-toolbox only)
+uv pip install --upgrade coralnet-toolbox
 ```
 
 Or upgrade to a specific version:
 ```bash
-uv pip install -U coralnet-toolbox==[version_number]
+uv pip install coralnet-toolbox==[version_number]
 ```
 
-> **Fallback**: If `uv` fails, use `pip` instead: `pip install -U coralnet-toolbox`
+> **Fallback**: If `uv` fails, use `pip` instead: `pip install --upgrade coralnet-toolbox`
 
-> **Note**: If you have `torch` installed with `CUDA`, adding `-U` may trigger a regression to the CPU version. If this occurs, uninstall `torch` and `torchvision`, and reinstall the CUDA versions.
+> **Note**: Using `-U` or `--upgrade-all` upgrades **all packages**, which may trigger a regression to the CPU version of `torch`. To avoid this, use the commands above to upgrade only coralnet-toolbox. If you do experience a regression, uninstall `torch` and `torchvision`, and reinstall the CUDA versions.
 
 
 ## 🐍 Install from Source (GitHub Repository)
@@ -175,8 +175,7 @@ y
 ## 🧊 Alternative: One-Command Install with `pixi`
 
 > The `conda` + `uv` steps above are the supported default and what most users should follow.
-> `pixi` and Docker (below) are alternatives for those already comfortable
-> with those tools.
+> `pixi` is an alternative for those already comfortable with that tool.
 
 [`pixi`](https://pixi.sh) builds the whole environment -- Python, `Qt`, `GDAL`, and a `CUDA` build of
 `PyTorch` -- from a committed lock file, so every machine resolves to identical dependencies. No
@@ -197,18 +196,16 @@ pixi run start
 GPU support is automatic: `pixi` selects a `CUDA` build of `PyTorch` when your driver supports it,
 including Blackwell (RTX 50-series).
 
-> **Platforms**: Windows and Linux only. macOS is not yet supported on this path because
-> `conda-forge` has no `qt5-advanced-docking-system` build for Apple Silicon.
+> **Platforms**: Windows and Linux only. macOS is not supported because `conda-forge` has no `qt5-advanced-docking-system` build for Apple Silicon. **macOS users should use Docker** (see below).
 
 
-## ⚠️ MacOS Users
+## ⚠️ macOS Users
 
 > **Version 1.0.0 and later** rely heavily on `PyQtADS`, which cannot be installed on macOS. **Do not upgrade from version 0.0.105** until this is resolved.
 
-An optional workaround is to run the `toolbox` through Docker (see below). This
-sidesteps the problem entirely: `PyQtADS` and `Qt` run inside the Linux
-container and only the rendered interface reaches your browser, so nothing Qt
-related is installed on macOS at all.
+The recommended workaround is to run the `toolbox` through Docker (see below). This sidesteps the problem entirely: `PyQtADS` and `Qt` run inside the Linux container and only the rendered interface reaches your browser, so nothing Qt related is installed on macOS at all.
+
+### Docker on macOS
 
 Two macOS caveats:
 

@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QWidget, QTableWidget, QHeaderView, QAbstractItemView)
 
 from coralnet_toolbox.Annotations.QtMaskAnnotation import MaskAnnotation
+from coralnet_toolbox.Annotations.QtMaskAnnotation import build_mask_annotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Icons import get_icon, get_window_icon
@@ -547,40 +548,16 @@ class ImportMaskAnnotations(QDialog):
                         else:
                             source_mask = np.array(img.convert('RGB'))
 
-                    # Create the internal mask array
-                    height, width = raster.height, raster.width
-                    internal_mask = np.zeros((height, width), dtype=np.uint8)
-
-                    # Create temporary MaskAnnotation to get class ID mapping
-                    temp_mask_anno = MaskAnnotation(
+                    # Shared with the semantic dataset importer, so the
+                    # external-value to class-ID translation lives in one place.
+                    temp_mask_anno = build_mask_annotation(
                         image_path=raster.image_path,
-                        mask_data=internal_mask,
-                        initial_labels=project_labels,
+                        source_mask=source_mask,
+                        value_to_label=value_to_label,
+                        project_labels=project_labels,
+                        shape=(raster.height, raster.width),
                         rasterio_src=raster.rasterio_src
                     )
-
-                    # Translate external values to internal class IDs
-                    for ext_value, label in value_to_label.items():
-                        internal_class_id = temp_mask_anno.label_id_to_class_id_map.get(label.id)
-                        if internal_class_id is None:
-                            continue
-
-                        if self.detected_mode == 'semantic':
-                            # Simple integer comparison
-                            internal_mask[source_mask == ext_value] = internal_class_id
-                        else:
-                            # RGB comparison
-                            r, g, b = ext_value
-                            match_mask = (
-                                (source_mask[:, :, 0] == r)
-                                & (source_mask[:, :, 1] == g)
-                                & (source_mask[:, :, 2] == b)
-                            )
-                            internal_mask[match_mask] = internal_class_id
-
-                    # Update the mask data in the annotation
-                    temp_mask_anno.mask_data = internal_mask
-                    temp_mask_anno._initialize_canvas()
 
                     # If overwriting, remove old mask first
                     if raster.mask_annotation is not None:
