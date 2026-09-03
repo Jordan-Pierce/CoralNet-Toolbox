@@ -37,13 +37,13 @@ This guide provides instructions on how to use the application, including key fu
 Z-Channels overlay depth or elevation data on top of images for spatial analysis:
 
 **Supported Data Types**
-- **Depth Maps**: 2D array representing depth/distance values (typically from sensors or stereo reconstruction)
+- **Depth Maps**: 2D array representing depth / distance values (typically from sensors or stereo reconstruction)
 - **Digital Elevation Models (DEMs)**: Georeferenced elevation data for terrain analysis
 - Supports GeoTIFF, PNG, and other raster formats that can be loaded with rasterio
 
 **Importing Z-Channel Data**
 - <kbd>Right-Click</kbd> on highlighted images in Image Window
-- **Import Z-Channel**: Select depth/elevation file(s) to attach to image(s)
+- **Import Z-Channel**: Select depth / elevation file(s) to attach to image(s)
   - Files are automatically resized to match image dimensions if needed
   - Unit of measurement can be specified (meters, feet, centimeters, etc.)
 - **Batch Import**: Apply same Z-Channel to multiple selected images
@@ -52,10 +52,10 @@ Z-Channels overlay depth or elevation data on top of images for spatial analysis
 - Overlay appears in the Annotation Window alongside image and annotations
 - **Colormap Selection**: Dropdown in Status Bar to choose visualization style
   - Available colormaps: viridis, plasma, inferno, magma, cividis, twilight, etc.
-  - Different colormaps highlight different depth/elevation patterns
-- **Dynamic Range**: Enable/disable dynamic recoloring via Status Bar button
-  - When enabled: colormap automatically rescales to current viewport's min/max values
-  - When disabled: colormap uses image's global min/max (better for comparing multiple images)
+  - Different colormaps highlight different depth / elevation patterns
+- **Dynamic Range**: Enable / disable dynamic recoloring via Status Bar button
+  - When enabled: colormap automatically rescales to current viewport's min / max values
+  - When disabled: colormap uses image's global min / max (better for comparing multiple images)
 - **Opacity Control**: Adjust Z-Channel overlay transparency via Status Bar slider
   - 0% (transparent) shows only the image
   - 100% (opaque) shows full Z-Channel visualization
@@ -64,11 +64,11 @@ Z-Channels overlay depth or elevation data on top of images for spatial analysis
 **Measurement & Analysis**
 - **Scale Tool**: Distances and areas automatically account for Z-Channel (depth-corrected measurements)
 - **Hover Tooltips**: View exact Z value when mouse hovers over image
-- **Nodata Handling**: Automatically detects and masks NULL/missing values in Z data
+- **Nodata Handling**: Automatically detects and masks NULL / missing values in Z data
 
 **Removing Z-Channel Data**
 - <kbd>Right-Click</kbd> on highlighted images in Image Window
-- **Remove Z-Channel**: Clear depth/elevation data from selected image(s)
+- **Remove Z-Channel**: Clear depth / elevation data from selected image(s)
   - Annotation and other data remain intact
 
 ## Computer Vision Tasks
@@ -128,17 +128,23 @@ All dock windows (Annotation Window, Label Window, Image Window, Confidence Wind
 
 **Closing & Toggling Visibility**
 - **Close a Dock**: Click the <kbd>✕</kbd> button on the dock title bar
-  - Docked windows can be closed/hidden without losing their configuration
+  - Docked windows can be closed / hidden without losing their configuration
   - Closed docks can be reopened via menu or keyboard shortcut
   - Data is preserved when docks are hidden
-- **Toggle Dock Visibility**: View menu contains options to show/hide all docks
+- **Toggle Dock Visibility**: View menu contains options to show / hide all docks
   - Use keyboard shortcuts or menu items to toggle dock visibility
   - Useful for maximizing workspace for specific tasks
 
+**Default Layout**
+- A starting arrangement ships with the application and is used until a layout is saved
+- Docks that are closed in it, such as Performance and Timer, can be opened from **View** > **Windows**
+
 **Layout Persistence**
-- Dock positions, sizes, and floating state are automatically saved
-- Layout is restored when the application restarts
-- Can reset to default layout if needed
+- Dock positions, sizes, and floating state are automatically saved on exit and restored on the next launch
+- Saved layouts are written to `.cache/layout/`, next to the other cache directories
+- **View** > **Layout** > **Save**: Store the current arrangement under a name of your choosing
+- **View** > **Layout** > **Load**: Switch to any previously saved arrangement
+- **View** > **Layout** > **Reset**: Return to the default layout that ships with the application
 
 ## Menu Bar Actions
 
@@ -151,7 +157,7 @@ All dock windows (Annotation Window, Label Window, Image Window, Confidence Wind
   - Choose between binary (.bin) or JSON (.json) format when saving
   - **Binary Format (.bin)**: 
     - Smaller file size (significant space savings for large projects)
-    - Faster load/save times
+    - Faster load / save times
     - Not human-readable (cannot be edited with a text editor)
     - Recommended for production use and large datasets
   - **JSON Format (.json)**:
@@ -194,6 +200,7 @@ All dock windows (Annotation Window, Label Window, Image Window, Confidence Wind
       - **Split first**: `train/images/`, `train/labels/`, `val/images/`, `val/labels/`
       - **Images first**: `images/train/`, `images/val/`, `labels/train/`, `labels/val/`
       - The `train`, `val`, and `test` entries in the YAML are used to locate the data
+      - An entry naming the split folder itself (`train: train`) resolves to the `images` folder inside it
       - If those entries point somewhere that does not exist (common when a dataset is moved after being exported with an absolute path), the same folders are looked for alongside the YAML file instead
       - If the YAML has no split entries at all, the dataset folder is scanned for `images` directories
       - Semantic datasets substitute `masks` for `images` in the same way; the folder name is taken from the YAML's `masks_dir` entry when present
@@ -219,13 +226,13 @@ All dock windows (Annotation Window, Label Window, Image Window, Confidence Wind
     - **Viscore (CSV, JSON)**: Save annotation data in Viscore format
     - **TagLab (JSON)**: Save annotation data to a TagLab JSON file
     - **GeoJSON (JSON)**: Save annotations as GeoJSON for mapping software (only for GeoTIFFs with CRS and Transforms data)
-    - **Masks (PNG/BMP/TIF/RLE)**: Save annotations as segmentation mask images
+    - **Masks (PNG / BMP / TIF / RLE)**: Save annotations as segmentation mask images
       - **Export Modes** (choose one):
         - **Semantic Segmentation (Integer IDs)**: Each class assigned a unique integer value (0-255)
           - Best for: Training semantic segmentation models
           - Background value configurable (0 = Background, 255 = Ignore Index)
           - Use 255 for sparse annotations (model ignores unlabeled areas), 0 for exhaustive labeling
-        - **Structure from Motion (SfM) Binary Mask**: Binary foreground/background masks
+        - **Structure from Motion (SfM) Binary Mask**: Binary foreground / background masks
           - Best for: 3D reconstruction software (Metashape, Agisoft, etc.)
           - Foreground value: 255 (objects to keep), Background: 0 (areas to ignore)
           - Preserves depth information for photogrammetry pipelines
@@ -252,11 +259,11 @@ All dock windows (Annotation Window, Label Window, Image Window, Confidence Wind
         - **Negative Samples**: Export masks for images with NO annotations (useful for training)
       
       - **Label Configuration**:
-        - **Include/Exclude Labels**: Select which labels to include in export
+        - **Include / Exclude Labels**: Select which labels to include in export
         - **Layer Order**: Control rendering order for overlapping annotations
           - Labels higher in list drawn first (behind), lower in list drawn last (on top)
           - Important for complex scenes with overlapping annotations
-        - **Mask Values** (Semantic/SfM): Assign integer value (0-255) per label
+        - **Mask Values** (Semantic / SfM): Assign integer value (0-255) per label
         - **Colors** (Visualization): Automatically use label colors or customize
       
       - **Output**:
@@ -281,11 +288,11 @@ All dock windows (Annotation Window, Label Window, Image Window, Confidence Wind
       - Each polygon becomes a labeled instance in the mask
     - **Semantic**: Export semantic segmentation dataset
       - Exports Mask annotations for semantic segmentation
-      - Handles unlabeled/background regions
+      - Handles unlabeled / background regions
       - Useful for training pixel-wise segmentation models
     
     **Export Dataset Features** (all export types):
-    - **Train/Validation/Test Split**: Configurable ratios (default 70/20/10)
+    - **Train / Validation / Test Split**: Configurable ratios (default 70 / 20 / 10)
       - Split by image for static images
       - Split by frame for video data
     - **Label Selection**: Filter by specific labels or export all
@@ -341,7 +348,22 @@ All dock windows (Annotation Window, Label Window, Image Window, Confidence Wind
 ### Machine Learning
 
 - **Machine Learning**:
-  - **Merge Datasets**: Merge multiple Classification datasets together
+  - **Merge Datasets**: Combine multiple datasets of the same task into a single dataset
+    - **Classify**: Merge classification datasets
+    - **Detect**: Merge detection datasets
+    - **Segment**: Merge instance segmentation datasets
+    - **Semantic**: Merge semantic segmentation datasets
+    - **Selecting Datasets**: Choose each dataset by its `data.yaml` (Classify uses the dataset folder)
+      - An adjacent `class_mapping.json` is picked up automatically
+      - The **Merged Classes** table previews the combined class list and the ID each source dataset used for it
+    - **Class Resolution**: Classes are matched across datasets by name, not by ID
+      - The same ID usually means a different class in each dataset, so every annotation is rewritten to the merged numbering
+      - Classification datasets merge by class folder name; no file contents change
+    - **Filename Collisions**: Images sharing a name are renamed rather than overwritten, and their label or mask file is renamed to match
+    - **Semantic Specifics**:
+      - A class named `background` is placed at ID 0, and pixel value 255 stays the reserved ignore label
+      - Pixels holding a class that no dataset contributes are set to ignore
+    - **Output**: `data.yaml` with the merged class list, and `class_mapping.json` combining the label colors and codes from every source dataset
   - **Tile Dataset**: Split datasets into tiles for large-image processing
     - **Classify**: Tile classification datasets
     - **Detect**: Tile detection datasets
@@ -376,7 +398,7 @@ All dock windows (Annotation Window, Label Window, Image Window, Confidence Wind
     - **Live Mode**: Display inference results in real-time as the model processes
     - **Save Annotations**: Optional toggle to save generated annotations to the project
       - When disabled: Preview mode shows results without persisting to the project
-      - When enabled: Annotations are added to the project for each image/frame
+      - When enabled: Annotations are added to the project for each image / frame
 
 ### CoralNet
 
@@ -419,6 +441,8 @@ The gallery displays annotation crops as a scrollable grid of thumbnail images. 
 - **Confidence**: Group by confidence buckets (0-10%, 10-20%, ... 90-100%, plus Verified)
 - **Area**: Sort by annotation area (smallest to largest)
 - **Cluster**: Sort by K-Means clustering results from Embedding Viewer (enabled when clusters available)
+- **Similarity**: Sort by distance to the Embedding Viewer's last similarity anchor (enabled after a neighbour expansion)
+  - Anchors are grouped first, then bands of cosine similarity, with unranked annotations last
 
 **Display Controls**
 - **Isolate Selection**: Show only selected annotations (double-click empty space to exit)
@@ -427,10 +451,10 @@ The gallery displays annotation crops as a scrollable grid of thumbnail images. 
 
 **Selection & Navigation**
 - <kbd>Left-Click</kbd>: Select a single annotation
-- <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add/remove from selection
+- <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add / remove from selection
 - <kbd>Shift</kbd> + <kbd>Left-Click</kbd>: Select range between two annotations
 - <kbd>Ctrl</kbd> + <kbd>Drag</kbd>: Box-select multiple annotations
-- <kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Navigate to annotation in Annotation Window (zoomed/centered)
+- <kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Navigate to annotation in Annotation Window (zoomed / centered), leaving the current selection intact
 - <kbd>Double-Click</kbd>: Unselect all, exit isolation view
 - <kbd>Ctrl</kbd> + <kbd>A</kbd>: Select all annotations in current filtered view
 - <kbd>Ctrl</kbd> + <kbd>Space</kbd>: Confirm selected annotations with top machine confidence prediction
@@ -447,7 +471,7 @@ The embedding viewer displays annotations as points in 2D or 3D space, where pro
 - **Apply Embeddings Button**: Extract features and run dimensionality reduction pipeline (shows progress)
 
 **Advanced Embedding Settings** (expandable "Advanced" panel)
-- **PCA before reduction**: Apply PCA dimensionality reduction before TSNE/UMAP/LDA (auto-disabled for PCA)
+- **PCA before reduction**: Apply PCA dimensionality reduction before TSNE / UMAP / LDA (auto-disabled for PCA)
 - **PCA components**: Number of intermediate PCA dimensions (default 50; reduces high-dim features before final reduction)
 - **UMAP settings**:
   - **n_neighbors**: Number of neighbors for UMAP (2-150; default 15; higher = more global structure)
@@ -464,19 +488,26 @@ The embedding viewer displays annotations as points in 2D or 3D space, where pro
 - Cluster results are colored and can be sorted via the Annotation Viewer's "Cluster" sort option
 
 **Display & Navigation**
-- **Display Mode Toggle**: Switch between dots and sprite/thumbnail view
+- **Display Mode Toggle**: Switch between dots and sprite / thumbnail view
 - **Locate Button**: Show crosshair pointer to selected annotation
 - **Center Button**: Pan and zoom view to center on selected point(s)
 - **Home Button**: Reset view to fit all points
+- **Magnifier Lens**: Annotations nearest the cursor are always drawn as thumbnails, the rest stay dots
+  - Thumbnail size follows the current point / sprite size; the lens radius tightens as thumbnails grow
 
 **Interactive Controls**
 - <kbd>Left-Click</kbd>: Select an annotation
-- <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add/remove from selection
+- <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add / remove from selection
 - <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd> + <kbd>Drag</kbd>: Box-select multiple points
 - <kbd>Right-Click</kbd> + <kbd>Drag</kbd>: Pan the view
-- <kbd>Mouse Wheel</kbd>: Zoom in/out
+- <kbd>Mouse Wheel</kbd>: Zoom in / out
 - <kbd>Ctrl</kbd> + <kbd>Wheel</kbd>: Adjust point size
 - <kbd>Double-Click</kbd>: Unselect all, exit isolation mode
+- <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Wheel</kbd>: Grow / shrink the selection by similarity to the selected annotation(s)
+  - Ranking uses the full feature vectors, falling back to the 2D projection when features are unavailable
+  - An overlay reports the neighbour count and the cosine cutoff it implies
+  - <kbd>Escape</kbd>: Restore the selection the expansion started from
+- <kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Navigate to the annotation in the Annotation Window (zoomed / centered), leaving the current selection intact
 
 **Mislabel Detection & Analysis**
 - Outlier detection is performed manually by examining points that are visually distant from their label cluster in the embedding space
@@ -498,7 +529,7 @@ The Explorer automatically caches extracted features to accelerate re-loading th
 - First time running a model: features extracted and automatically cached
 - Second time with same model: features loaded from cache (much faster)
 - Deleting annotations: cache entries removed automatically
-- Changing model/settings: stale cache detected and rebuilt as needed
+- Changing model / settings: stale cache detected and rebuilt as needed
 
 **Multi-Model Support**
 - Cache supports multiple models simultaneously
@@ -506,22 +537,24 @@ The Explorer automatically caches extracted features to accelerate re-loading th
 - Switching between models uses corresponding cached features
 
 **Performance**
-- **Color Features**: 70 dims (8×8 Hue-Saturation histogram + H/S/V moments), instant CPU extraction
+- **Color Features**: 70 dims (8×8 Hue-Saturation histogram + H / S / V moments), instant CPU extraction
 - **YOLO / Transformer / TIMM / OpenCLIP**: Model-dependent feature dimensions, GPU-accelerated (if CUDA available)
 - **Batch Processing**: Default batch size 512 annotations; cache flush every 4 batches to balance memory and I/O
 - **Thread-Safety**: Concurrent access via SQLite locks prevents cache corruption during multi-threaded operations
+- **Feature Storage**: Retained feature matrices are reduced to 128 dimensions for ranking and clustering; the cache keeps the full-width vectors
 
 **Tips**
 - Use dual monitors: place Annotation Viewer and Annotation Window side-by-side to review selected annotations
 - For exploring mislabels: use Embedding Viewer to identify visual outliers (points far from their label cluster), isolate them, and examine in the gallery
-- Larger clusters often indicate common features; smaller/scattered points may be edge cases or mislabels
-- Apply filter in Annotation Viewer before running embeddings to focus on specific images/labels
+- Larger clusters often indicate common features; smaller / scattered points may be edge cases or mislabels
+- Apply filter in Annotation Viewer before running embeddings to focus on specific images / labels
 - Use Cluster sort in the Annotation Viewer after running K-Means to organize results by cluster membership
+- To gather more of a class: select a known-good annotation, expand by similarity, then switch the Annotation Viewer to Similarity sort and trim the tail where the crops stop matching
 
 ## Tool Bar Tools
 - **Select Tool**: After selecting the tool
   - <kbd>Left-Click</kbd>: Select an annotation drag to move it
-  - <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add/remove annotation to current selection
+  - <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add / remove annotation to current selection
   - <kbd>Ctrl</kbd> + <kbd>Delete</kbd> / <kbd>Backspace</kbd>: Remove selected annotation(s)
   - <kbd>Ctrl</kbd> + <kbd>Drag</kbd>: Create rectangle selection to select multiple annotations
   - <kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd>: Change size of the selected annotation
@@ -627,7 +660,7 @@ The Explorer automatically caches extracted features to accelerate re-loading th
   - **Common Controls**:
     - <kbd>Ctrl</kbd> + <kbd>Alt</kbd>: Toggle between Binary and Multi-class mode
     - <kbd>N</kbd>: Refresh the yellow crosshair point suggestion
-    - <kbd>Space</kbd>: Finalize and create a Polygon/Mask annotation
+    - <kbd>Space</kbd>: Finalize and create a Polygon / Mask annotation
     - <kbd>Backspace</kbd>: Clear all points and start over
 
 - **Work Area Tool**: For creating restricted areas for model prediction
@@ -663,7 +696,7 @@ The Explorer automatically caches extracted features to accelerate re-loading th
 - **Zoom**: Use the <kbd>Mouse Wheel</kbd> to zoom in and out
 - **Pan**: <kbd>Right-Click</kbd> and hold the <kbd>Mouse Button</kbd> to pan the image
 - **Rotate**: <kbd>Ctrl</kbd> + <kbd>Right-Click</kbd> + <kbd>Drag</kbd>
-  - Drag left/right to rotate; drag up/down to adjust rotation speed
+  - Drag left / right to rotate; drag up / down to adjust rotation speed
   - Useful for examining annotations at different angles
 
 ### Baking and Unbaking Annotations
@@ -683,25 +716,25 @@ The Explorer automatically caches extracted features to accelerate re-loading th
 
 ### Video Playback Controls
 When a video is loaded, additional playback controls appear:
-- **Play/Pause**: Toggle video playback
+- **Play / Pause**: Toggle video playback
 - **Stop**: Stop playback and return to paused state
-- **Step Back/Forward**: Move one frame at a time (disabled during playback)
-- **Jump to First/Last Frame**: Jump to the beginning or end of the video
-- **Jump to Previous/Next Annotated Frame**: Navigate between frames with annotations
-- **Jump to Previous/Next Keyframe**: Navigate between marked keyframe frames
+- **Step Back / Forward**: Move one frame at a time (disabled during playback)
+- **Jump to First / Last Frame**: Jump to the beginning or end of the video
+- **Jump to Previous / Next Annotated Frame**: Navigate between frames with annotations
+- **Jump to Previous / Next Keyframe**: Navigate between marked keyframe frames
 - **Seek Slider**: Scrub through video frames with visual feedback
   - Red tick marks indicate frames with annotations
   - Gold tick marks indicate keyframe frames
   - <kbd>Ctrl</kbd> + <kbd>Hover</kbd>: Preview frame at cursor position
   - <kbd>Ctrl</kbd> + <kbd>Click</kbd>: Jump to frame directly
-- **Keyframe Toggle**: Star button to mark/unmark the current frame as a keyframe
+- **Keyframe Toggle**: Star button to mark / unmark the current frame as a keyframe
   - Keyframes appear as gold tick marks on the slider
   - Useful for marking important frames for review or processing
 - **Frame Counter**: Displays current frame number and total frame count
 
 ## Label Window
 - **Move Label**: <kbd>Right-Click</kbd> and drag to reorder labels in the window
-- **Label Visibility**: Each label has a checkbox to show/hide annotations of that label
+- **Label Visibility**: Each label has a checkbox to show / hide annotations of that label
   - Hidden labels retain their data and can be shown again at any time
   - Transparency slider affects all labels (both visible and hidden)
 
@@ -709,7 +742,7 @@ When a video is loaded, additional playback controls appear:
 Action buttons for label operations:
 - **Add Label** (<kbd>+</kbd> icon): Create a new label with custom name and color
 - **Delete Label** (<kbd>-</kbd> icon): Delete the selected label (disabled if no selection)
-- **Edit Label** / **Merge Labels**: Modify the selected label's name/color, or merge multiple labels into one (disabled if no selection)
+- **Edit Label** / **Merge Labels**: Modify the selected label's name / color, or merge multiple labels into one (disabled if no selection)
 - **Map Labels** (bulk): Perform bulk mapping to merge multiple source labels into a single target label (disabled if no selection)
 - **Lock Label** (lock icon): Lock the currently selected label to prevent accidental modifications
   - Locked labels remain locked until manually unlocked
@@ -868,7 +901,7 @@ Multi-select filters and search bars to control which images are displayed:
 ### Tips & Quick Reference
 - **Hover over any tool button, image row, or window** to see helpful tooltips explaining functionality
 - **Many controls use <kbd>Ctrl</kbd>** as a modifier key for enhanced functionality
-- **Work Area and SAM/YOLOE tools use <kbd>Space</kbd>** as a quick confirm key
+- **Work Area and SAM / YOLOE tools use <kbd>Space</kbd>** as a quick confirm key
 - **Interactive hotkey map available** at [Hotkeys Map](https://jordan-pierce.github.io/CoralNet-Toolbox/hot-keys) with visual keyboard layout
 
 ### General
@@ -878,13 +911,13 @@ Multi-select filters and search bars to control which images are displayed:
 - <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd>: Redo the previously undone addition or deletion of an annotation
 
 ### Navigation
-- <kbd>Alt</kbd> + <kbd>Up</kbd>/<kbd>Down</kbd>: Cycle through images
-- <kbd>Ctrl</kbd> + <kbd>Up</kbd>/<kbd>Down</kbd>: Cycle through labels
-- <kbd>Ctrl</kbd> + <kbd>Left</kbd>/<kbd>Right</kbd>: Cycle through annotations
+- <kbd>Alt</kbd> + <kbd>Up</kbd> / <kbd>Down</kbd>: Cycle through images
+- <kbd>Ctrl</kbd> + <kbd>Up</kbd> / <kbd>Down</kbd>: Cycle through labels
+- <kbd>Ctrl</kbd> + <kbd>Left</kbd> / <kbd>Right</kbd>: Cycle through annotations
 
 ### Selection & Annotation Editing
 - <kbd>Ctrl</kbd> + <kbd>A</kbd>: Select all annotations, unselect all annotations (press twice to toggle)
-- <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add/remove annotation to current selection
+- <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add / remove annotation to current selection
 - <kbd>Ctrl</kbd> + <kbd>Drag</kbd>: Create rectangle selection to select multiple annotations
 - <kbd>Ctrl</kbd> + <kbd>Delete</kbd> / <kbd>Backspace</kbd>: Remove selected annotation(s)
 - <kbd>Ctrl</kbd> + <kbd>Space</kbd>: Confirm prediction for selected annotation with top machine confidence
@@ -901,7 +934,7 @@ Multi-select filters and search bars to control which images are displayed:
   - Switch from SelectTool to active annotation tool (e.g., PatchTool when PatchAnnotation selected)
   - Switch from annotation tool back to SelectTool
   - Toggle between Brush and Erase tools
-  - Toggle Feature Select Tool binary/multi-class mode
+  - Toggle Feature Select Tool binary / multi-class mode
 - <kbd>Ctrl</kbd> + <kbd>Alt</kbd>: Create temporary work area from current view (hold to maintain)
 
 ### Work Areas
@@ -925,9 +958,9 @@ Multi-select filters and search bars to control which images are displayed:
 - <kbd>Ctrl</kbd> + <kbd>Alt</kbd>: Toggle between Binary and Multi-class mode
 - <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add positive prototype (binary) / assign patch to selected label (multi-class)
 - <kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Add negative prototype (binary) / undo last point for label (multi-class)
-- <kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd>: Adjust similarity/reject threshold
+- <kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd>: Adjust similarity / reject threshold
 - <kbd>N</kbd>: Refresh the yellow crosshair point suggestion
-- <kbd>Space</kbd>: Finalize and create Polygon/Mask annotation
+- <kbd>Space</kbd>: Finalize and create Polygon / Mask annotation
 - <kbd>Backspace</kbd>: Clear all points and start over
 
 ### Model Predictions
@@ -944,21 +977,21 @@ After a model is loaded, use these shortcuts to run inference:
 - <kbd>Left-Click</kbd> on confidence bar: Change annotation's label and verify it
 
 ### Mouse Controls
-- <kbd>Left-Click</kbd>: Select annotation, add point, start/end shape
+- <kbd>Left-Click</kbd>: Select annotation, add point, start / end shape
 - <kbd>Left-Click</kbd> + <kbd>Drag</kbd>: Move selected annotation, draw shape
-- <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add/remove from selection, add positive point/prototype
+- <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add / remove from selection, add positive point / prototype
 - <kbd>Shift</kbd> + <kbd>Left-Click</kbd>: Select range of items (Image Window)
 - <kbd>Ctrl</kbd> + <kbd>Drag</kbd>: Box-select multiple annotations
 - <kbd>Right-Click</kbd> + <kbd>Drag</kbd>: Pan the image viewer
 - <kbd>Right-Click</kbd>: Open context menu (Image Window)
 - <kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Center Annotation Window on selected annotation
-- <kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Add negative point/prototype
+- <kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Add negative point / prototype
 - <kbd>Double-Click</kbd>: Load image (Image Window)
-- <kbd>Mouse Wheel</kbd>: Zoom in/out, adjust patch/brush size (with Ctrl)
+- <kbd>Mouse Wheel</kbd>: Zoom in / out, adjust patch / brush size (with Ctrl)
 
 ### Annotation Window Navigation
 - <kbd>Mouse Wheel</kbd>: Zoom in and out
 - <kbd>Right-Click</kbd> + <kbd>Hold</kbd> + <kbd>Drag</kbd>: Pan the image
-- <kbd>Ctrl</kbd> + <kbd>Right-Click</kbd> + <kbd>Drag</kbd>: Rotate the image (left/right drag for rotation, up/down for speed)
+- <kbd>Ctrl</kbd> + <kbd>Right-Click</kbd> + <kbd>Drag</kbd>: Rotate the image (left / right drag for rotation, up / down for speed)
 
 
