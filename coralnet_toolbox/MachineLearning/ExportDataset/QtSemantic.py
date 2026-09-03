@@ -154,9 +154,9 @@ class Semantic(Base):
 
         # Radio buttons
         self.ignore_radio = QRadioButton("Treat as Ignore (Index 255)")
-        self.ignore_radio.setChecked(True) # Safe default for most users
-        
+
         self.background_radio = QRadioButton("Treat as Background (Index 0)")
+        self.background_radio.setChecked(True) # Default to background for semantic segmentation
 
         layout.addWidget(self.ignore_radio)
         layout.addWidget(self.background_radio)
