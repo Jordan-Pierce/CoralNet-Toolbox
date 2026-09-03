@@ -29,6 +29,10 @@ coralnet-toolbox = "coralnet_toolbox.main:run"
 [tool.setuptools.packages.find]
 include = ["coralnet_toolbox*"]
 
+[tool.setuptools.package-data]
+# Ships the factory dock layout new users see on first launch.
+"coralnet_toolbox.Layout" = ["*.json"]
+
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}
 

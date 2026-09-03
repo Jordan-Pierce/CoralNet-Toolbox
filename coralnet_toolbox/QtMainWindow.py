@@ -1326,34 +1326,54 @@ class MainWindow(QMainWindow):
         # 3. Explicitly arrange the docks using PyQtADS
         # --------------------------------------------------
 
-        # 1. Add Workspace dock first as the central anchor
+        # This mirrors Layout/factory_default.json, the layout restored on a
+        # normal launch. It is what users see when that file is missing or
+        # rejected, so the two are kept in step: three full-height columns --
+        # Labels, the workspace, and the inspector stack.
+
+        # 1. Workspace dock first: it anchors the middle column.
         annotation_area = self.dock_manager.addDockWidget(ads.TopDockWidgetArea, self.annotation_dock)
-        
-        # 2. Add Image dock to the right of the Annotation dock
-        raster_area = self.dock_manager.addDockWidget(ads.RightDockWidgetArea, self.rasters_dock, annotation_area)
-        
-        # 3. Add Label dock below the Image dock 
-        label_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.labels_dock, raster_area)
 
-        # 3. Add Confidence dock below the Label dock
-        conf_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.confidence_dock, label_area)
-        
-        # 3b. TAB the Metadata dock into Confidence -- both answer "what is
-        # this annotation?", so they share one tab group rather than stacking.
-        self.dock_manager.addDockWidget(ads.CenterDockWidgetArea, self.metadata_dock, conf_area)
-        conf_area.setCurrentDockWidget(self.confidence_dock)
+        # 2. Labels as the left column. Passing no target area adds it to the
+        # container rather than splitting a neighbour, so it runs full height.
+        label_area = self.dock_manager.addDockWidget(ads.LeftDockWidgetArea, self.labels_dock)
 
-        # 4. Add Performance dock below Confidence
-        perf_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.performance_dock, conf_area)
+        # 3. Rasters opens the right column, also container-level, also full height.
+        raster_area = self.dock_manager.addDockWidget(ads.RightDockWidgetArea, self.rasters_dock)
 
-        # 5. TAB the Timer dock into Performance, but hide it initially
-        timer_area = self.dock_manager.addDockWidget(ads.CenterDockWidgetArea, self.timer_dock, perf_area)
-        
-        # 6. Add Annotation Gallery to the Bottom of the WORKSPACE explicitly
+        # 4. Metadata below Rasters, with Confidence TABBED into it -- both
+        # answer "what is this annotation?", so they share one tab group
+        # rather than stacking. Metadata is the tab that opens.
+        meta_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.metadata_dock, raster_area)
+        conf_area = self.dock_manager.addDockWidget(ads.CenterDockWidgetArea, self.confidence_dock, meta_area)
+        meta_area.setCurrentDockWidget(self.metadata_dock)
+
+        # 5. Performance below that, with Timer tabbed alongside it.
+        perf_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.performance_dock, meta_area)
+        self.dock_manager.addDockWidget(ads.CenterDockWidgetArea, self.timer_dock, perf_area)
+
+        # 6. Gallery below the workspace, with Embeddings to its LEFT so the
+        # scatter plot sits beside the thumbnails it indexes, not past them.
         gallery_area = self.dock_manager.addDockWidget(ads.BottomDockWidgetArea, self.gallery_dock, annotation_area)
-        
-        # 7. Add Embedding Viewer to the Right of the Annotation Gallery
-        embed_area = self.dock_manager.addDockWidget(ads.RightDockWidgetArea, self.embeddings_dock, gallery_area)
+        embed_area = self.dock_manager.addDockWidget(ads.LeftDockWidgetArea, self.embeddings_dock, gallery_area)
+
+        # 7. Proportions, taken from the same saved layout. setSplitterSizes
+        # scales these against each splitter's real width, so they act as
+        # ratios and survive a different screen size.
+        try:
+            self.dock_manager.setSplitterSizes(label_area, [316, 1722, 464])
+            self.dock_manager.setSplitterSizes(annotation_area, [652, 651])
+            self.dock_manager.setSplitterSizes(embed_area, [859, 858])
+            self.dock_manager.setSplitterSizes(raster_area, [652, 651, 0])
+        except Exception as e:
+            # Cosmetic only, and the two supported ADS builds differ; equal
+            # splits are a fine outcome next to failing to start.
+            print(f"Could not apply default dock proportions: {e}")
+
+        # 8. Performance and Timer are diagnostics: present in the Windows
+        # menu, closed until asked for.
+        self.performance_dock.toggleView(False)
+        self.timer_dock.toggleView(False)
 
         # Populate the Windows menu with dock toggle actions
         dock_windows = [
@@ -1389,6 +1409,12 @@ class MainWindow(QMainWindow):
         # Load submenu
         self.load_layout_menu = self.layout_menu.addMenu("Load")
         self.populate_load_layout_menu()
+
+        # Reset action
+        self.reset_layout_action = QAction("Reset", self)
+        self.reset_layout_action.setToolTip("Restore the dock arrangement shipped with the application.")
+        self.reset_layout_action.triggered.connect(self.reset_layout_to_factory)
+        self.layout_menu.addAction(self.reset_layout_action)
 
         self.populate_scale_menu()
         
@@ -2823,13 +2849,33 @@ class MainWindow(QMainWindow):
         """Load a specific layout configuration."""
         success = QtLayoutManager.load_layout(self.dock_manager, layout_name)
         if success:
-            pass
+            self._post_layout_restore()
         else:
             QMessageBox.warning(
                 self,
                 "Load Failed",
                 f"Failed to load layout '{layout_name}'."
             )
+
+    def reset_layout_to_factory(self):
+        """Restore the factory layout shipped with the package."""
+        if QtLayoutManager.load_factory_default(self.dock_manager):
+            self._post_layout_restore()
+        else:
+            QMessageBox.warning(
+                self,
+                "Reset Failed",
+                "Failed to restore the default layout."
+            )
+
+    def _post_layout_restore(self):
+        """Fix up docks a restored layout could not place, and restyle splitters.
+
+        Dock menu checkmarks need no work here: each action tracks its dock's
+        visibilityChanged signal.
+        """
+        self._reattach_orphaned_docks()
+        self._apply_dock_splitter_width()
 
     def populate_scale_menu(self):
         """Populate the Scale submenu with auto and fixed percentage options."""
