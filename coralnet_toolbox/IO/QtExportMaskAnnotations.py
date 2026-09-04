@@ -7,15 +7,16 @@ import numpy as np
 import rasterio
 from PIL import Image, ImageColor
 
-from PyQt5.QtCore import Qt, QEvent, pyqtSignal
-from PyQt5.QtGui import QColor, QPainter, QPen
+from PyQt5.QtCore import Qt, QEvent, QRectF, pyqtSignal
+from PyQt5.QtGui import QColor, QBrush, QImage, QPainter, QPainterPath, QPen
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox, QFormLayout,
                              QCheckBox, QComboBox, QLineEdit, QPushButton, QFileDialog,
                              QApplication, QMessageBox, QLabel, QTableWidgetItem,
                              QButtonGroup, QWidget, QTableWidget, QHeaderView,
                              QAbstractItemView, QSpinBox, QRadioButton, QColorDialog,
-                             QScrollArea, QSizePolicy)
+                             QScrollArea, QSizePolicy, QStyleOptionGraphicsItem)
 
+from coralnet_toolbox.Annotations.QtAnnotation import FloatingTagItem
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
@@ -286,12 +287,24 @@ class ExportMaskAnnotations(QDialog):
         self.preserve_georef_checkbox = QCheckBox("Preserve georeferencing (if available)")
         self.preserve_georef_checkbox.setChecked(True)
         self.preserve_georef_checkbox.setToolTip("Save geographic coordinate information in GeoTIFF format.\nEnable if your source images have georeferencing and you need it in the masks.\nOnly available with TIF format.")
-        options_layout.addRow(self.preserve_georef_checkbox)
 
         # Outlines, available to the color modes only (kept in the layout so the dialog does not resize)
         self.draw_outlines_checkbox = QCheckBox("Draw annotation outlines")
         self.draw_outlines_checkbox.setChecked(True)
-        options_layout.addRow(self.draw_outlines_checkbox)
+
+        # Center markers: these paint text over pixel values, so they belong to Overlay only,
+        # the one export meant to be read by eye rather than by a program
+        self.draw_instance_ids_checkbox = QCheckBox("Draw instance IDs")
+        self.draw_label_tags_checkbox = QCheckBox("Draw label tags")
+
+        # 2x2, so four options cost two rows of dialog height instead of four
+        checkbox_layout = QGridLayout()
+        checkbox_layout.setContentsMargins(0, 0, 0, 0)
+        checkbox_layout.addWidget(self.preserve_georef_checkbox, 0, 0)
+        checkbox_layout.addWidget(self.draw_outlines_checkbox, 0, 1)
+        checkbox_layout.addWidget(self.draw_instance_ids_checkbox, 1, 0)
+        checkbox_layout.addWidget(self.draw_label_tags_checkbox, 1, 1)
+        options_layout.addRow(checkbox_layout)
 
         main_layout.addLayout(options_layout)
         groupbox.setLayout(main_layout)
@@ -441,6 +454,33 @@ class ExportMaskAnnotations(QDialog):
                 "Only available for the Visualization and Overlay modes, which draw labels\n"
                 "in their own colors."
             )
+
+        # Center markers overwrite pixels with text, which would corrupt a Visualization mask
+        # read back as data, so they are restricted to Overlay
+        is_overlay = self.mask_mode == 'overlay'
+        for checkbox in (self.draw_instance_ids_checkbox, self.draw_label_tags_checkbox):
+            if not is_overlay:
+                checkbox.setChecked(False)
+            checkbox.setEnabled(is_overlay)
+
+        if is_overlay:
+            self.draw_instance_ids_checkbox.setToolTip(
+                "Draw an instance number at the geometric center of each vector annotation.\n"
+                "The number is the one the Label Window reports for that annotation\n"
+                "(\"Annotation: n / total\"), so annotations left out of this export keep their\n"
+                "numbers and the IDs drawn can have gaps. Mask annotations are not numbered."
+            )
+            self.draw_label_tags_checkbox.setToolTip(
+                "Draw the floating tag from the Annotation Window on each vector annotation:\n"
+                "the label code and confidence in a badge of the label color, at the top-left\n"
+                "of its bounding box. Annotations made by hand are verified, so they read\n"
+                "100%. Mask annotations are not tagged."
+            )
+        else:
+            marker_tooltip = ("Only available for the Overlay mode, which is the one export meant\n"
+                              "to be read by eye rather than by a program.")
+            self.draw_instance_ids_checkbox.setToolTip(marker_tooltip)
+            self.draw_label_tags_checkbox.setToolTip(marker_tooltip)
 
         self.populate_label_table()
     
@@ -617,6 +657,8 @@ class ExportMaskAnnotations(QDialog):
         # Overlay blends against the source image, so capture the slider value and outline preference
         self.overlay_transparency = self.get_transparency_value()
         self.draw_outlines = self.draw_outlines_checkbox.isChecked()
+        self.draw_instance_ids = self.draw_instance_ids_checkbox.isChecked()
+        self.draw_label_tags = self.draw_label_tags_checkbox.isChecked()
 
         # --- Collect data from UI based on mode ---
         if self.mask_mode in ['semantic', 'sfm']:
@@ -783,13 +825,18 @@ class ExportMaskAnnotations(QDialog):
         # Overlay keeps the drawn annotations so their outlines can be stroked after blending
         has_vector_annotations = False
         drawn_annotations = []
+        # One entry per annotation as the user made it, so a multi-polygon counts as a single
+        # instance even though it rasterizes as several polygons
+        instances = []
         if self.annotation_types:  # Only run if vector types were selected
             for label, value in self.labels_to_render:
-                annotations = self.get_annotations_for_image(image_path, label)
-                if annotations:
+                label_instances = self.get_annotations_for_image(image_path, label, flatten=False)
+                if label_instances:
+                    annotations = self._flatten_annotations(label_instances)
                     has_vector_annotations = True
                     self.draw_annotations_on_mask(mask, annotations, value)
                     drawn_annotations.append((annotations, value))
+                    instances.extend(label_instances)
 
         # --- 4. Check for negative samples ---
         if (not has_mask_data and not has_vector_annotations and
@@ -811,6 +858,10 @@ class ExportMaskAnnotations(QDialog):
         if self._is_color_mode() and self.draw_outlines:
             for annotations, value in drawn_annotations:
                 self.draw_annotation_outlines(mask, annotations, tuple(value[:3]))
+
+        # --- 4d. Center markers, drawn on top of everything else ---
+        if self.mask_mode == 'overlay' and (self.draw_instance_ids or self.draw_label_tags):
+            self.draw_instance_markers(mask, instances, image_path)
 
         filename = f"{os.path.splitext(os.path.basename(image_path))[0]}{self.file_format}"
         mask_path = os.path.join(output_path, filename)
@@ -955,7 +1006,9 @@ class ExportMaskAnnotations(QDialog):
                 color_legend["_overlay"] = {
                     "background": "source image",
                     "transparency": self.overlay_transparency,
-                    "outlines": self.draw_outlines
+                    "outlines": self.draw_outlines,
+                    "instance_ids": self.draw_instance_ids,
+                    "label_tags": self.draw_label_tags
                 }
             elif self.label_table.cellWidget(0, 0).findChild(QCheckBox).isChecked():
                 color_legend["background"] = self.background_value
@@ -968,20 +1021,35 @@ class ExportMaskAnnotations(QDialog):
 
         # No metadata file needed for SfM mode
 
-    def get_annotations_for_image(self, image_path, label):
-        """Get annotations for the image and label."""
+    def get_annotations_for_image(self, image_path, label, flatten=True):
+        """
+        Get annotations for the image and label.
+
+        With flatten=False they come back as the user made them, which is what the center
+        markers count as instances; rasterizing wants the flattened form.
+        """
         annotations = []
         # self.annotation_types now only contains VECTOR types
         if not self.annotation_types:
-            return [] 
-            
+            return []
+
         for ann in self.annotation_window.get_image_annotations(image_path):
             if ann.label.short_label_code == label.short_label_code and isinstance(ann, tuple(self.annotation_types)):
-                if isinstance(ann, MultiPolygonAnnotation):
+                if flatten and isinstance(ann, MultiPolygonAnnotation):
                     annotations.extend(ann.polygons)
                 else:
                     annotations.append(ann)
         return annotations
+
+    def _flatten_annotations(self, annotations):
+        """Expand multi-polygon annotations into the child polygons that actually rasterize."""
+        flattened = []
+        for ann in annotations:
+            if isinstance(ann, MultiPolygonAnnotation):
+                flattened.extend(ann.polygons)
+            else:
+                flattened.append(ann)
+        return flattened
 
     def draw_annotations_on_mask(self, mask, annotations, value):
         """Draw annotations on the mask."""
@@ -1009,6 +1077,185 @@ class ExportMaskAnnotations(QDialog):
             elif isinstance(ann, PolygonAnnotation):
                 points = np.array([[p.x(), p.y()] for p in ann.points], dtype=np.int32)
                 cv2.polylines(image, [points], True, color, thickness)
+
+    def _annotation_center(self, ann):
+        """Return the (x, y) center of an annotation, in image pixel coordinates."""
+        get_centroid = getattr(ann, 'get_centroid', None)
+        if get_centroid is not None:
+            try:
+                centroid = get_centroid()
+                if centroid is not None:
+                    return float(centroid[0]), float(centroid[1])
+            except Exception:
+                pass
+
+        # MultiPolygonAnnotation has no get_centroid, but does keep an averaged center
+        center_xy = getattr(ann, 'center_xy', None)
+        if center_xy is not None:
+            return float(center_xy.x()), float(center_xy.y())
+
+        top_left = ann.get_bounding_box_top_left()
+        bottom_right = ann.get_bounding_box_bottom_right()
+        return ((top_left.x() + bottom_right.x()) / 2.0,
+                (top_left.y() + bottom_right.y()) / 2.0)
+
+    def _marker_scale(self, image):
+        """
+        Scale factor applied to the marker graphics, which are authored at canvas size.
+
+        The floating tag is drawn with ItemIgnoresTransformations on the canvas, so it is
+        always about 8 screen pixels tall no matter the zoom. An export has no viewport to
+        anchor that to, so the tag is scaled off the image's shorter side and ends up
+        occupying roughly the same fraction of the frame as it does on screen.
+        """
+        return max(1.0, min(6.0, min(image.shape[:2]) / 900.0))
+
+    def _paint_region(self, image, rect, paint_callable):
+        """
+        Run a QPainter callback over one region of an (H, W, 3) RGB image, in place.
+
+        Only the region is handed to Qt, so a marker costs a small copy rather than a
+        second full-size buffer per image. The painter is set up in image pixel
+        coordinates, and painting over the real pixels is what lets antialiased edges
+        blend against the exported image rather than against a flat backdrop.
+        """
+        height, width = image.shape[:2]
+        x0 = max(0, int(np.floor(rect.left())))
+        y0 = max(0, int(np.floor(rect.top())))
+        x1 = min(width, int(np.ceil(rect.right())))
+        y1 = min(height, int(np.ceil(rect.bottom())))
+        if x1 <= x0 or y1 <= y0:
+            return  # Entirely off the image
+
+        region_width = x1 - x0
+        region_height = y1 - y0
+        region = np.ascontiguousarray(image[y0:y1, x0:x1])
+
+        # PyQt copies the buffer here rather than wrapping it, so the result has to be
+        # read back out of the QImage once the painting is done
+        qimage = QImage(region.data, region_width, region_height, region_width * 3, QImage.Format_RGB888)
+        painter = QPainter(qimage)
+        try:
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setRenderHint(QPainter.TextAntialiasing)
+            painter.translate(-x0, -y0)
+            paint_callable(painter)
+        finally:
+            painter.end()
+
+        bits = qimage.constBits()
+        bits.setsize(qimage.bytesPerLine() * region_height)
+        painted = np.frombuffer(bits, np.uint8).reshape(region_height, qimage.bytesPerLine())
+        image[y0:y1, x0:x1] = painted[:, :region_width * 3].reshape(region_height, region_width, 3)
+
+    def _draw_floating_tag(self, image, ann, scale):
+        """
+        Draw the annotation's floating tag, exactly as the Annotation Window draws it.
+
+        The tag is the real FloatingTagItem, painted straight onto the export, so the
+        badge shape, label color, contrast rule and text all stay in one place. It is
+        positioned at the top-left of the bounding box, where it sits on the canvas.
+        """
+        text = ann.get_display_tag_text()
+        if not text:
+            return
+
+        tag = FloatingTagItem(text, QColor(ann.label.color))
+        text_rect = tag.boundingRect()
+        # FloatingTagItem.paint pads the badge out past the text by this much
+        pad_x, pad_y = 3, 1
+
+        top_left = ann.get_bounding_box_top_left()
+        origin_x, origin_y = top_left.x(), top_left.y()
+
+        # Painted extents in image pixels, with a pixel of slack for antialiased edges
+        region = QRectF(origin_x + (text_rect.left() - pad_x) * scale - 1,
+                        origin_y + (text_rect.top() - pad_y) * scale - 1,
+                        (text_rect.width() + pad_x * 2) * scale + 2,
+                        (text_rect.height() + pad_y * 2) * scale + 2)
+
+        def paint(painter):
+            painter.translate(origin_x, origin_y)
+            painter.scale(scale, scale)
+            tag.paint(painter, QStyleOptionGraphicsItem(), None)
+
+        self._paint_region(image, region, paint)
+
+    def _draw_instance_id(self, image, ann, instance_id, scale, font):
+        """
+        Draw an instance number at the annotation's geometric center.
+
+        Unlike the tag this has no on-canvas counterpart, so it is drawn here: white
+        glyphs over a dark stroke, which stays readable against any label color or
+        source pixels. The font is the tag's, so the two read as one annotation. The
+        number is the annotation's index in the Label Window ("Annotation: n / total"),
+        not its UUID, which is unreadable on an image.
+        """
+        path = QPainterPath()
+        path.addText(0, 0, font, str(instance_id))
+        bounds = path.boundingRect()
+        if bounds.isEmpty():
+            return
+
+        center_x, center_y = self._annotation_center(ann)
+        stroke_width = 1.2
+
+        # The glyph box is centered on the annotation center, so grow the region by half
+        # the stroke plus antialiasing slack
+        margin = (stroke_width / 2.0 + 1.0) * scale + 1
+        region = QRectF(center_x - bounds.width() * scale / 2.0 - margin,
+                        center_y - bounds.height() * scale / 2.0 - margin,
+                        bounds.width() * scale + margin * 2,
+                        bounds.height() * scale + margin * 2)
+
+        def paint(painter):
+            painter.translate(center_x, center_y)
+            painter.scale(scale, scale)
+            painter.translate(-bounds.center().x(), -bounds.center().y())
+
+            # Stroke first, then fill over it: a centered stroke drawn on top of the fill
+            # would eat half its width out of the glyph and leave the number solid black
+            pen = QPen(QColor(0, 0, 0, 220), stroke_width)
+            pen.setJoinStyle(Qt.RoundJoin)
+            painter.setPen(pen)
+            painter.setBrush(Qt.NoBrush)
+            painter.drawPath(path)
+
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(Qt.white))
+            painter.drawPath(path)
+
+        self._paint_region(image, region, paint)
+
+    def draw_instance_markers(self, image, instances, image_path):
+        """
+        Mark each vector annotation with its floating tag and/or instance ID.
+
+        Instance IDs come from the annotation's position in the image's annotation list,
+        which is the same number the Label Window reports as "Annotation: n / total", so
+        an ID on the export refers to the same annotation in the app. Annotations left
+        out of this export keep their numbers, so the IDs drawn can have gaps.
+        """
+        if not instances:
+            return
+
+        scale = self._marker_scale(image)
+        # Take the font from a tag rather than restating it, so the ID keeps matching the
+        # tag if FloatingTagItem's font ever changes
+        id_font = FloatingTagItem("", QColor(Qt.black)).font()
+
+        instance_ids = {}
+        if self.draw_instance_ids:
+            for index, ann in enumerate(self.annotation_window.get_image_annotations(image_path), start=1):
+                instance_ids[ann.id] = index
+
+        for ann in instances:
+            if self.draw_label_tags:
+                self._draw_floating_tag(image, ann, scale)
+            if self.draw_instance_ids:
+                instance_id = instance_ids.get(ann.id)
+                if instance_id is not None:
+                    self._draw_instance_id(image, ann, instance_id, scale, id_font)
 
     def _mask_shape(self, height, width):
         """Return the accumulator shape for the current mode."""
