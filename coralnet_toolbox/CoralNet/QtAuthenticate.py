@@ -102,7 +102,6 @@ class AuthenticateDialog(QDialog):
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.Password)
         self.password_input.setToolTip("Your CoralNet password.\nRequired to authenticate with the CoralNet API.\nNever shared outside this application.")
-        self.password_input.returnPressed.connect(self.login)
         password_layout.addWidget(self.password_input)
 
         # Add toggle button for password
@@ -176,6 +175,14 @@ class AuthenticateDialog(QDialog):
 
         # Add to main layout
         self.layout.addLayout(button_layout)
+
+    def keyPressEvent(self, event):
+        """Handle Return key in password/username fields to trigger login."""
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            if self.password_input.hasFocus() or self.username_input.hasFocus():
+                self.login()
+                return
+        super().keyPressEvent(event)
 
     def toggle_password_visibility(self):
         """Toggle password field visibility between visible and hidden."""
