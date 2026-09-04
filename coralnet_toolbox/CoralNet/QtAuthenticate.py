@@ -102,6 +102,7 @@ class AuthenticateDialog(QDialog):
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.Password)
         self.password_input.setToolTip("Your CoralNet password.\nRequired to authenticate with the CoralNet API.\nNever shared outside this application.")
+        self.password_input.returnPressed.connect(self.login)
         password_layout.addWidget(self.password_input)
 
         # Add toggle button for password
@@ -110,7 +111,6 @@ class AuthenticateDialog(QDialog):
         self.toggle_password_button.clicked.connect(self.toggle_password_visibility)
         self.toggle_password_button.setToolTip("Toggle password visibility.\nClick to show or hide the password.")
         password_layout.addWidget(self.toggle_password_button)
-
         form_layout.addRow("Password:", password_layout)
 
         # Set the form layout to the group box
