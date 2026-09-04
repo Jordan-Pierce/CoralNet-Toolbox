@@ -71,8 +71,6 @@ class DeployGeneratorDialog(QDialog):
         self.imgsz = 1024
         self.iou_thresh = 0.20
         self.uncertainty_thresh = 0.30
-        self.area_thresh_min = 0.00
-        self.area_thresh_max = 0.40
 
         self.task = 'detect'
         self.max_detect = 300

@@ -19,6 +19,8 @@ from coralnet_toolbox.MachineLearning.DeployModel.QtBase import Base
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Common import ThresholdsWidget
+from coralnet_toolbox.Common import raster_metrics
+from coralnet_toolbox.Common import resolve_area_bounds_px
 
 from coralnet_toolbox.QtActions import AddAnnotationsAction, CompoundAction, MaskEditAction
 
@@ -162,7 +164,10 @@ class Semantic(Base):
         # Allow users to turn the semantic mask into vector annotations after prediction.
         self.auto_vectorize_checkbox = QCheckBox("Convert output to vector polygons")
         self.auto_vectorize_checkbox.setChecked(False)
-        self.auto_vectorize_checkbox.setToolTip("Cannot be used at the same time as Predict 'background' class.")
+        self.auto_vectorize_checkbox.setToolTip(
+            "Cannot be used at the same time as Predict 'background' class.\n\n"
+            "The area threshold applies to the polygons this produces, so it is only "
+            "active while this is ticked.")
         layout.addRow("Auto-vectorize:", self.auto_vectorize_checkbox)
 
         self.predict_background_checkbox.toggled.connect(
@@ -195,6 +200,12 @@ class Semantic(Base):
 
         self.predict_background_checkbox.setEnabled(not self.auto_vectorize_checkbox.isChecked())
         self.auto_vectorize_checkbox.setEnabled(not self.predict_background_checkbox.isChecked())
+
+        # The area filter only has anything to act on once the mask is being
+        # turned into polygons. setup_parameters_layout runs before
+        # setup_thresholds_layout, so the widget may not exist on the first call.
+        if hasattr(self, 'thresholds_widget'):
+            self.thresholds_widget.set_area_enabled(self.auto_vectorize_checkbox.isChecked())
     
     def setup_sam_layout(self):
         pass
@@ -203,16 +214,18 @@ class Semantic(Base):
         """
         Setup threshold control section using ThresholdsWidget.
         """
-        # For semantic segmentation: only show uncertainty threshold
+        # Area is shown but only bites when the mask is vectorized; there is no
+        # per-instance area to filter on while the output stays a semantic mask.
         self.thresholds_widget = ThresholdsWidget(
             self.main_window,
             show_max_detections=False,
             show_boundary=False,
             show_uncertainty=True,
             show_iou=False,
-            show_area=False
+            show_area=True
         )
         self.layout.addWidget(self.thresholds_widget)
+        self._sync_semantic_prediction_options()
 
     def load_model(self):
         """Load the semantic model using Ultralytics YOLO (sem task)."""
@@ -558,6 +571,14 @@ class Semantic(Base):
                         vector_annotations = []
                         rejected_indices = []
 
+                    vector_annotations, area_dropped = self._filter_annotations_by_area(
+                        vector_annotations, raster
+                    )
+                    if area_dropped:
+                        print(f"Area filter dropped {len(area_dropped)} of "
+                              f"{len(area_dropped) + len(vector_annotations)} polygons "
+                              f"for {os.path.basename(str(image_path))}")
+
                     if vector_annotations:
                         try:
                             self.annotation_window.add_annotations(vector_annotations, record_action=False)
@@ -567,14 +588,18 @@ class Semantic(Base):
                         else:
                             vectors_added = True
 
-                    # Clear the vectorized regions and the rejected ones in one
-                    # pass. This still runs when nothing vectorized, so a mask
-                    # made entirely of sub-threshold specks is emptied rather
-                    # than left intact.
-                    if vectors_added or rejected_indices:
+                    # Clear the vectorized regions, the ones the area filter
+                    # rejected, and the sub-threshold specks in one pass. A region
+                    # excluded by size is residue just like a speck: leaving it
+                    # would strand mask pixels with no polygon to match. This
+                    # still runs when nothing vectorized, so a mask made entirely
+                    # of specks is emptied rather than left intact. If
+                    # add_annotations failed, the kept polygons stay in the mask
+                    # rather than being cleared with nothing to show for them.
+                    if vectors_added or area_dropped or rejected_indices:
                         try:
                             mask_annotation.clear_pixels_for_annotations(
-                                vector_annotations if vectors_added else [],
+                                (vector_annotations if vectors_added else []) + area_dropped,
                                 extra_flat_indices=rejected_indices,
                             )
                         except Exception as e:
@@ -645,6 +670,50 @@ class Semantic(Base):
             QApplication.restoreOverrideCursor()
             gc.collect()
             empty_cache()
+
+    def _filter_annotations_by_area(self, annotations, raster):
+        """Split vectorized polygons on the area threshold.
+
+        Returns (kept, dropped). The bound is resolved against this raster, so a
+        real-world threshold picks out the same physical size on every image. A
+        bound that cannot be resolved - a real-world threshold on a raster with
+        no scale - keeps everything rather than silently discarding it.
+
+        Polygon area is measured directly instead of from a bounding box, so a
+        branching colony is judged on what it actually covers.
+        """
+        if not annotations:
+            return [], []
+
+        image_area, m2_per_px = raster_metrics(raster)
+        bounds = resolve_area_bounds_px(
+            self.thresholds_widget.get_area_thresh_min(),
+            self.thresholds_widget.get_area_thresh_max(),
+            self.thresholds_widget.get_area_thresh_mode(),
+            image_area,
+            m2_per_px,
+        )
+
+        if bounds is None:
+            return list(annotations), []
+
+        min_px, max_px = bounds
+        kept = []
+        dropped = []
+        for annotation in annotations:
+            try:
+                area_px = annotation.get_area()
+            except Exception:
+                # An unmeasurable polygon is kept: the filter should never be the
+                # reason a prediction disappears without explanation.
+                area_px = None
+
+            if area_px is None or min_px <= area_px <= max_px:
+                kept.append(annotation)
+            else:
+                dropped.append(annotation)
+
+        return kept, dropped
 
     def _report_vectorize_timing(self, polygon_count, elapsed_seconds):
         """Show how long the mask -> polygon conversion took.

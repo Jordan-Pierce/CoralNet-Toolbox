@@ -2,8 +2,219 @@
 QtThresholdsWidget - Reusable widget for threshold controls
 """
 
+import math
+
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QComboBox, QGroupBox, QFormLayout, QLabel, QSlider, QSpinBox
+
+from coralnet_toolbox.utilities import convert_scale_units
+from coralnet_toolbox.utilities import is_length_unit
+
+
+# The area threshold is expressed either as a share of the image or as a real
+# world area. A share applies to any raster but means a different physical size
+# on each one; a real-world area is the same size everywhere, but needs the
+# raster to carry a scale.
+AREA_MODE_FRACTION = 'fraction'
+AREA_MODE_METRIC = 'metric'
+
+AREA_SLIDER_STEPS = 1000
+
+# log10 bounds of each mode's slider travel. Both are logarithmic because a
+# linear slider cannot span the sizes involved: one tick of the old linear
+# 0-100 slider was 1% of the image area, a 2400px square on a 24k ortho, so
+# every real object sat below the first tick.
+AREA_SLIDER_RANGES = {
+    AREA_MODE_FRACTION: (-6.0, 0.0),   # 1e-6 up to all of the image area
+    AREA_MODE_METRIC: (-4.0, 4.0),     # 1 cm2 up to 1 hectare, held in m2
+}
+
+# Seed values for a mode when nothing better can be derived on a switch.
+AREA_MODE_DEFAULTS = {
+    AREA_MODE_FRACTION: (0.0, 0.40),
+    AREA_MODE_METRIC: (0.0, 100.0),    # m2
+}
+
+
+def area_slider_tick(mode: str = AREA_MODE_FRACTION) -> int:
+    """Slider tick spacing for `mode`: one tick per decade."""
+    lo, hi = AREA_SLIDER_RANGES.get(mode, AREA_SLIDER_RANGES[AREA_MODE_FRACTION])
+    return max(1, int(AREA_SLIDER_STEPS / (hi - lo)))
+
+
+def area_slider_to_value(value: int, mode: str = AREA_MODE_FRACTION) -> float:
+    """Map a slider position to a threshold value in `mode`'s unit."""
+    lo, hi = AREA_SLIDER_RANGES.get(mode, AREA_SLIDER_RANGES[AREA_MODE_FRACTION])
+    if value <= 0:
+        return 0.0
+    if value >= AREA_SLIDER_STEPS:
+        return 10.0 ** hi
+    return 10.0 ** (lo + (hi - lo) * value / AREA_SLIDER_STEPS)
+
+
+def area_value_to_slider(value: float, mode: str = AREA_MODE_FRACTION) -> int:
+    """Map a threshold value in `mode`'s unit back to a slider position."""
+    lo, hi = AREA_SLIDER_RANGES.get(mode, AREA_SLIDER_RANGES[AREA_MODE_FRACTION])
+    if not value or value <= 0:
+        return 0
+    exponent = math.log10(value)
+    if exponent <= lo:
+        return 0
+    if exponent >= hi:
+        return AREA_SLIDER_STEPS
+    return int(round(AREA_SLIDER_STEPS * (exponent - lo) / (hi - lo)))
+
+
+def format_area_fraction(fraction: float) -> str:
+    """Render an area fraction as a percentage legible across the whole log range."""
+    if not fraction or fraction <= 0.0:
+        return "0%"
+    if fraction >= 1.0:
+        return "100%"
+    percent = fraction * 100.0
+    if percent >= 1.0:
+        return f"{percent:.1f}%"
+    if percent >= 0.001:
+        return f"{percent:.3f}%"
+    return f"{percent:.1e}%"
+
+
+def format_area_metric_range(min_m2: float, max_m2: float) -> str:
+    """Render a real-world area range, picking one unit for both ends.
+
+    The unit is chosen from the larger bound so the two numbers stay
+    comparable; mixing them ("0 cm2 - 2,314 m2") reads as a mistake.
+    """
+    largest = max(min_m2, max_m2)
+    if largest < 1.0:
+        return f"{min_m2 * 1e4:,.1f} - {max_m2 * 1e4:,.1f} cm\u00b2"
+    if largest < 1e6:
+        return f"{min_m2:,.2f} - {max_m2:,.2f} m\u00b2"
+    return f"{min_m2 / 1e6:,.3f} - {max_m2 / 1e6:,.3f} km\u00b2"
+
+
+def raster_metrics(raster):
+    """Pixel area and square metres per pixel for one raster.
+
+    Returns (image_area_px, m2_per_px); either element is None when it cannot
+    be established. Most rasters carry no scale at all, and a world file with
+    no CRS can leave scale_units as 'degree' - a real unit, but not a length,
+    so it must not be multiplied through as if it were metres.
+    """
+    if raster is None:
+        return None, None
+
+    try:
+        if not raster.width or not raster.height:
+            return None, None
+        image_area = float(raster.width) * float(raster.height)
+    except Exception:
+        return None, None
+
+    m2_per_px = None
+    try:
+        units = raster.scale_units
+        if raster.scale_x and raster.scale_y and units and is_length_unit(units):
+            to_metres = convert_scale_units(1.0, units, 'metre')
+            m2_per_px = (float(raster.scale_x) * to_metres) * (float(raster.scale_y) * to_metres)
+    except Exception:
+        m2_per_px = None
+
+    return image_area, m2_per_px
+
+
+def current_raster_metrics(main_window):
+    """raster_metrics for whichever raster is on display."""
+    try:
+        image_path = main_window.annotation_window.current_image_path
+        if not image_path:
+            return None, None
+        raster = main_window.image_window.raster_manager.get_raster(image_path)
+    except Exception:
+        return None, None
+
+    return raster_metrics(raster)
+
+
+def resolve_area_bounds_px(min_value, max_value, mode, image_area, m2_per_px):
+    """The area threshold as absolute px2 bounds for one raster.
+
+    Returns (min_px, max_px), or None when the threshold cannot be evaluated
+    against this raster - a real-world bound on a raster carrying no scale.
+    Callers must then accept everything: we cannot judge the criterion, and
+    silently dropping every detection would be far worse than not filtering.
+    """
+    if mode == AREA_MODE_METRIC:
+        if not m2_per_px:
+            return None
+        return min_value / m2_per_px, max_value / m2_per_px
+
+    if not image_area:
+        return None
+    return min_value * image_area, max_value * image_area
+
+
+def convert_area_bounds(min_value, max_value, from_mode, to_mode, image_area, m2_per_px):
+    """Carry a threshold across a mode switch, preserving the physical size.
+
+    Falls back to the target mode's defaults when the open raster cannot bridge
+    the two - no scale, or no image at all - since a known-sane starting point
+    beats an arbitrary number the user did not choose.
+    """
+    if from_mode == to_mode:
+        return min_value, max_value
+
+    if image_area and m2_per_px:
+        image_m2 = image_area * m2_per_px
+        if image_m2:
+            if to_mode == AREA_MODE_METRIC:
+                return min_value * image_m2, max_value * image_m2
+            return min_value / image_m2, max_value / image_m2
+
+    return AREA_MODE_DEFAULTS[to_mode]
+
+
+def get_area_mode(main_window) -> str:
+    """The active area threshold mode, defaulting to the image-share mode.
+
+    Tolerates a main window that predates the mode so a caller never has to
+    guard the attribute itself.
+    """
+    try:
+        mode = main_window.get_area_thresh_mode()
+    except Exception:
+        return AREA_MODE_FRACTION
+    return mode if mode in AREA_SLIDER_RANGES else AREA_MODE_FRACTION
+
+
+def format_area_range(min_value: float, max_value: float,
+                      image_area: float = None, m2_per_px: float = None,
+                      mode: str = AREA_MODE_FRACTION) -> str:
+    """The threshold range, plus a concrete equivalent for the open image.
+
+    A percentage alone is unreadable at the bottom of a log scale - 0.001% of
+    an image says nothing about whether it will catch a coral colony - so the
+    other unit is always shown alongside when the open raster can supply it.
+    """
+    if mode == AREA_MODE_METRIC:
+        text = format_area_metric_range(min_value, max_value)
+        if not image_area:
+            return text
+        if not m2_per_px:
+            # Say so outright rather than print a bound that is not being applied.
+            return text + "  (no scale - filter inactive)"
+        return text + (f"  (~{min_value / m2_per_px:,.0f} - "
+                       f"{max_value / m2_per_px:,.0f} px\u00b2)")
+
+    text = f"{format_area_fraction(min_value)} - {format_area_fraction(max_value)}"
+    if not image_area:
+        return text
+
+    min_px = min_value * image_area
+    max_px = max_value * image_area
+    if m2_per_px:
+        return text + f"  (~{format_area_metric_range(min_px * m2_per_px, max_px * m2_per_px)})"
+    return text + f"  (~{min_px:,.0f} - {max_px:,.0f} px\u00b2)"
 
 
 class ThresholdsWidget(QGroupBox):
@@ -37,6 +248,7 @@ class ThresholdsWidget(QGroupBox):
         min_val, max_val = main_window.get_area_thresh()
         self.area_thresh_min = min_val
         self.area_thresh_max = max_val
+        self.area_thresh_mode = get_area_mode(main_window)
         
         # Create the layout
         layout = QFormLayout()
@@ -121,36 +333,68 @@ class ThresholdsWidget(QGroupBox):
         
         # Area threshold controls
         if show_area:
+            self.area_mode_combo = QComboBox()
+            self.area_mode_combo.addItem("Image %", AREA_MODE_FRACTION)
+            self.area_mode_combo.addItem("Real-world", AREA_MODE_METRIC)
+            self.area_mode_combo.setCurrentIndex(
+                max(0, self.area_mode_combo.findData(self.area_thresh_mode)))
+            self.area_mode_combo.currentIndexChanged.connect(self._update_area_mode)
+            layout.addRow("Area Units", self.area_mode_combo)
+            apply_row_tooltip(
+                self.area_mode_combo,
+                "Image %: the bounds are a share of each image's area, so the same setting picks out "
+                "a different physical size on every raster.\n\n"
+                "Real-world: the bounds are an absolute area, so one setting means the same size "
+                "across a whole dataset. Requires the raster to carry a scale - on an unscaled image "
+                "the area filter is skipped rather than applied wrongly.")
+
+            area_tick = area_slider_tick(self.area_thresh_mode)
             self.area_threshold_min_slider = QSlider(Qt.Horizontal)
-            self.area_threshold_min_slider.setRange(0, 100)
-            self.area_threshold_min_slider.setValue(int(self.area_thresh_min * 100))
+            self.area_threshold_min_slider.setRange(0, AREA_SLIDER_STEPS)
+            self.area_threshold_min_slider.setValue(
+                area_value_to_slider(self.area_thresh_min, self.area_thresh_mode))
             self.area_threshold_min_slider.setTickPosition(QSlider.TicksBelow)
-            self.area_threshold_min_slider.setTickInterval(10)
+            # One tick per decade.
+            self.area_threshold_min_slider.setTickInterval(area_tick)
             self.area_threshold_min_slider.valueChanged.connect(self._update_area_label)
-            
+
             self.area_threshold_max_slider = QSlider(Qt.Horizontal)
-            self.area_threshold_max_slider.setRange(0, 100)
-            self.area_threshold_max_slider.setValue(int(self.area_thresh_max * 100))
+            self.area_threshold_max_slider.setRange(0, AREA_SLIDER_STEPS)
+            self.area_threshold_max_slider.setValue(
+                area_value_to_slider(self.area_thresh_max, self.area_thresh_mode))
             self.area_threshold_max_slider.setTickPosition(QSlider.TicksBelow)
-            self.area_threshold_max_slider.setTickInterval(10)
+            self.area_threshold_max_slider.setTickInterval(area_tick)
             self.area_threshold_max_slider.valueChanged.connect(self._update_area_label)
-            
+
             main_window.areaChanged.connect(self._on_area_changed)
-            
-            self.area_threshold_label = QLabel(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
+            if hasattr(main_window, 'areaModeChanged'):
+                main_window.areaModeChanged.connect(self._on_area_mode_changed)
+
+            self.area_threshold_label = QLabel(self._area_label_text())
             layout.addRow("Area Threshold Min", self.area_threshold_min_slider)
             layout.addRow("Area Threshold Max", self.area_threshold_max_slider)
             layout.addRow("", self.area_threshold_label)
             apply_row_tooltip(
                 self.area_threshold_min_slider,
-                "Lower bound of the normalized annotation area filter. Objects smaller than this "
-                "fraction of the image area are removed after confidence and IoU filtering.")
+                "Lower bound of the annotation area filter, as a fraction of the whole image area. "
+                "Objects smaller than this are removed after confidence and IoU filtering.\n\n"
+                "The slider is logarithmic: each tick is one decade, spanning 0.0001% up to 100% of "
+                "the image. A linear slider could not reach the sizes real objects occupy in a large "
+                "orthomosaic.")
             apply_row_tooltip(
                 self.area_threshold_max_slider,
-                "Upper bound of the normalized annotation area filter. Objects larger than this "
-                "fraction of the image area are removed after confidence and IoU filtering.")
+                "Upper bound of the annotation area filter, as a fraction of the whole image area. "
+                "Objects larger than this are removed after confidence and IoU filtering.\n\n"
+                "The slider is logarithmic: each tick is one decade, spanning 0.0001% up to 100% of "
+                "the image.")
             self.area_threshold_label.setToolTip(
-                "Current area filter range, shown as normalized fractions of the image area.")
+                "Current area filter range, as a percentage of the image area. When an image is open "
+                "the equivalent bounds are also shown - in real-world units if that raster is scaled, "
+                "otherwise in pixels.")
+            try:
+                main_window.image_window.imageLoaded.connect(self._on_image_loaded)
+            except Exception:
+                pass
         
         self.setLayout(layout)
         
@@ -182,6 +426,51 @@ class ThresholdsWidget(QGroupBox):
         self.main_window.update_iou_thresh(value)
         self.iou_threshold_label.setText(f"{value:.2f}")
     
+    def _area_label_text(self):
+        """The range in the active unit, plus the equivalent for the open image."""
+        image_area, m2_per_px = current_raster_metrics(self.main_window)
+        return format_area_range(self.area_thresh_min, self.area_thresh_max,
+                                 image_area, m2_per_px, self.area_thresh_mode)
+
+    def _sync_area_widgets(self):
+        """Re-seed the sliders and label from the active mode and values."""
+        if not hasattr(self, 'area_threshold_min_slider'):
+            return
+        tick = area_slider_tick(self.area_thresh_mode)
+        for slider, value in ((self.area_threshold_min_slider, self.area_thresh_min),
+                              (self.area_threshold_max_slider, self.area_thresh_max)):
+            slider.blockSignals(True)
+            slider.setTickInterval(tick)
+            slider.setValue(area_value_to_slider(value, self.area_thresh_mode))
+            slider.blockSignals(False)
+        self.area_threshold_label.setText(self._area_label_text())
+
+    def _update_area_mode(self, index):
+        """Hand a mode change to the main window, which owns the conversion."""
+        mode = self.area_mode_combo.itemData(index)
+        if mode:
+            self.main_window.update_area_thresh_mode(mode)
+
+    def _on_area_mode_changed(self, mode):
+        """Adopt a mode change made elsewhere."""
+        self.area_thresh_mode = mode
+        if hasattr(self, 'area_mode_combo'):
+            self.area_mode_combo.blockSignals(True)
+            self.area_mode_combo.setCurrentIndex(max(0, self.area_mode_combo.findData(mode)))
+            self.area_mode_combo.blockSignals(False)
+        self.area_thresh_min, self.area_thresh_max = self.main_window.get_area_thresh()
+        self._sync_area_widgets()
+
+    def _on_image_loaded(self, *args):
+        """Redraw the area label when the displayed raster changes.
+
+        The hint is per-raster - pixel bounds scale with the image, and only
+        some rasters carry a scale at all - so a dialog left open across a
+        navigation would otherwise keep showing the previous image's numbers.
+        """
+        if hasattr(self, 'area_threshold_label'):
+            self.area_threshold_label.setText(self._area_label_text())
+
     def _update_area_label(self):
         """Handle changes to area threshold range slider"""
         min_val = self.area_threshold_min_slider.value()
@@ -189,10 +478,10 @@ class ThresholdsWidget(QGroupBox):
         if min_val > max_val:
             min_val = max_val
             self.area_threshold_min_slider.setValue(min_val)
-        self.area_thresh_min = min_val / 100.0
-        self.area_thresh_max = max_val / 100.0
+        self.area_thresh_min = area_slider_to_value(min_val, self.area_thresh_mode)
+        self.area_thresh_max = area_slider_to_value(max_val, self.area_thresh_mode)
         self.main_window.update_area_thresh(self.area_thresh_min, self.area_thresh_max)
-        self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
+        self.area_threshold_label.setText(self._area_label_text())
     
     def initialize_thresholds(self):
         """
@@ -222,11 +511,16 @@ class ThresholdsWidget(QGroupBox):
             self.iou_thresh = current_value
         
         if hasattr(self, 'area_threshold_min_slider') and hasattr(self, 'area_threshold_max_slider'):
-            current_min, current_max = self.main_window.get_area_thresh()
-            self.area_threshold_min_slider.setValue(int(current_min * 100))
-            self.area_threshold_max_slider.setValue(int(current_max * 100))
-            self.area_thresh_min = current_min
-            self.area_thresh_max = current_max
+            self.area_thresh_min, self.area_thresh_max = self.main_window.get_area_thresh()
+            self.area_thresh_mode = get_area_mode(self.main_window)
+            if hasattr(self, 'area_mode_combo'):
+                self.area_mode_combo.blockSignals(True)
+                self.area_mode_combo.setCurrentIndex(
+                    max(0, self.area_mode_combo.findData(self.area_thresh_mode)))
+                self.area_mode_combo.blockSignals(False)
+            # Refresh here, not only on slider moves: the hint is relative to
+            # whichever image is open when the dialog is shown.
+            self._sync_area_widgets()
     
     def get_max_detections(self):
         """Get the current max detections value"""
@@ -251,6 +545,33 @@ class ThresholdsWidget(QGroupBox):
     def get_area_thresh_max(self):
         """Get the current maximum area threshold value"""
         return self.area_thresh_max
+
+    def get_area_thresh_mode(self):
+        """Get the unit the area threshold is expressed in"""
+        return self.area_thresh_mode
+
+    def set_area_enabled(self, enabled):
+        """Enable or disable the area controls as a group, row labels included.
+
+        For dialogs where the area filter only applies under some other option:
+        greying the controls says so, where leaving them live but ignored would
+        not.
+        """
+        if not hasattr(self, 'area_threshold_min_slider'):
+            return
+
+        layout = self.layout()
+        widgets = [self.area_threshold_min_slider,
+                   self.area_threshold_max_slider,
+                   self.area_threshold_label]
+        if hasattr(self, 'area_mode_combo'):
+            widgets.append(self.area_mode_combo)
+
+        for widget in widgets:
+            widget.setEnabled(enabled)
+            label = layout.labelForField(widget) if layout is not None else None
+            if label is not None:
+                label.setEnabled(enabled)
     
     def _on_max_detections_changed(self, value):
         """Update spinbox when MainWindow changes"""
@@ -288,13 +609,6 @@ class ThresholdsWidget(QGroupBox):
     
     def _on_area_changed(self, min_val, max_val):
         """Update sliders/label when MainWindow changes"""
-        if hasattr(self, 'area_threshold_min_slider') and hasattr(self, 'area_threshold_max_slider'):
-            self.area_threshold_min_slider.blockSignals(True)
-            self.area_threshold_max_slider.blockSignals(True)
-            self.area_threshold_min_slider.setValue(int(min_val * 100))
-            self.area_threshold_max_slider.setValue(int(max_val * 100))
-            self.area_thresh_min = min_val
-            self.area_thresh_max = max_val
-            self.area_threshold_label.setText(f"{min_val:.2f} - {max_val:.2f}")
-            self.area_threshold_min_slider.blockSignals(False)
-            self.area_threshold_max_slider.blockSignals(False)
+        self.area_thresh_min = min_val
+        self.area_thresh_max = max_val
+        self._sync_area_widgets()

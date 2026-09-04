@@ -131,6 +131,15 @@ from coralnet_toolbox.Layout import DockWrapper
 
 from coralnet_toolbox.Common import (
     CollapsibleSection,
+    AREA_MODE_FRACTION,
+    AREA_MODE_METRIC,
+    AREA_SLIDER_STEPS,
+    area_slider_tick,
+    area_slider_to_value,
+    area_value_to_slider,
+    convert_area_bounds,
+    current_raster_metrics,
+    format_area_range,
 )
 
 # Game dialogs
@@ -157,6 +166,7 @@ class MainWindow(QMainWindow):
     uncertaintyChanged = pyqtSignal(float)  # Signal to emit the current uncertainty threshold
     iouChanged = pyqtSignal(float)  # Signal to emit the current IoU threshold
     areaChanged = pyqtSignal(float, float)  # Signal to emit the current area threshold
+    areaModeChanged = pyqtSignal(str)  # Signal to emit the area threshold's unit
     boundaryToleranceChanged = pyqtSignal(bool)  # Signal to emit whether to keep detections on boundaries
 
     def __init__(self, __version__):
@@ -216,6 +226,7 @@ class MainWindow(QMainWindow):
         self.max_detections = 500
         self.iou_thresh = 0.50
         self.uncertainty_thresh = 0.20
+        self.area_thresh_mode = AREA_MODE_FRACTION
         self.area_thresh_min = 0.00
         self.area_thresh_max = 0.70
         self.boundary_tolerance = False
@@ -1162,30 +1173,53 @@ class MainWindow(QMainWindow):
         # Area threshold controls
         min_val = self.area_thresh_min
         max_val = self.area_thresh_max
+        # Logarithmic: a linear 0-100 slider stepped by 1% of the image area,
+        # which on a large orthomosaic is bigger than anything being detected.
+        area_tick = area_slider_tick(self.area_thresh_mode)
+        self.area_mode_combo = QComboBox()
+        self.area_mode_combo.addItem("Image %", AREA_MODE_FRACTION)
+        self.area_mode_combo.addItem("Real-world", AREA_MODE_METRIC)
+        self.area_mode_combo.setCurrentIndex(
+            max(0, self.area_mode_combo.findData(self.area_thresh_mode)))
+        self.area_mode_combo.currentIndexChanged.connect(
+            lambda index: self.update_area_thresh_mode(self.area_mode_combo.itemData(index)))
+        self.area_mode_combo.setToolTip(
+            "Image %: the bounds are a share of each image's area, so the same setting picks out "
+            "a different physical size on every raster.\n\n"
+            "Real-world: the bounds are an absolute area, so one setting means the same size across "
+            "a whole dataset. Requires the raster to carry a scale - on an unscaled image the area "
+            "filter is skipped rather than applied wrongly.")
         self.area_threshold_min_slider = QSlider(Qt.Horizontal)
         self.area_threshold_min_slider.setMinimum(0)
-        self.area_threshold_min_slider.setMaximum(100)
+        self.area_threshold_min_slider.setMaximum(AREA_SLIDER_STEPS)
         self.area_threshold_min_slider.setTickPosition(QSlider.TicksBelow)
-        self.area_threshold_min_slider.setTickInterval(10)
-        self.area_threshold_min_slider.setValue(int(min_val * 100))
+        self.area_threshold_min_slider.setTickInterval(area_tick)
+        self.area_threshold_min_slider.setValue(area_value_to_slider(min_val, self.area_thresh_mode))
         self.area_threshold_min_slider.valueChanged.connect(self.update_area_label)
         self.area_threshold_min_slider.setToolTip(
-            "Lower bound of the normalized annotation area filter. Objects smaller than this fraction "
-            "of the image area are removed after confidence and IoU filtering.")
+            "Lower bound of the annotation area filter, as a fraction of the whole image area. "
+            "Objects smaller than this are removed after confidence and IoU filtering.\n\n"
+            "The slider is logarithmic: each tick is one decade, spanning 0.0001% up to 100% of "
+            "the image.")
         self.area_threshold_max_slider = QSlider(Qt.Horizontal)
         self.area_threshold_max_slider.setMinimum(0)
-        self.area_threshold_max_slider.setMaximum(100)
+        self.area_threshold_max_slider.setMaximum(AREA_SLIDER_STEPS)
         self.area_threshold_max_slider.setTickPosition(QSlider.TicksBelow)
-        self.area_threshold_max_slider.setTickInterval(10)
-        self.area_threshold_max_slider.setValue(int(max_val * 100))
+        self.area_threshold_max_slider.setTickInterval(area_tick)
+        self.area_threshold_max_slider.setValue(area_value_to_slider(max_val, self.area_thresh_mode))
         self.area_threshold_max_slider.valueChanged.connect(self.update_area_label)
         self.area_threshold_max_slider.setToolTip(
-            "Upper bound of the normalized annotation area filter. Objects larger than this fraction "
-            "of the image area are removed after confidence and IoU filtering.")
-        self.area_threshold_label = QLabel(f"{min_val:.2f} - {max_val:.2f}")
+            "Upper bound of the annotation area filter, as a fraction of the whole image area. "
+            "Objects larger than this are removed after confidence and IoU filtering.\n\n"
+            "The slider is logarithmic: each tick is one decade, spanning 0.0001% up to 100% of "
+            "the image.")
+        self.area_threshold_label = QLabel(format_area_range(min_val, max_val))
         self.area_threshold_label.setToolTip(
-            "Current area filter range, shown as normalized fractions of the image area.")
+            "Current area filter range, as a percentage of the image area. When an image is open "
+            "the equivalent bounds are also shown - in real-world units if that raster is scaled, "
+            "otherwise in pixels.")
         area_thresh_layout = QVBoxLayout()
+        area_thresh_layout.addWidget(self.area_mode_combo)
         area_thresh_layout.addWidget(self.area_threshold_min_slider)
         area_thresh_layout.addWidget(self.area_threshold_max_slider)
         area_thresh_layout.addWidget(self.area_threshold_label)
@@ -1627,6 +1661,7 @@ class MainWindow(QMainWindow):
         #   across images (patch sampling, scale dialogs, etc.).
         # ---------------------------------------------------------------------
         self.image_window.imageLoaded.connect(self.annotation_window.on_image_loaded_check_z_channel)
+        self.image_window.imageLoaded.connect(self.update_area_threshold_label)
         self.image_window.imageLoaded.connect(self.annotation_viewer_window.on_image_loaded)
         self.image_window.imageLoaded.connect(self.embedding_viewer_window.on_image_loaded)
         self.annotation_window.imageLoaded.connect(self.close_image_specific_dialogs)
@@ -1811,13 +1846,54 @@ class MainWindow(QMainWindow):
         """Get the current maximum area threshold value"""
         return self.area_thresh_max
 
+    def get_area_thresh_mode(self):
+        """Get the unit the area threshold is expressed in"""
+        return self.area_thresh_mode
+
+    def update_area_thresh_mode(self, mode):
+        """Switch the area threshold between an image share and a real-world area.
+
+        The bounds are carried across so the physical size the user had chosen
+        survives the switch, using the open raster's scale to bridge the two.
+        """
+        if not mode or mode == self.area_thresh_mode:
+            return
+
+        image_area, m2_per_px = current_raster_metrics(self)
+        self.area_thresh_min, self.area_thresh_max = convert_area_bounds(
+            self.area_thresh_min, self.area_thresh_max,
+            self.area_thresh_mode, mode, image_area, m2_per_px)
+        self.area_thresh_mode = mode
+
+        self.area_mode_combo.blockSignals(True)
+        self.area_mode_combo.setCurrentIndex(max(0, self.area_mode_combo.findData(mode)))
+        self.area_mode_combo.blockSignals(False)
+
+        self._sync_area_sliders()
+        self.areaModeChanged.emit(mode)
+        self.areaChanged.emit(self.area_thresh_min, self.area_thresh_max)
+
+    def _sync_area_sliders(self):
+        """Re-seed the area sliders and label from the active mode and values."""
+        tick = area_slider_tick(self.area_thresh_mode)
+        for slider, value in ((self.area_threshold_min_slider, self.area_thresh_min),
+                              (self.area_threshold_max_slider, self.area_thresh_max)):
+            slider.blockSignals(True)
+            slider.setTickInterval(tick)
+            slider.setValue(area_value_to_slider(value, self.area_thresh_mode))
+            slider.blockSignals(False)
+        self.update_area_threshold_label()
+
     def update_area_thresh(self, min_val, max_val):
         """Update the area threshold values"""
         if self.area_thresh_min != min_val or self.area_thresh_max != max_val:
             self.area_thresh_min = min_val
             self.area_thresh_max = max_val
-            self.area_threshold_min_slider.setValue(int(min_val * 100))
-            self.area_threshold_max_slider.setValue(int(max_val * 100))
+            # _sync_area_sliders blocks signals while writing them: the log
+            # mapping does not round-trip exactly, so an echoed valueChanged
+            # would re-enter with a slightly different value and emit
+            # areaChanged a second time.
+            self._sync_area_sliders()
             self.areaChanged.emit(min_val, max_val)
 
     def update_area_label(self):
@@ -1827,10 +1903,22 @@ class MainWindow(QMainWindow):
         if min_val > max_val:
             min_val = max_val
             self.area_threshold_min_slider.setValue(min_val)
-        self.area_thresh_min = min_val / 100.0
-        self.area_thresh_max = max_val / 100.0
-        self.area_threshold_label.setText(f"{self.area_thresh_min:.2f} - {self.area_thresh_max:.2f}")
+        self.area_thresh_min = area_slider_to_value(min_val, self.area_thresh_mode)
+        self.area_thresh_max = area_slider_to_value(max_val, self.area_thresh_mode)
+        self.update_area_threshold_label()
         self.update_area_thresh(self.area_thresh_min, self.area_thresh_max)
+
+    def update_area_threshold_label(self, *args):
+        """Redraw the area range label for the raster currently on display.
+
+        Also connected to imageLoaded: the pixel bounds scale with the image and
+        the real-world bounds exist only for a scaled raster, so the label goes
+        stale on navigation unless it is recomputed there too.
+        """
+        image_area, m2_per_px = current_raster_metrics(self)
+        self.area_threshold_label.setText(
+            format_area_range(self.area_thresh_min, self.area_thresh_max,
+                              image_area, m2_per_px, self.area_thresh_mode))
 
     def get_boundary_tolerance(self):
         """Get whether detections on boundaries should be kept"""
