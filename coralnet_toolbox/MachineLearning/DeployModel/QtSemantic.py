@@ -170,6 +170,24 @@ class Semantic(Base):
             "active while this is ticked.")
         layout.addRow("Auto-vectorize:", self.auto_vectorize_checkbox)
 
+        # Splitting operates on the mask before it is traced, so it only means
+        # anything while the mask is being turned into polygons.
+        self.split_touching_checkbox = QCheckBox("Split touching objects into separate polygons")
+        self.split_touching_checkbox.setChecked(False)
+        self.split_touching_checkbox.setToolTip(
+            "Separates objects of the same class that touch, so a clump becomes one "
+            "polygon per object instead of one sprawling polygon.\n\n"
+            "Runs before the area threshold, which therefore measures the split "
+            "objects rather than the clump they came from: a cluster that was too "
+            "large to pass the maximum can survive as its parts.\n\n"
+            "Costs a watershed pass per predicted class and trims 1-2% of each "
+            "class's pixels along the boundaries it cuts.\n\n"
+            "Branching shapes are split at their branch points, so a single "
+            "branching colony can come out as several polygons. Only available "
+            "while auto-vectorize is ticked."
+        )
+        layout.addRow("Split objects:", self.split_touching_checkbox)
+
         self.predict_background_checkbox.toggled.connect(
             lambda checked: self._sync_semantic_prediction_options(self.predict_background_checkbox)
         )
@@ -201,11 +219,22 @@ class Semantic(Base):
         self.predict_background_checkbox.setEnabled(not self.auto_vectorize_checkbox.isChecked())
         self.auto_vectorize_checkbox.setEnabled(not self.predict_background_checkbox.isChecked())
 
-        # The area filter only has anything to act on once the mask is being
-        # turned into polygons. setup_parameters_layout runs before
-        # setup_thresholds_layout, so the widget may not exist on the first call.
+        vectorizing = self.auto_vectorize_checkbox.isChecked()
+
+        # Splitting and the area filter both act on the polygons, so both are
+        # dead while the output stays a semantic mask. The split box is cleared
+        # rather than merely greyed, so a run never carries a hidden setting.
+        if hasattr(self, 'split_touching_checkbox'):
+            self.split_touching_checkbox.setEnabled(vectorizing)
+            if not vectorizing and self.split_touching_checkbox.isChecked():
+                self.split_touching_checkbox.blockSignals(True)
+                self.split_touching_checkbox.setChecked(False)
+                self.split_touching_checkbox.blockSignals(False)
+
+        # setup_parameters_layout runs before setup_thresholds_layout, so the
+        # widget may not exist on the first call.
         if hasattr(self, 'thresholds_widget'):
-            self.thresholds_widget.set_area_enabled(self.auto_vectorize_checkbox.isChecked())
+            self.thresholds_widget.set_area_enabled(vectorizing)
     
     def setup_sam_layout(self):
         pass
@@ -543,10 +572,16 @@ class Semantic(Base):
 
                 if auto_vectorize:
                     history_description = "Semantic prediction & vectorize"
-                    # Regions too small to become polygons are noise. Collect
-                    # their pixels so they can be dropped below rather than
-                    # left behind as stray mask specks.
+                    split_touching = (
+                        getattr(self, 'split_touching_checkbox', None) is not None
+                        and self.split_touching_checkbox.isChecked()
+                    )
+                    # Regions too small to become polygons are noise, and so are
+                    # the ridge pixels splitting leaves between neighbours.
+                    # Collect both so they can be dropped below rather than left
+                    # behind as stray mask specks and seams.
                     rejected_indices = []
+                    split_stats = {}
                     try:
                         _vectorize_start = time.perf_counter()
                         vector_annotations = mask_annotation.to_vector_annotations(
@@ -554,6 +589,8 @@ class Semantic(Base):
                             show_confidence=False,
                             min_hole_area=500,
                             rejected_indices_out=rejected_indices,
+                            split_touching=split_touching,
+                            split_stats_out=split_stats,
                             # A VideoRaster's mask is shared across frames and
                             # carries the video's path, so without this the new
                             # polygons are filed under "clip.mp4" -- a key no
@@ -565,6 +602,7 @@ class Semantic(Base):
                         self._report_vectorize_timing(
                             len(vector_annotations),
                             time.perf_counter() - _vectorize_start,
+                            split_stats=split_stats,
                         )
                     except Exception as e:
                         print(f"Warning: Failed to vectorize semantic prediction for {image_path}: {e}")
@@ -715,14 +753,21 @@ class Semantic(Base):
 
         return kept, dropped
 
-    def _report_vectorize_timing(self, polygon_count, elapsed_seconds):
+    def _report_vectorize_timing(self, polygon_count, elapsed_seconds, split_stats=None):
         """Show how long the mask -> polygon conversion took.
 
         Written to both the status bar and stdout so runs can be compared
         without keeping the window in view.
+
+        The splitting pass is called out separately when it ran: it is the
+        expensive half of the conversion on a dense mask, and its share is the
+        number to look at when deciding whether the option is worth its cost.
         """
         message = (f"Converted masks into {polygon_count} polygons - "
                    f"{elapsed_seconds:.3f} seconds")
+        if split_stats:
+            message += (f" ({split_stats.get('seconds', 0.0):.3f}s splitting, "
+                        f"{split_stats.get('ridge_px', 0)} px cut)")
         print(message)
         try:
             self.main_window.status_bar.showMessage(message, 10000)

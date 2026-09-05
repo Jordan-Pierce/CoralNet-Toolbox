@@ -1,6 +1,8 @@
 import warnings
 
 import base64
+import time
+
 import rasterio
 
 import numpy as np
@@ -100,6 +102,140 @@ def decode_mask_crop_rle(rle_list, shape) -> np.ndarray:
             print(f"Error decoding RLE for class {class_id}: {e}")
             continue
     return mask_data
+
+
+# Peak-merge window for _split_seed_labels, in pixels: maxima closer together
+# than this fuse into one seed, so it is the knob that trades over-separation
+# against under-separation, and 9 is where the two meet.
+#
+# Below it, anything with a curved medial axis shatters -- an annulus goes to 16
+# regions at 3 and 8 at 5, a crescent to 25 and 11, and a peanut with a wide
+# waist to 3. At 9 every one of those comes out whole, while touching circles
+# still separate down to a radius of about 8 px. Going wider buys nothing and
+# starts merging objects that should have been split.
+SPLIT_PEAK_WINDOW = 9
+
+# An object whose distance transform never exceeds this is not seeded, so it is
+# absorbed into a neighbour's basin rather than becoming its own region. It only
+# suppresses plateau noise at the 1-2 px scale -- every shape measured comes out
+# the same at 0.0 as at 5.0 -- and is kept low so it never competes with the
+# window above for deciding what counts as an object.
+SPLIT_MIN_RADIUS = 1.5
+
+
+def split_touching_objects(binary: np.ndarray) -> np.ndarray:
+    """Break a class mask apart where separate objects touch.
+
+    Returns a new array with the pixels between adjacent objects cleared, so an
+    ordinary findContours pass downstream sees one region per object -- or the
+    input itself, unmodified, when there is nothing to separate (callers here
+    only read it). Expressing the separation as an edit to the mask, rather than
+    as a different tracer, is what keeps every downstream invariant intact: the
+    chain method, the hole handling and the pixel-count size filter all still
+    operate on a plain binary image.
+
+    Objects are seeded at the peaks of the distance transform, and seeding is
+    what decides how many objects come out. A morphological opening only splits
+    a cluster where the objects meet over a narrow contact, and most do not, so
+    it under-separates badly.
+
+    The cut costs a couple of percent of the class pixels, all of it along
+    shared boundaries -- 2.1% on a 2140x3808 survey mask, for ~330 ms. Those
+    pixels belong to no polygon afterwards, so the caller must account for them
+    or they survive as a one-pixel seam lattice in the mask -- see the ridge
+    bookkeeping in to_vector_annotations.
+
+    Known limitation: a branching object is split at its branch points. The
+    distance transform peaks once per branch, so a Y-shaped colony seeds three
+    times and comes out as three or four regions at every window size. This is
+    inherent to seeding from distance peaks, not a tuning problem, and it is why
+    the split is opt-in rather than always on.
+
+    Accepts either 0/1 or 0/255 input and preserves the caller's convention.
+    """
+    import cv2
+
+    seeds = _split_seed_labels(binary)
+    if seeds is None:
+        return binary  # fewer than two objects in this class: nothing to do
+
+    # No background marker. Marking the background would make watershed draw a
+    # boundary between every object and the background as well -- that is, right
+    # around each object's whole perimeter -- which eats ~12.5% of the class
+    # instead of the 1-2% the necks actually cost. With the background left
+    # unmarked the seeds flood the empty space too, so the only boundary falling
+    # inside the mask is the one between adjacent objects.
+    solid = cv2.compare(binary, 0, cv2.CMP_NE)
+    markers = seeds.astype(np.int32)
+    cv2.watershed(cv2.cvtColor(solid, cv2.COLOR_GRAY2BGR), markers)
+
+    return _split_cut_ridge(binary, (markers == -1).astype(np.uint8))
+
+
+def _split_seed_labels(binary: np.ndarray):
+    """Label one seed per object, or None when there is nothing to separate.
+
+    Two details keep the seeding from over-separating:
+
+    DIST_MASK_PRECISE. The 3x3 chamfer approximation quantizes the distance into
+    small plateaus, and every plateau reads as a local maximum, so a single
+    object picks up several seeds and gets carved into wedges.
+
+    Merging peaks within the search window. An object whose medial axis is a
+    ridge rather than a point -- anything elongated, and any ring -- produces a
+    broken line of maxima along it. Dilating the peaks before labelling fuses
+    those fragments into one seed. On an annulus this is the difference between
+    dozens of wedges and one region.
+    """
+    import cv2
+
+    dist = cv2.distanceTransform(binary, cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
+    kernel = np.ones((SPLIT_PEAK_WINDOW, SPLIT_PEAK_WINDOW), np.uint8)
+
+    # A maximum can be a plateau, so the test is >= with float slack.
+    peaks = ((dist >= cv2.dilate(dist, kernel) - 1e-6) &
+             (dist > SPLIT_MIN_RADIUS)).astype(np.uint8)
+    cv2.dilate(peaks, kernel, dst=peaks)
+    cv2.bitwise_and(peaks, cv2.compare(binary, 0, cv2.CMP_NE), dst=peaks)
+
+    # connectedComponents counts the background as label 0, so two labels means
+    # a single seeded object: nothing to separate.
+    n_seeds, labels = cv2.connectedComponents(peaks, connectivity=8)
+    return None if n_seeds <= 2 else labels
+
+
+def _split_cut_ridge(binary: np.ndarray, ridge: np.ndarray) -> np.ndarray:
+    """Clear the watershed ridge, then break the diagonals that leak across it.
+
+    cv2.watershed draws a 4-connected boundary while findContours follows
+    diagonals, so clearing the ridge alone disconnects almost nothing: for
+    foreground at (0,0) and (1,1) with ridge at (0,1) and (1,0), the two halves
+    stay one region.
+
+    Dilating the whole ridge closes the leaks but costs a pixel off every cut
+    edge -- ~12.5% of the class on a dense mask, against 1-2% for clearing
+    exactly one pixel per leak.
+
+    The narrow test matters for correctness, not just for area. Breaking every
+    diagonal pair would sever shapes that are legitimately 8-connected -- a
+    one-pixel staircase edge is the common case -- so a pair is only cut when
+    both of its anti-diagonal neighbours are ridge, which can only happen where
+    the watershed line passes between them.
+    """
+    out = binary.copy()
+    out[ridge > 0] = 0
+
+    kept = out > 0
+    on_ridge = ridge > 0
+    cut = np.zeros_like(kept)
+    # (y,x)+(y+1,x+1) joined only through ridge at (y,x+1) and (y+1,x)
+    cut[1:, 1:] |= (kept[:-1, :-1] & kept[1:, 1:] &
+                    on_ridge[:-1, 1:] & on_ridge[1:, :-1])
+    # (y,x+1)+(y+1,x) joined only through ridge at (y,x) and (y+1,x+1)
+    cut[1:, :-1] |= (kept[:-1, 1:] & kept[1:, :-1] &
+                     on_ridge[:-1, :-1] & on_ridge[1:, 1:])
+    out[cut] = 0
+    return out
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -1669,7 +1805,9 @@ class MaskAnnotation(Annotation):
                               min_hole_area: int = 500, min_component_area: int = 5,
                               simplify_px: float = 1.0,
                               rejected_indices_out: list = None,
-                              image_path: str = None) -> list:
+                              image_path: str = None,
+                              split_touching: bool = False,
+                              split_stats_out: dict = None) -> list:
         """Convert all labeled regions in this mask into vector annotations.
 
         Disconnected regions become separate annotations. Four-point, axis-aligned
@@ -1696,6 +1834,14 @@ class MaskAnnotation(Annotation):
         -----------------------
         * ``findContours`` uses 8-connectivity for the foreground. Regions that
           touch only diagonally become one annotation, not two.
+        * With ``split_touching``, each class mask is separated before it is
+          traced, so a clump of touching objects becomes one annotation per
+          object. The separation deletes the ridge pixels between neighbours,
+          and those are reported through ``rejected_indices_out`` so the caller
+          clears them rather than leaving a one-pixel seam lattice behind. Every
+          measurement below -- the component-size filter and the clear indices
+          alike -- reads the separated image, never the original, or it would
+          measure the merged region and mis-threshold the fragments.
         * Clear indices are taken from the exterior's bounding box, so two
           same-class regions with overlapping boxes each claim the union of
           their pixels. Both regions are vectorised and cleared in the same pass,
@@ -1725,6 +1871,17 @@ class MaskAnnotation(Annotation):
                 pass that frame's virtual ``video.mp4::frame_N`` path, because a
                 VideoRaster's mask is shared across frames and carries only the
                 video's path.
+            split_touching: Separate touching objects of the same class before
+                tracing, so a clump becomes one annotation per object rather
+                than one sprawling polygon. Costs a watershed pass per class
+                present (see :func:`split_touching_objects`) and about 1.5% of
+                each split class's pixels, taken along the shared boundaries.
+                Requires ``rejected_indices_out`` to be given for the mask to
+                end up empty; without it the ridge pixels have no route out.
+            split_stats_out: Optional dict. When given and ``split_touching`` is
+                on, receives ``seconds`` (time spent separating) and
+                ``ridge_px`` (pixels the cuts removed), so a caller can report
+                what the option cost.
         """
         if transparency is None:
             transparency = getattr(self, 'transparency', 128)
@@ -1750,6 +1907,8 @@ class MaskAnnotation(Annotation):
         # buffer across classes instead of allocating a mask per class.
         binary_mask = np.empty(class_mask.shape, dtype=np.uint8)
         vector_annotations = []
+        split_seconds = 0.0
+        split_ridge_px = 0
 
         def _to_global_indices(roi_local, x0, y0, roi_w):
             """ROI-local flat indices -> full-image flat indices.
@@ -1787,6 +1946,28 @@ class MaskAnnotation(Annotation):
             # foreground exactly like 0/1.
             cv2.compare(class_mask, class_id, cv2.CMP_EQ, dst=binary_mask)
 
+            # Touching objects are separated here, by clearing the ridge pixels
+            # between them. Everything below then runs against the separated
+            # image -- bound to its own name so the reusable compare buffer
+            # survives for the next class -- including the component-size filter
+            # and the clear indices, which have to read the same array
+            # findContours traced.
+            traced = binary_mask
+            if split_touching:
+                _split_start = time.perf_counter()
+                traced = split_touching_objects(binary_mask)
+                split_seconds += time.perf_counter() - _split_start
+                if traced is not binary_mask:
+                    # The ridge belongs to no polygon now. Reported as rejected
+                    # so the caller clears it along with the vectorized regions;
+                    # left alone it would outlive the mask as a seam lattice.
+                    ridge_indices = np.flatnonzero(
+                        (binary_mask != 0) & (traced == 0)
+                    )
+                    split_ridge_px += int(ridge_indices.size)
+                    if track_rejected and ridge_indices.size:
+                        rejected_indices_out.append(ridge_indices)
+
             # CHAIN_APPROX_SIMPLE, not TC89_KCOS: the bounding rect below has to
             # cover every pixel of its region, and SIMPLE guarantees that
             # because it only drops points interior to a straight run, always
@@ -1795,7 +1976,7 @@ class MaskAnnotation(Annotation):
             # a 2x2 block collapses to a single point, so a 1x1 rect -- which
             # silently strands pixels in the mask.
             contours, hierarchy = cv2.findContours(
-                binary_mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE
+                traced, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE
             )
             if not contours or hierarchy is None:
                 continue
@@ -1814,7 +1995,7 @@ class MaskAnnotation(Annotation):
                 # genuinely above the threshold.
                 x0, y0, roi_w, roi_h = cv2.boundingRect(contour)
                 roi_local_indices = np.flatnonzero(
-                    binary_mask[y0:y0 + roi_h, x0:x0 + roi_w]
+                    traced[y0:y0 + roi_h, x0:x0 + roi_w]
                 )
                 if roi_local_indices.size < min_component_area:
                     if track_rejected:
@@ -1858,6 +2039,10 @@ class MaskAnnotation(Annotation):
                     roi_local_indices, x0, y0, roi_w
                 )
                 vector_annotations.append(annotation)
+
+        if split_stats_out is not None and split_touching:
+            split_stats_out['seconds'] = split_seconds
+            split_stats_out['ridge_px'] = split_ridge_px
 
         return vector_annotations
 
