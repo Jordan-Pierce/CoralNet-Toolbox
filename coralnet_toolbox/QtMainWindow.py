@@ -1215,7 +1215,9 @@ class MainWindow(QMainWindow):
             "The slider is logarithmic: each tick is one decade, spanning 0.0001% up to 100% of "
             "the image.\n\n"
             "Select annotations on the canvas and their sizes are marked in red above the groove, "
-            "showing where to put the handle to include or exclude them.")
+            "showing where to put the handle to include or exclude them. Dragging snaps clear of a "
+            "mark so nothing sits on the boundary; arrow keys move freely, and Alt inverts both - "
+            "Alt with an arrow jumps mark to mark, Alt while dragging skips the snap.")
         self.area_threshold_max_slider = AreaTickSlider(Qt.Horizontal)
         self.area_threshold_max_slider.setMinimum(0)
         self.area_threshold_max_slider.setMaximum(AREA_SLIDER_STEPS)

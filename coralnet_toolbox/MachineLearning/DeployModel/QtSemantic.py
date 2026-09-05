@@ -175,16 +175,10 @@ class Semantic(Base):
         self.split_touching_checkbox = QCheckBox("Split touching objects into separate polygons")
         self.split_touching_checkbox.setChecked(False)
         self.split_touching_checkbox.setToolTip(
-            "Separates objects of the same class that touch, so a clump becomes one "
-            "polygon per object instead of one sprawling polygon.\n\n"
-            "Runs before the area threshold, which therefore measures the split "
-            "objects rather than the clump they came from: a cluster that was too "
-            "large to pass the maximum can survive as its parts.\n\n"
-            "Costs a watershed pass per predicted class and trims 1-2% of each "
-            "class's pixels along the boundaries it cuts.\n\n"
-            "Branching shapes are split at their branch points, so a single "
-            "branching colony can come out as several polygons. Only available "
-            "while auto-vectorize is ticked."
+            "Separates touching objects of the same class, so a clump becomes one "
+            "polygon per object. Only cuts where the shape narrows, so sheets and "
+            "lobed colonies stay whole.\n\n"
+            "Runs before the area threshold, which then measures the split objects."
         )
         layout.addRow("Split objects:", self.split_touching_checkbox)
 
@@ -613,9 +607,14 @@ class Semantic(Base):
                         vector_annotations, raster
                     )
                     if area_dropped:
+                        # The bounds and the sizes they were applied to, not just
+                        # the count: a filter that drops everything looks identical
+                        # to a broken vectorizer without them, and the threshold is
+                        # in real-world units the polygons are not.
                         print(f"Area filter dropped {len(area_dropped)} of "
                               f"{len(area_dropped) + len(vector_annotations)} polygons "
-                              f"for {os.path.basename(str(image_path))}")
+                              f"for {os.path.basename(str(image_path))} "
+                              f"{self._describe_area_filter(area_dropped + vector_annotations, raster)}")
 
                     if vector_annotations:
                         try:
@@ -752,6 +751,39 @@ class Semantic(Base):
                 dropped.append(annotation)
 
         return kept, dropped
+
+    def _describe_area_filter(self, annotations, raster):
+        """The bounds the area filter used, and the sizes it judged, in pixels.
+
+        Only ever reached on the drop path. Both halves are needed to read that
+        line: the threshold is set in image shares or real-world units, so the
+        pixel bound it resolves to on this raster is not something the user can
+        work out from the slider, and neither is where the polygons fell
+        relative to it.
+        """
+        try:
+            image_area, m2_per_px = raster_metrics(raster)
+            bounds = resolve_area_bounds_px(
+                self.thresholds_widget.get_area_thresh_min(),
+                self.thresholds_widget.get_area_thresh_max(),
+                self.thresholds_widget.get_area_thresh_mode(),
+                image_area,
+                m2_per_px,
+            )
+            if bounds is None:
+                return "(no bounds)"
+            areas = []
+            for annotation in annotations:
+                try:
+                    areas.append(annotation.get_area())
+                except Exception:
+                    continue
+            if not areas:
+                return f"(kept {bounds[0]:,.0f}-{bounds[1]:,.0f} px2)"
+            return (f"(kept {bounds[0]:,.0f}-{bounds[1]:,.0f} px2; "
+                    f"polygons {min(areas):,.0f}-{max(areas):,.0f} px2)")
+        except Exception:
+            return ""
 
     def _report_vectorize_timing(self, polygon_count, elapsed_seconds, split_stats=None):
         """Show how long the mask -> polygon conversion took.

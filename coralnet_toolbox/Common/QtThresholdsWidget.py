@@ -7,8 +7,8 @@ import random
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QPainter, QPen
-from PyQt5.QtWidgets import (QComboBox, QGroupBox, QFormLayout, QLabel, QSizePolicy,
-                             QSlider, QSpinBox, QStyle, QStyleOptionSlider)
+from PyQt5.QtWidgets import (QApplication, QComboBox, QGroupBox, QFormLayout, QLabel,
+                             QSizePolicy, QSlider, QSpinBox, QStyle, QStyleOptionSlider)
 
 from coralnet_toolbox.utilities import convert_scale_units
 from coralnet_toolbox.utilities import format_measurement
@@ -30,8 +30,15 @@ AREA_SLIDER_STEPS = 1000
 # every real object sat below the first tick.
 AREA_SLIDER_RANGES = {
     AREA_MODE_FRACTION: (-6.0, 0.0),   # 1e-6 up to all of the image area
-    AREA_MODE_METRIC: (-4.0, 4.0),     # 1 cm2 up to 1 hectare, held in m2
+    AREA_MODE_METRIC: (-8.0, 4.0),     # 0.01 mm2 up to 1 hectare, held in m2
 }
+# The metric floor is what one pixel is worth, not what a person would type. A
+# 1 cm2 floor -- the obvious choice, and what this used to be -- is above every
+# object in close-range imagery: at 0.2 mm/px it resolves to 2,546 px2, so the
+# first step off zero culled every polygon on the image while the handle still
+# sat hard left. Nothing between "off" and that could be selected, because
+# area_value_to_slider maps anything under the floor back to position 0. At
+# 1e-8 m2 the floor is a fraction of a pixel on any imagery with a scale.
 
 # Seed values for a mode when nothing better can be derived on a switch.
 AREA_MODE_DEFAULTS = {
@@ -83,6 +90,22 @@ def format_area_fraction(fraction: float) -> str:
     return f"{percent:.1e}%"
 
 
+def _format_area_end(value: float, decimals: int) -> str:
+    """One end of an area range: grouped digits, or figures when too small.
+
+    The unit is chosen for the larger end, so the smaller one can be orders of
+    magnitude below the precision that unit deserves. Printed fixed it rounds to
+    "0.00" -- indistinguishable from no threshold at all, which is exactly how a
+    live minimum came to look switched off. Same rule as
+    :func:`format_measurement`, kept here so the grouping survives.
+    """
+    if not value:
+        return "0"
+    if abs(value) >= 10 ** (-decimals):
+        return f"{value:,.{decimals}f}"
+    return f"{value:.3g}"
+
+
 def format_area_metric_range(min_m2: float, max_m2: float, unit: str = 'm') -> str:
     """Render a real-world area range, with one unit for both ends.
 
@@ -92,6 +115,8 @@ def format_area_metric_range(min_m2: float, max_m2: float, unit: str = 'm') -> s
 
     Metres are the default rather than a choice, so they auto-scale to whatever
     reads best. Any other unit was picked deliberately and is left alone.
+
+    Neither end is allowed to round away to zero -- see :func:`_format_area_end`.
     """
     if unit and unit != 'm' and is_length_unit(unit):
         factor = convert_scale_units(1.0, 'm', unit) ** 2
@@ -100,10 +125,13 @@ def format_area_metric_range(min_m2: float, max_m2: float, unit: str = 'm') -> s
 
     largest = max(min_m2, max_m2)
     if largest < 1.0:
-        return f"{min_m2 * 1e4:,.1f} - {max_m2 * 1e4:,.1f} cm\u00b2"
+        return (f"{_format_area_end(min_m2 * 1e4, 1)} - "
+                f"{_format_area_end(max_m2 * 1e4, 1)} cm\u00b2")
     if largest < 1e6:
-        return f"{min_m2:,.2f} - {max_m2:,.2f} m\u00b2"
-    return f"{min_m2 / 1e6:,.3f} - {max_m2 / 1e6:,.3f} km\u00b2"
+        return (f"{_format_area_end(min_m2, 2)} - "
+                f"{_format_area_end(max_m2, 2)} m\u00b2")
+    return (f"{_format_area_end(min_m2 / 1e6, 3)} - "
+            f"{_format_area_end(max_m2 / 1e6, 3)} km\u00b2")
 
 
 def current_area_unit(main_window) -> str:
@@ -352,6 +380,13 @@ AREA_TICK_MAX_SAMPLES = 1000
 # Matches the annotation ticks on the video scrubber.
 AREA_TICK_COLOR = (230, 62, 0)
 
+# How near a mark a dragged handle must come, in screen pixels, before it snaps
+# clear of it. The groove carries about four slider positions per pixel, so this
+# claims a couple of dozen of the thousand positions around each mark - enough
+# to catch one while dragging, small enough to leave the groove between marks
+# reachable.
+AREA_SNAP_RADIUS_PX = 4
+
 
 def area_ticks_for_annotations(annotations, mode=AREA_MODE_FRACTION,
                                image_area=None, m2_per_px=None,
@@ -411,6 +446,121 @@ class AreaTickSlider(QSlider):
         super().__init__(orientation, parent)
         self._area_ticks = {}
         self._max_count = 0
+        self._snapping = False
+        # sliderMoved fires for a drag and for nothing else, so wiring the snap
+        # here is what keeps the keyboard and the wheel out of it.
+        self.sliderMoved.connect(self._snap_dragged_handle)
+
+    def _snap_dragged_handle(self, position):
+        """Keep a dragged handle off the marks, on the side it came from.
+
+        A mark sits where an annotation's own area puts it, so a handle parked
+        exactly on one leaves that annotation on the boundary, in or out
+        depending on how the threshold rounds back to pixels. One position
+        either side is decisive: everything the mark stands for is kept, or all
+        of it is dropped. The mark therefore repels the handle rather than
+        attracting it, and since the groove carries several positions per screen
+        pixel, the offset is invisible - only the ambiguity goes away.
+
+        Drag only. Arrow keys, page steps and the wheel are left alone, so a
+        focused slider can still be walked onto any exact value, and holding Alt
+        while dragging bypasses the snap outright. Alt with an arrow key does
+        the opposite and jumps mark to mark -- see :meth:`keyPressEvent`; the
+        modifier means the same thing both times, which is to invert whether the
+        marks are being honoured.
+        """
+        if self._snapping or not self._area_ticks:
+            return
+        if QApplication.keyboardModifiers() & Qt.AltModifier:
+            return
+
+        target = self._snap_target(position)
+        if target == position:
+            return
+
+        # setSliderPosition re-enters here through sliderMoved; the flag keeps
+        # the snap from being applied to its own result.
+        self._snapping = True
+        try:
+            self.setSliderPosition(target)
+        finally:
+            self._snapping = False
+
+    def _snap_target(self, position):
+        """`position` moved clear of the mark it is sitting on, if any."""
+        nearest = min(self._area_ticks, key=lambda mark: (abs(mark - position), mark))
+        if abs(nearest - position) > self._snap_radius():
+            return position
+
+        if position < nearest:
+            target = nearest - 1
+        elif position > nearest:
+            target = nearest + 1
+        else:
+            # Dead on the mark. value() is still where the handle was before
+            # this move, so the drag's own direction breaks the tie.
+            target = nearest + 1 if position >= self.value() else nearest - 1
+
+        return max(self.minimum(), min(self.maximum(), target))
+
+    def keyPressEvent(self, event):
+        """Alt with an arrow walks the handle from one decisive position to the next.
+
+        A plain arrow steps a single position and is how an exact value is
+        reached. That is too fine to be useful against a real selection: the
+        groove carries several positions per screen pixel, so the marks for a
+        few hundred annotations are a smear a few pixels wide and stepping
+        through it one position at a time takes hundreds of presses. Alt jumps
+        straight to the next place a mark can be bracketed from.
+
+        Both sides of every mark are stops, so walking in one direction offers
+        "keep this cluster" and then "drop it" in turn.
+        """
+        direction = 0
+        if event.modifiers() & Qt.AltModifier:
+            if event.key() in (Qt.Key_Right, Qt.Key_Up):
+                direction = 1
+            elif event.key() in (Qt.Key_Left, Qt.Key_Down):
+                direction = -1
+
+        if not direction or not self._area_ticks:
+            super().keyPressEvent(event)
+            return
+
+        current = self.value()
+        stops = [stop for stop in self._mark_stops()
+                 if (stop > current if direction > 0 else stop < current)]
+        if stops:
+            self.setValue(stops[0] if direction > 0 else stops[-1])
+        # Accepted either way: at the last mark the handle stays put rather than
+        # falling through to a single step, which would look like a missed jump.
+        event.accept()
+
+    def _mark_stops(self):
+        """Every position worth stopping at, in order.
+
+        Two per mark, one either side, since those are the positions that decide
+        a cluster rather than splitting it. A candidate that lands on another
+        mark is dropped -- marks one position apart would otherwise offer a stop
+        that is itself ambiguous. The ends of the range are always stops, so the
+        walk can still reach "off" at the bottom and the top of the range.
+        """
+        marks = set(self._area_ticks)
+        stops = {self.minimum(), self.maximum()}
+        for mark in marks:
+            for candidate in (mark - 1, mark + 1):
+                if self.minimum() <= candidate <= self.maximum() and candidate not in marks:
+                    stops.add(candidate)
+        return sorted(stops)
+
+    def _snap_radius(self):
+        """AREA_SNAP_RADIUS_PX expressed in slider positions."""
+        option = QStyleOptionSlider()
+        self.initStyleOption(option)
+        groove = self.style().subControlRect(
+            QStyle.CC_Slider, option, QStyle.SC_SliderGroove, self)
+        span = max(1, self.maximum() - self.minimum())
+        return max(2, int(round(AREA_SNAP_RADIUS_PX * span / max(1, groove.width()))))
 
     def set_area_ticks(self, ticks):
         """Adopt {slider_position: count} and repaint."""

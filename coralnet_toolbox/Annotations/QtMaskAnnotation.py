@@ -122,6 +122,20 @@ SPLIT_PEAK_WINDOW = 9
 # window above for deciding what counts as an object.
 SPLIT_MIN_RADIUS = 1.5
 
+# How far the distance transform must fall between two seeds, as a share of the
+# smaller seed's own distance, before the boundary between them counts as a neck
+# rather than a dip between two bumps of one object. See _split_real_necks; this
+# is the knob that decides what is one object and what is two.
+#
+# Swept against shapes that must survive whole -- a solid sheet, a wobbly sheet,
+# an eight-lobed colony, an annulus, a crescent, a Y-shaped branch -- and shapes
+# that must come apart -- pairs of touching circles at radii 8 to 60 and every
+# overlap, a chain of eight. Everything from 0.10 to 0.35 keeps all of the first
+# set intact, so the choice is decided by the second: 0.20 is the largest value
+# that still separates a pair overlapping by half its radius. Above 0.45 even a
+# plain chain of circles stops separating.
+SPLIT_MIN_PROMINENCE = 0.20
+
 
 def split_touching_objects(binary: np.ndarray) -> np.ndarray:
     """Break a class mask apart where separate objects touch.
@@ -134,62 +148,72 @@ def split_touching_objects(binary: np.ndarray) -> np.ndarray:
     chain method, the hole handling and the pixel-count size filter all still
     operate on a plain binary image.
 
-    Objects are seeded at the peaks of the distance transform, and seeding is
-    what decides how many objects come out. A morphological opening only splits
-    a cluster where the objects meet over a narrow contact, and most do not, so
-    it under-separates badly.
+    Objects are seeded at the peaks of the distance transform and flooded with a
+    watershed, then -- and this is the part that decides whether the result is
+    useful -- every boundary the watershed drew is tested for whether it sits at
+    a real neck before it is cut. Seeding alone splits far too much: a watershed
+    puts a line between any two bumps in the distance field, so a lobed colony
+    comes apart into one region per lobe and a wobbly sheet of turf comes apart
+    into blobs. See :func:`_split_real_necks`.
 
-    The cut costs a couple of percent of the class pixels, all of it along
-    shared boundaries -- 2.1% on a 2140x3808 survey mask, for ~330 ms. Those
-    pixels belong to no polygon afterwards, so the caller must account for them
-    or they survive as a one-pixel seam lattice in the mask -- see the ridge
-    bookkeeping in to_vector_annotations.
+    The cut costs a fraction of a percent of the class pixels, all of it along
+    shared boundaries. Those pixels belong to no polygon afterwards, so the
+    caller must account for them or they survive as a one-pixel seam lattice in
+    the mask -- see the ridge bookkeeping in to_vector_annotations.
 
-    Known limitation: a branching object is split at its branch points. The
-    distance transform peaks once per branch, so a Y-shaped colony seeds three
-    times and comes out as three or four regions at every window size. This is
-    inherent to seeding from distance peaks, not a tuning problem, and it is why
-    the split is opt-in rather than always on.
+    Known limitation: an object with a genuine narrow waist -- a dumbbell, a
+    colony pinched near its base -- is indistinguishable from two objects that
+    touch, because a neck is all either one presents, and it is split. This is
+    inherent to separating on shape alone, and it is why the option is opt-in.
+    Branches and lobes are safe: they widen at the join rather than narrowing,
+    so the prominence test leaves them whole.
 
     Accepts either 0/1 or 0/255 input and preserves the caller's convention.
     """
     import cv2
 
-    seeds = _split_seed_labels(binary)
+    dist = cv2.distanceTransform(binary, cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
+    seeds = _split_seed_labels(binary, dist)
     if seeds is None:
         return binary  # fewer than two objects in this class: nothing to do
 
     # No background marker. Marking the background would make watershed draw a
     # boundary between every object and the background as well -- that is, right
     # around each object's whole perimeter -- which eats ~12.5% of the class
-    # instead of the 1-2% the necks actually cost. With the background left
-    # unmarked the seeds flood the empty space too, so the only boundary falling
-    # inside the mask is the one between adjacent objects.
+    # instead of the fraction of a percent the necks actually cost. With the
+    # background left unmarked the seeds flood the empty space too, so the only
+    # boundary falling inside the mask is the one between adjacent objects.
     solid = cv2.compare(binary, 0, cv2.CMP_NE)
     markers = seeds.astype(np.int32)
     cv2.watershed(cv2.cvtColor(solid, cv2.COLOR_GRAY2BGR), markers)
 
-    return _split_cut_ridge(binary, (markers == -1).astype(np.uint8))
+    ridge = _split_real_necks(markers, seeds, dist)
+    if ridge is None:
+        return binary  # every boundary was a bump in one object, not a neck
+
+    return _split_cut_ridge(binary, ridge)
 
 
-def _split_seed_labels(binary: np.ndarray):
-    """Label one seed per object, or None when there is nothing to separate.
+def _split_seed_labels(binary: np.ndarray, dist: np.ndarray):
+    """Label one seed per candidate object, or None when there is only one.
 
-    Two details keep the seeding from over-separating:
+    Over-seeding is expected here and is corrected downstream by
+    :func:`_split_real_necks`, which throws away the boundaries between seeds
+    that turned out to sit in the same object. Two details still matter, because
+    neither is recoverable later:
 
-    DIST_MASK_PRECISE. The 3x3 chamfer approximation quantizes the distance into
-    small plateaus, and every plateau reads as a local maximum, so a single
-    object picks up several seeds and gets carved into wedges.
+    DIST_MASK_PRECISE (chosen by the caller). The 3x3 chamfer approximation
+    quantizes the distance into small plateaus, and every plateau reads as a
+    local maximum, so a single object picks up a scatter of seeds pressed right
+    up against each other -- boundaries with no neck and no depth to measure.
 
     Merging peaks within the search window. An object whose medial axis is a
     ridge rather than a point -- anything elongated, and any ring -- produces a
     broken line of maxima along it. Dilating the peaks before labelling fuses
-    those fragments into one seed. On an annulus this is the difference between
-    dozens of wedges and one region.
+    those fragments into one seed.
     """
     import cv2
 
-    dist = cv2.distanceTransform(binary, cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
     kernel = np.ones((SPLIT_PEAK_WINDOW, SPLIT_PEAK_WINDOW), np.uint8)
 
     # A maximum can be a plateau, so the test is >= with float slack.
@@ -204,6 +228,92 @@ def _split_seed_labels(binary: np.ndarray):
     return None if n_seeds <= 2 else labels
 
 
+def _split_real_necks(markers, seeds, dist):
+    """Keep only the watershed boundaries that sit at a genuine neck.
+
+    A watershed draws a line between any two maxima, however faint the dip
+    between them, so on its own it does not separate objects -- it partitions
+    the class into one blob per bump in the distance field. Measured: a colony
+    with eight lobes comes out as nine regions, a wobbly sheet as two, and the
+    largest polygon on a dense survey mask collapses by 8x. The polygons that
+    fall out are then small enough that a minimum-area threshold which passed
+    every unsplit region rejects every split one.
+
+    So each boundary is scored the way a topographer separates two summits: how
+    far must you descend from the lower peak to cross to the other one. That
+    drop -- the peak's prominence -- is large between two objects that merely
+    touch, because the distance transform falls to nearly nothing at the join,
+    and small between two lobes of one object, where the crossing stays deep
+    inside the shape. A boundary is cut only when the drop is at least
+    SPLIT_MIN_PROMINENCE of the lower peak, which keeps the test scale-free:
+    two touching 10 px pebbles and two touching 1000 px colonies score alike.
+
+    Args:
+        markers: watershed output; basin labels are positive, boundaries -1.
+        seeds: the pre-watershed seed labels, used to find each basin's peak.
+            The seed blob sits on the maximum by construction, so the peak is
+            read from those few pixels rather than by scanning whole basins.
+        dist: the distance transform the seeding used.
+
+    Returns:
+        A uint8 mask of the boundary pixels worth cutting, or None when no
+        boundary survives the test and the class should be left alone.
+    """
+    ridge_y, ridge_x = np.nonzero(markers == -1)
+    if ridge_y.size == 0:
+        return None
+
+    height, width = markers.shape
+    sentinel = np.iinfo(np.int32).max
+    # The two basins a boundary pixel divides, as the smallest and largest
+    # labelled neighbour. A boundary is one pixel wide and 4-connected, so a
+    # pixel with two different labelled neighbours has exactly those two.
+    low = np.full(ridge_y.size, sentinel, np.int32)
+    high = np.zeros(ridge_y.size, np.int32)
+    for dy, dx in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+        neighbour = markers[np.clip(ridge_y + dy, 0, height - 1),
+                            np.clip(ridge_x + dx, 0, width - 1)]
+        labelled = neighbour > 0
+        np.minimum(low, np.where(labelled, neighbour, sentinel), out=low)
+        np.maximum(high, np.where(labelled, neighbour, 0), out=high)
+
+    # Pixels touching only one basin -- the ends of a boundary line, and the
+    # boundaries watershed drew out in the flooded background -- divide nothing.
+    divides = (low < high) & (high > 0)
+    if not divides.any():
+        return None
+
+    label_count = int(seeds.max())
+    peak = np.zeros(label_count + 1, np.float32)
+    seeded = seeds > 0
+    np.maximum.at(peak, seeds[seeded], dist[seeded])
+
+    low = low[divides]
+    high = high[divides]
+    ys = ridge_y[divides]
+    xs = ridge_x[divides]
+
+    # Score per basin pair, not per pixel: the crossing is the highest point on
+    # the whole shared boundary, so a pair cuts or survives as one piece. Left
+    # to a per-pixel test the deeper half of a boundary would be cut and the
+    # rest left, stranding a dotted line of cleared pixels inside the region.
+    pair_key = low.astype(np.int64) * (label_count + 1) + high
+    unique_pairs, pair_index = np.unique(pair_key, return_inverse=True)
+    crossing = np.zeros(unique_pairs.size, np.float32)
+    np.maximum.at(crossing, pair_index, dist[ys, xs])
+
+    lower_peak = np.minimum(peak[unique_pairs // (label_count + 1)],
+                            peak[unique_pairs % (label_count + 1)])
+    cuts = (lower_peak - crossing) >= SPLIT_MIN_PROMINENCE * lower_peak
+    if not cuts.any():
+        return None
+
+    keep = cuts[pair_index]
+    ridge = np.zeros(markers.shape, np.uint8)
+    ridge[ys[keep], xs[keep]] = 1
+    return ridge
+
+
 def _split_cut_ridge(binary: np.ndarray, ridge: np.ndarray) -> np.ndarray:
     """Clear the watershed ridge, then break the diagonals that leak across it.
 
@@ -213,8 +323,8 @@ def _split_cut_ridge(binary: np.ndarray, ridge: np.ndarray) -> np.ndarray:
     stay one region.
 
     Dilating the whole ridge closes the leaks but costs a pixel off every cut
-    edge -- ~12.5% of the class on a dense mask, against 1-2% for clearing
-    exactly one pixel per leak.
+    edge -- percent-scale on a dense mask, against a fraction of a percent for
+    clearing exactly one pixel per leak.
 
     The narrow test matters for correctness, not just for area. Breaking every
     diagonal pair would sever shapes that are legitimately 8-connected -- a
@@ -1874,8 +1984,9 @@ class MaskAnnotation(Annotation):
             split_touching: Separate touching objects of the same class before
                 tracing, so a clump becomes one annotation per object rather
                 than one sprawling polygon. Costs a watershed pass per class
-                present (see :func:`split_touching_objects`) and about 1.5% of
-                each split class's pixels, taken along the shared boundaries.
+                present (see :func:`split_touching_objects`) and a fraction of
+                a percent of each split class's pixels, taken along the
+                boundaries it cuts.
                 Requires ``rejected_indices_out`` to be given for the mask to
                 end up empty; without it the ridge pixels have no route out.
             split_stats_out: Optional dict. When given and ``split_touching`` is
