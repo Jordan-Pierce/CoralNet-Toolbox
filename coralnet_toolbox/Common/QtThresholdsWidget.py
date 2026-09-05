@@ -5,7 +5,8 @@ QtThresholdsWidget - Reusable widget for threshold controls
 import math
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QComboBox, QGroupBox, QFormLayout, QLabel, QSlider, QSpinBox
+from PyQt5.QtWidgets import (QComboBox, QGroupBox, QFormLayout, QLabel, QSizePolicy,
+                             QSlider, QSpinBox)
 
 from coralnet_toolbox.utilities import convert_scale_units
 from coralnet_toolbox.utilities import is_length_unit
@@ -188,33 +189,95 @@ def get_area_mode(main_window) -> str:
 
 
 def format_area_range(min_value: float, max_value: float,
-                      image_area: float = None, m2_per_px: float = None,
                       mode: str = AREA_MODE_FRACTION) -> str:
-    """The threshold range, plus a concrete equivalent for the open image.
+    """The bounds on their own, in the active unit."""
+    if mode == AREA_MODE_METRIC:
+        return format_area_metric_range(min_value, max_value)
+    return f"{format_area_fraction(min_value)} - {format_area_fraction(max_value)}"
 
-    A percentage alone is unreadable at the bottom of a log scale - 0.001% of
-    an image says nothing about whether it will catch a coral colony - so the
-    other unit is always shown alongside when the open raster can supply it.
+
+def format_area_equivalent(min_value: float, max_value: float,
+                           image_area: float = None, m2_per_px: float = None,
+                           mode: str = AREA_MODE_FRACTION) -> str:
+    """The same bounds restated for the open image.
+
+    Returns "" when the open raster cannot say anything useful. A percentage is
+    unreadable at the bottom of a log scale - 0.001% of an image says nothing
+    about whether it will catch a coral colony - so this is what makes the
+    setting concrete.
     """
     if mode == AREA_MODE_METRIC:
-        text = format_area_metric_range(min_value, max_value)
         if not image_area:
-            return text
+            return ""
         if not m2_per_px:
-            # Say so outright rather than print a bound that is not being applied.
-            return text + "  (no scale - filter inactive)"
-        return text + (f"  (~{min_value / m2_per_px:,.0f} - "
-                       f"{max_value / m2_per_px:,.0f} px\u00b2)")
+            return "no scale on this image, so the area filter is inactive"
+        return (f"~{min_value / m2_per_px:,.0f} - "
+                f"{max_value / m2_per_px:,.0f} px\u00b2")
 
-    text = f"{format_area_fraction(min_value)} - {format_area_fraction(max_value)}"
     if not image_area:
-        return text
+        return ""
 
     min_px = min_value * image_area
     max_px = max_value * image_area
     if m2_per_px:
-        return text + f"  (~{format_area_metric_range(min_px * m2_per_px, max_px * m2_per_px)})"
-    return text + f"  (~{min_px:,.0f} - {max_px:,.0f} px\u00b2)"
+        return "~" + format_area_metric_range(min_px * m2_per_px, max_px * m2_per_px)
+    return f"~{min_px:,.0f} - {max_px:,.0f} px\u00b2"
+
+
+def format_area_label(min_value: float, max_value: float,
+                      image_area: float = None, m2_per_px: float = None,
+                      mode: str = AREA_MODE_FRACTION) -> str:
+    """Compact form for the threshold panel.
+
+    The equivalents live in the status bar instead - spelled out in the panel
+    they set the width of the whole dialog. Only the inactive warning is kept,
+    abbreviated, because a filter that is silently doing nothing has to say so
+    where the controls are.
+    """
+    text = format_area_range(min_value, max_value, mode)
+    if mode == AREA_MODE_METRIC and image_area and not m2_per_px:
+        text += "  (inactive)"
+    return text
+
+
+def format_area_status(min_value: float, max_value: float,
+                       image_area: float = None, m2_per_px: float = None,
+                       mode: str = AREA_MODE_FRACTION) -> str:
+    """The full reading, for the status bar."""
+    text = f"Area threshold: {format_area_range(min_value, max_value, mode)}"
+    equivalent = format_area_equivalent(min_value, max_value, image_area, m2_per_px, mode)
+    if equivalent:
+        text += f"  ({equivalent})"
+    return text
+
+
+def set_area_mode_availability(combo, m2_per_px) -> None:
+    """Grey out the real-world entry when the open raster carries no scale.
+
+    A combo already sitting on real-world keeps it: silently switching on
+    navigation would convert the user's bounds behind their back. The entry
+    stays selected but disabled, and the label reports the filter as inactive.
+    """
+    if combo is None:
+        return
+
+    index = combo.findData(AREA_MODE_METRIC)
+    if index < 0:
+        return
+
+    model = combo.model()
+    item = model.item(index) if hasattr(model, 'item') else None
+    if item is None:
+        return
+
+    item.setEnabled(bool(m2_per_px))
+    item.setToolTip("" if m2_per_px else
+                    "This image has no scale, so a real-world area cannot be measured. "
+                    "Set one with the Scale tool, or open a georeferenced raster.")
+
+
+# How long the area reading lingers in the status bar after the last change.
+AREA_STATUS_TIMEOUT_MS = 5000
 
 
 class ThresholdsWidget(QGroupBox):
@@ -253,6 +316,14 @@ class ThresholdsWidget(QGroupBox):
         # Create the layout
         layout = QFormLayout()
 
+        def stretch_field(field_widget):
+            """Let a field grow with the form instead of sitting at its sizeHint.
+
+            Only needed for the combo boxes: QFormLayout's default growth policy
+            here grows Expanding fields only, which sliders already are.
+            """
+            field_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
         def apply_row_tooltip(field_widget, tooltip_text):
             field_widget.setToolTip(tooltip_text)
             field_widget.setStatusTip(tooltip_text)
@@ -266,6 +337,7 @@ class ThresholdsWidget(QGroupBox):
             self.max_detections_spinbox = QSpinBox()
             self.max_detections_spinbox.setRange(1, 10000)
             self.max_detections_spinbox.setValue(main_window.get_max_detections())
+            stretch_field(self.max_detections_spinbox)
             self.max_detections_spinbox.valueChanged.connect(self._update_max_detections)
             main_window.maxDetectionsChanged.connect(self._on_max_detections_changed)
             layout.addRow("Max Detections:", self.max_detections_spinbox)
@@ -285,6 +357,7 @@ class ThresholdsWidget(QGroupBox):
                 "Ignore",
             ])
             self.boundary_tolerance_combo.setCurrentIndex(0 if self.boundary_tolerance else 1)
+            stretch_field(self.boundary_tolerance_combo)
             self.boundary_tolerance_combo.currentIndexChanged.connect(self._update_boundary_tolerance)
             layout.addRow("Boundary Detections", self.boundary_tolerance_combo)
             apply_row_tooltip(
@@ -338,6 +411,7 @@ class ThresholdsWidget(QGroupBox):
             self.area_mode_combo.addItem("Real-world", AREA_MODE_METRIC)
             self.area_mode_combo.setCurrentIndex(
                 max(0, self.area_mode_combo.findData(self.area_thresh_mode)))
+            stretch_field(self.area_mode_combo)
             self.area_mode_combo.currentIndexChanged.connect(self._update_area_mode)
             layout.addRow("Area Units", self.area_mode_combo)
             apply_row_tooltip(
@@ -391,6 +465,7 @@ class ThresholdsWidget(QGroupBox):
                 "Current area filter range, as a percentage of the image area. When an image is open "
                 "the equivalent bounds are also shown - in real-world units if that raster is scaled, "
                 "otherwise in pixels.")
+            self._refresh_area_mode_availability()
             try:
                 main_window.image_window.imageLoaded.connect(self._on_image_loaded)
             except Exception:
@@ -427,10 +502,31 @@ class ThresholdsWidget(QGroupBox):
         self.iou_threshold_label.setText(f"{value:.2f}")
     
     def _area_label_text(self):
-        """The range in the active unit, plus the equivalent for the open image."""
+        """The compact reading shown beside the sliders."""
         image_area, m2_per_px = current_raster_metrics(self.main_window)
-        return format_area_range(self.area_thresh_min, self.area_thresh_max,
+        return format_area_label(self.area_thresh_min, self.area_thresh_max,
                                  image_area, m2_per_px, self.area_thresh_mode)
+
+    def _push_area_status(self):
+        """Put the full reading in the status bar.
+
+        Only fired by a deliberate change - a slider move or a unit switch - so
+        navigating between images does not spam the status bar.
+        """
+        try:
+            image_area, m2_per_px = current_raster_metrics(self.main_window)
+            self.main_window.status_bar.showMessage(
+                format_area_status(self.area_thresh_min, self.area_thresh_max,
+                                   image_area, m2_per_px, self.area_thresh_mode),
+                AREA_STATUS_TIMEOUT_MS)
+        except Exception:
+            pass
+
+    def _refresh_area_mode_availability(self):
+        """Match the units combo to whether the open raster has a scale."""
+        if hasattr(self, 'area_mode_combo'):
+            _, m2_per_px = current_raster_metrics(self.main_window)
+            set_area_mode_availability(self.area_mode_combo, m2_per_px)
 
     def _sync_area_widgets(self):
         """Re-seed the sliders and label from the active mode and values."""
@@ -460,6 +556,7 @@ class ThresholdsWidget(QGroupBox):
             self.area_mode_combo.blockSignals(False)
         self.area_thresh_min, self.area_thresh_max = self.main_window.get_area_thresh()
         self._sync_area_widgets()
+        self._push_area_status()
 
     def _on_image_loaded(self, *args):
         """Redraw the area label when the displayed raster changes.
@@ -470,6 +567,7 @@ class ThresholdsWidget(QGroupBox):
         """
         if hasattr(self, 'area_threshold_label'):
             self.area_threshold_label.setText(self._area_label_text())
+        self._refresh_area_mode_availability()
 
     def _update_area_label(self):
         """Handle changes to area threshold range slider"""
@@ -482,6 +580,7 @@ class ThresholdsWidget(QGroupBox):
         self.area_thresh_max = area_slider_to_value(max_val, self.area_thresh_mode)
         self.main_window.update_area_thresh(self.area_thresh_min, self.area_thresh_max)
         self.area_threshold_label.setText(self._area_label_text())
+        self._push_area_status()
     
     def initialize_thresholds(self):
         """
@@ -518,8 +617,9 @@ class ThresholdsWidget(QGroupBox):
                 self.area_mode_combo.setCurrentIndex(
                     max(0, self.area_mode_combo.findData(self.area_thresh_mode)))
                 self.area_mode_combo.blockSignals(False)
-            # Refresh here, not only on slider moves: the hint is relative to
+            # Refresh here, not only on slider moves: the reading is relative to
             # whichever image is open when the dialog is shown.
+            self._refresh_area_mode_availability()
             self._sync_area_widgets()
     
     def get_max_detections(self):

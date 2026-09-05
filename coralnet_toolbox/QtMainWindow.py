@@ -139,7 +139,10 @@ from coralnet_toolbox.Common import (
     area_value_to_slider,
     convert_area_bounds,
     current_raster_metrics,
-    format_area_range,
+    format_area_label,
+    format_area_status,
+    set_area_mode_availability,
+    AREA_STATUS_TIMEOUT_MS,
 )
 
 # Game dialogs
@@ -1100,11 +1103,13 @@ class MainWindow(QMainWindow):
             "Maximum number of detections kept after Ultralytics non-max suppression. Lower values "
             "reduce clutter and processing time; higher values allow more candidates to survive into "
             "annotation creation.")
+        # No trailing stretch, for the same reason as the combos below: it pinned
+        # the field at its sizeHint while the area row widened the whole popup.
+        self.max_detections_spinbox.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         max_detections_layout = QHBoxLayout()
         max_detections_label = QLabel("")
         max_detections_layout.addWidget(max_detections_label)
         max_detections_layout.addWidget(self.max_detections_spinbox)
-        max_detections_layout.addStretch()
         max_detections_widget = QWidget()
         max_detections_widget.setLayout(max_detections_layout)
         self.parameters_section.add_widget(max_detections_widget, "Max Detections")
@@ -1120,11 +1125,13 @@ class MainWindow(QMainWindow):
         self.boundary_tolerance_combo.setToolTip(
             "Choose whether detections that touch a work-area edge should be preserved. Keep retains "
             "cut-off objects, while Ignore removes them to reduce seam duplicates across tiles.")
+        # No trailing stretch: it pinned the combo at its sizeHint, which now
+        # reads as a stub because the area row has widened the whole popup.
+        self.boundary_tolerance_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         boundary_tolerance_layout = QHBoxLayout()
         boundary_tolerance_label = QLabel("")
         boundary_tolerance_layout.addWidget(boundary_tolerance_label)
         boundary_tolerance_layout.addWidget(self.boundary_tolerance_combo)
-        boundary_tolerance_layout.addStretch()
         boundary_tolerance_widget = QWidget()
         boundary_tolerance_widget.setLayout(boundary_tolerance_layout)
         self.parameters_section.add_widget(boundary_tolerance_widget, "Boundary Detections")
@@ -1181,6 +1188,7 @@ class MainWindow(QMainWindow):
         self.area_mode_combo.addItem("Real-world", AREA_MODE_METRIC)
         self.area_mode_combo.setCurrentIndex(
             max(0, self.area_mode_combo.findData(self.area_thresh_mode)))
+        self.area_mode_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.area_mode_combo.currentIndexChanged.connect(
             lambda index: self.update_area_thresh_mode(self.area_mode_combo.itemData(index)))
         self.area_mode_combo.setToolTip(
@@ -1213,11 +1221,11 @@ class MainWindow(QMainWindow):
             "Objects larger than this are removed after confidence and IoU filtering.\n\n"
             "The slider is logarithmic: each tick is one decade, spanning 0.0001% up to 100% of "
             "the image.")
-        self.area_threshold_label = QLabel(format_area_range(min_val, max_val))
+        self.area_threshold_label = QLabel(format_area_label(min_val, max_val))
         self.area_threshold_label.setToolTip(
-            "Current area filter range, as a percentage of the image area. When an image is open "
-            "the equivalent bounds are also shown - in real-world units if that raster is scaled, "
-            "otherwise in pixels.")
+            "Current area filter range. The equivalent bounds for the open image - in real-world "
+            "units if that raster is scaled, otherwise in pixels - are reported in the status bar "
+            "whenever the range changes.")
         area_thresh_layout = QVBoxLayout()
         area_thresh_layout.addWidget(self.area_mode_combo)
         area_thresh_layout.addWidget(self.area_threshold_min_slider)
@@ -1870,6 +1878,7 @@ class MainWindow(QMainWindow):
         self.area_mode_combo.blockSignals(False)
 
         self._sync_area_sliders()
+        self.push_area_threshold_status()
         self.areaModeChanged.emit(mode)
         self.areaChanged.emit(self.area_thresh_min, self.area_thresh_max)
 
@@ -1906,6 +1915,7 @@ class MainWindow(QMainWindow):
         self.area_thresh_min = area_slider_to_value(min_val, self.area_thresh_mode)
         self.area_thresh_max = area_slider_to_value(max_val, self.area_thresh_mode)
         self.update_area_threshold_label()
+        self.push_area_threshold_status()
         self.update_area_thresh(self.area_thresh_min, self.area_thresh_max)
 
     def update_area_threshold_label(self, *args):
@@ -1917,8 +1927,26 @@ class MainWindow(QMainWindow):
         """
         image_area, m2_per_px = current_raster_metrics(self)
         self.area_threshold_label.setText(
-            format_area_range(self.area_thresh_min, self.area_thresh_max,
+            format_area_label(self.area_thresh_min, self.area_thresh_max,
                               image_area, m2_per_px, self.area_thresh_mode))
+        set_area_mode_availability(getattr(self, 'area_mode_combo', None), m2_per_px)
+
+    def push_area_threshold_status(self):
+        """Report the full area reading in the status bar.
+
+        The panel beside the sliders only has room for the bounds themselves, so
+        the equivalent in pixels or real-world units is delivered here instead.
+        Fired by deliberate changes only - a slider move or a unit switch - so
+        that navigating between images does not spam the status bar.
+        """
+        try:
+            image_area, m2_per_px = current_raster_metrics(self)
+            self.status_bar.showMessage(
+                format_area_status(self.area_thresh_min, self.area_thresh_max,
+                                   image_area, m2_per_px, self.area_thresh_mode),
+                AREA_STATUS_TIMEOUT_MS)
+        except Exception:
+            pass
 
     def get_boundary_tolerance(self):
         """Get whether detections on boundaries should be kept"""
