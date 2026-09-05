@@ -9,6 +9,11 @@ from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotati
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
+from coralnet_toolbox.Common import AREA_MODE_METRIC
+from coralnet_toolbox.Common import get_area_mode
+from coralnet_toolbox.Common import raster_metrics
+from coralnet_toolbox.Common import resolve_area_bounds_px
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -59,15 +64,56 @@ class ResultsProcessor:
 
         return results
 
+    def _get_area_bounds_px(self, results):
+        """Resolve the area threshold to absolute pixel bounds for this result's raster.
+
+        The comparison is always made in px2. Boxes produced from a work area are
+        in that tile's own coordinate space, and tiles are windowed reads at
+        native resolution, so a px2 bound means the same real size whether or not
+        tiling is on - which a fraction of the (tile-sized) model input never did.
+
+        Returns None when the threshold cannot be resolved for this raster.
+        """
+        try:
+            image_path = results.path.replace("\\", "/")
+            raster = self.image_window.raster_manager.get_raster(image_path)
+        except Exception:
+            raster = None
+
+        image_area, m2_per_px = raster_metrics(raster)
+        return resolve_area_bounds_px(self._get_area_thresh_min(),
+                                      self._get_area_thresh_max(),
+                                      get_area_mode(self.main_window),
+                                      image_area, m2_per_px)
+
+    def _area_pass_mask(self, results):
+        """Boolean mask over results whose box area falls inside the area threshold."""
+        bounds = self._get_area_bounds_px(results)
+        xyxy = results.boxes.xyxy
+        area_px = (xyxy[:, 2] - xyxy[:, 0]) * (xyxy[:, 3] - xyxy[:, 1])
+
+        if bounds is None:
+            if get_area_mode(self.main_window) == AREA_MODE_METRIC:
+                # A real-world bound against a raster carrying no scale cannot be
+                # judged at all. Accept everything: dropping every detection on an
+                # image the user simply never scaled would be far worse.
+                return area_px >= 0
+            # No raster to resolve against, so fall back to the model-input
+            # relative area and at least keep filtering.
+            x_norm, y_norm, w_norm, h_norm = results.boxes.xywhn.T
+            area_norm = w_norm * h_norm
+            return ((area_norm >= self._get_area_thresh_min()) &
+                    (area_norm <= self._get_area_thresh_max()))
+
+        min_px, max_px = bounds
+        return (area_px >= min_px) & (area_px <= max_px)
+
     def filter_by_area(self, results):
         """
         Filter the results based on the area threshold.
         """
         try:
-            x_norm, y_norm, w_norm, h_norm = results.boxes.xywhn.T
-            area_norm = w_norm * h_norm
-            results = results[(area_norm >= self._get_area_thresh_min()) &
-                              (area_norm <= self._get_area_thresh_max())]
+            results = results[self._area_pass_mask(results)]
         except Exception as e:
             print(f"Warning: Failed to filter results by area\n{e}")
 
@@ -110,10 +156,7 @@ class ResultsProcessor:
         Get the indices of results that pass the area threshold.
         """
         try:
-            x_norm, y_norm, w_norm, h_norm = results.boxes.xywhn.T
-            area_norm = w_norm * h_norm
-            mask = (area_norm >= self._get_area_thresh_min()) & (area_norm <= self._get_area_thresh_max())
-            indices = mask.nonzero().flatten().tolist()
+            indices = self._area_pass_mask(results).nonzero().flatten().tolist()
         except Exception as e:
             print(f"Warning: Failed to get indices for area\n{e}")
             indices = []
@@ -277,8 +320,24 @@ class ResultsProcessor:
             color_cache = {}
             transparency = self.main_window.get_transparency_value()
             uncertainty_thresh = self._get_uncertainty_thresh()
-            
+
+            # Apply the same area filter _process_single_result_set does, so the
+            # preview does not draw boxes that disappear when the annotations
+            # land a moment later.
+            #
+            # Confidence is deliberately left alone: a sub-threshold box is still
+            # drawn, in the Review colour. That does not match the bake either -
+            # it drops them - but hiding them would remove information this
+            # preview has always shown, so it is not changed here in passing.
+            try:
+                area_ok = self._area_pass_mask(results).cpu().numpy()
+            except Exception:
+                area_ok = None
+
             for i in range(len(confidences)):
+                if area_ok is not None and not area_ok[i]:
+                    continue
+
                 conf = confidences[i]
                 cls_id = class_ids[i]
                 

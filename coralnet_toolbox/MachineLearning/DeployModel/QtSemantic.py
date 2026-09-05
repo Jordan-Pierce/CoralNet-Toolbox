@@ -19,6 +19,8 @@ from coralnet_toolbox.MachineLearning.DeployModel.QtBase import Base
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Common import ThresholdsWidget
+from coralnet_toolbox.Common import raster_metrics
+from coralnet_toolbox.Common import resolve_area_bounds_px
 
 from coralnet_toolbox.QtActions import AddAnnotationsAction, CompoundAction, MaskEditAction
 
@@ -162,8 +164,23 @@ class Semantic(Base):
         # Allow users to turn the semantic mask into vector annotations after prediction.
         self.auto_vectorize_checkbox = QCheckBox("Convert output to vector polygons")
         self.auto_vectorize_checkbox.setChecked(False)
-        self.auto_vectorize_checkbox.setToolTip("Cannot be used at the same time as Predict 'background' class.")
+        self.auto_vectorize_checkbox.setToolTip(
+            "Cannot be used at the same time as Predict 'background' class.\n\n"
+            "The area threshold applies to the polygons this produces, so it is only "
+            "active while this is ticked.")
         layout.addRow("Auto-vectorize:", self.auto_vectorize_checkbox)
+
+        # Splitting operates on the mask before it is traced, so it only means
+        # anything while the mask is being turned into polygons.
+        self.split_touching_checkbox = QCheckBox("Split touching objects into separate polygons")
+        self.split_touching_checkbox.setChecked(False)
+        self.split_touching_checkbox.setToolTip(
+            "Separates touching objects of the same class, so a clump becomes one "
+            "polygon per object. Only cuts where the shape narrows, so sheets and "
+            "lobed colonies stay whole.\n\n"
+            "Runs before the area threshold, which then measures the split objects."
+        )
+        layout.addRow("Split objects:", self.split_touching_checkbox)
 
         self.predict_background_checkbox.toggled.connect(
             lambda checked: self._sync_semantic_prediction_options(self.predict_background_checkbox)
@@ -195,6 +212,23 @@ class Semantic(Base):
 
         self.predict_background_checkbox.setEnabled(not self.auto_vectorize_checkbox.isChecked())
         self.auto_vectorize_checkbox.setEnabled(not self.predict_background_checkbox.isChecked())
+
+        vectorizing = self.auto_vectorize_checkbox.isChecked()
+
+        # Splitting and the area filter both act on the polygons, so both are
+        # dead while the output stays a semantic mask. The split box is cleared
+        # rather than merely greyed, so a run never carries a hidden setting.
+        if hasattr(self, 'split_touching_checkbox'):
+            self.split_touching_checkbox.setEnabled(vectorizing)
+            if not vectorizing and self.split_touching_checkbox.isChecked():
+                self.split_touching_checkbox.blockSignals(True)
+                self.split_touching_checkbox.setChecked(False)
+                self.split_touching_checkbox.blockSignals(False)
+
+        # setup_parameters_layout runs before setup_thresholds_layout, so the
+        # widget may not exist on the first call.
+        if hasattr(self, 'thresholds_widget'):
+            self.thresholds_widget.set_area_enabled(vectorizing)
     
     def setup_sam_layout(self):
         pass
@@ -203,16 +237,18 @@ class Semantic(Base):
         """
         Setup threshold control section using ThresholdsWidget.
         """
-        # For semantic segmentation: only show uncertainty threshold
+        # Area is shown but only bites when the mask is vectorized; there is no
+        # per-instance area to filter on while the output stays a semantic mask.
         self.thresholds_widget = ThresholdsWidget(
             self.main_window,
             show_max_detections=False,
             show_boundary=False,
             show_uncertainty=True,
             show_iou=False,
-            show_area=False
+            show_area=True
         )
         self.layout.addWidget(self.thresholds_widget)
+        self._sync_semantic_prediction_options()
 
     def load_model(self):
         """Load the semantic model using Ultralytics YOLO (sem task)."""
@@ -530,10 +566,16 @@ class Semantic(Base):
 
                 if auto_vectorize:
                     history_description = "Semantic prediction & vectorize"
-                    # Regions too small to become polygons are noise. Collect
-                    # their pixels so they can be dropped below rather than
-                    # left behind as stray mask specks.
+                    split_touching = (
+                        getattr(self, 'split_touching_checkbox', None) is not None
+                        and self.split_touching_checkbox.isChecked()
+                    )
+                    # Regions too small to become polygons are noise, and so are
+                    # the ridge pixels splitting leaves between neighbours.
+                    # Collect both so they can be dropped below rather than left
+                    # behind as stray mask specks and seams.
                     rejected_indices = []
+                    split_stats = {}
                     try:
                         _vectorize_start = time.perf_counter()
                         vector_annotations = mask_annotation.to_vector_annotations(
@@ -541,6 +583,8 @@ class Semantic(Base):
                             show_confidence=False,
                             min_hole_area=500,
                             rejected_indices_out=rejected_indices,
+                            split_touching=split_touching,
+                            split_stats_out=split_stats,
                             # A VideoRaster's mask is shared across frames and
                             # carries the video's path, so without this the new
                             # polygons are filed under "clip.mp4" -- a key no
@@ -552,11 +596,25 @@ class Semantic(Base):
                         self._report_vectorize_timing(
                             len(vector_annotations),
                             time.perf_counter() - _vectorize_start,
+                            split_stats=split_stats,
                         )
                     except Exception as e:
                         print(f"Warning: Failed to vectorize semantic prediction for {image_path}: {e}")
                         vector_annotations = []
                         rejected_indices = []
+
+                    vector_annotations, area_dropped = self._filter_annotations_by_area(
+                        vector_annotations, raster
+                    )
+                    if area_dropped:
+                        # The bounds and the sizes they were applied to, not just
+                        # the count: a filter that drops everything looks identical
+                        # to a broken vectorizer without them, and the threshold is
+                        # in real-world units the polygons are not.
+                        print(f"Area filter dropped {len(area_dropped)} of "
+                              f"{len(area_dropped) + len(vector_annotations)} polygons "
+                              f"for {os.path.basename(str(image_path))} "
+                              f"{self._describe_area_filter(area_dropped + vector_annotations, raster)}")
 
                     if vector_annotations:
                         try:
@@ -567,14 +625,18 @@ class Semantic(Base):
                         else:
                             vectors_added = True
 
-                    # Clear the vectorized regions and the rejected ones in one
-                    # pass. This still runs when nothing vectorized, so a mask
-                    # made entirely of sub-threshold specks is emptied rather
-                    # than left intact.
-                    if vectors_added or rejected_indices:
+                    # Clear the vectorized regions, the ones the area filter
+                    # rejected, and the sub-threshold specks in one pass. A region
+                    # excluded by size is residue just like a speck: leaving it
+                    # would strand mask pixels with no polygon to match. This
+                    # still runs when nothing vectorized, so a mask made entirely
+                    # of specks is emptied rather than left intact. If
+                    # add_annotations failed, the kept polygons stay in the mask
+                    # rather than being cleared with nothing to show for them.
+                    if vectors_added or area_dropped or rejected_indices:
                         try:
                             mask_annotation.clear_pixels_for_annotations(
-                                vector_annotations if vectors_added else [],
+                                (vector_annotations if vectors_added else []) + area_dropped,
                                 extra_flat_indices=rejected_indices,
                             )
                         except Exception as e:
@@ -646,14 +708,98 @@ class Semantic(Base):
             gc.collect()
             empty_cache()
 
-    def _report_vectorize_timing(self, polygon_count, elapsed_seconds):
+    def _filter_annotations_by_area(self, annotations, raster):
+        """Split vectorized polygons on the area threshold.
+
+        Returns (kept, dropped). The bound is resolved against this raster, so a
+        real-world threshold picks out the same physical size on every image. A
+        bound that cannot be resolved - a real-world threshold on a raster with
+        no scale - keeps everything rather than silently discarding it.
+
+        Polygon area is measured directly instead of from a bounding box, so a
+        branching colony is judged on what it actually covers.
+        """
+        if not annotations:
+            return [], []
+
+        image_area, m2_per_px = raster_metrics(raster)
+        bounds = resolve_area_bounds_px(
+            self.thresholds_widget.get_area_thresh_min(),
+            self.thresholds_widget.get_area_thresh_max(),
+            self.thresholds_widget.get_area_thresh_mode(),
+            image_area,
+            m2_per_px,
+        )
+
+        if bounds is None:
+            return list(annotations), []
+
+        min_px, max_px = bounds
+        kept = []
+        dropped = []
+        for annotation in annotations:
+            try:
+                area_px = annotation.get_area()
+            except Exception:
+                # An unmeasurable polygon is kept: the filter should never be the
+                # reason a prediction disappears without explanation.
+                area_px = None
+
+            if area_px is None or min_px <= area_px <= max_px:
+                kept.append(annotation)
+            else:
+                dropped.append(annotation)
+
+        return kept, dropped
+
+    def _describe_area_filter(self, annotations, raster):
+        """The bounds the area filter used, and the sizes it judged, in pixels.
+
+        Only ever reached on the drop path. Both halves are needed to read that
+        line: the threshold is set in image shares or real-world units, so the
+        pixel bound it resolves to on this raster is not something the user can
+        work out from the slider, and neither is where the polygons fell
+        relative to it.
+        """
+        try:
+            image_area, m2_per_px = raster_metrics(raster)
+            bounds = resolve_area_bounds_px(
+                self.thresholds_widget.get_area_thresh_min(),
+                self.thresholds_widget.get_area_thresh_max(),
+                self.thresholds_widget.get_area_thresh_mode(),
+                image_area,
+                m2_per_px,
+            )
+            if bounds is None:
+                return "(no bounds)"
+            areas = []
+            for annotation in annotations:
+                try:
+                    areas.append(annotation.get_area())
+                except Exception:
+                    continue
+            if not areas:
+                return f"(kept {bounds[0]:,.0f}-{bounds[1]:,.0f} px2)"
+            return (f"(kept {bounds[0]:,.0f}-{bounds[1]:,.0f} px2; "
+                    f"polygons {min(areas):,.0f}-{max(areas):,.0f} px2)")
+        except Exception:
+            return ""
+
+    def _report_vectorize_timing(self, polygon_count, elapsed_seconds, split_stats=None):
         """Show how long the mask -> polygon conversion took.
 
         Written to both the status bar and stdout so runs can be compared
         without keeping the window in view.
+
+        The splitting pass is called out separately when it ran: it is the
+        expensive half of the conversion on a dense mask, and its share is the
+        number to look at when deciding whether the option is worth its cost.
         """
         message = (f"Converted masks into {polygon_count} polygons - "
                    f"{elapsed_seconds:.3f} seconds")
+        if split_stats:
+            message += (f" ({split_stats.get('seconds', 0.0):.3f}s splitting, "
+                        f"{split_stats.get('ridge_px', 0)} px cut)")
         print(message)
         try:
             self.main_window.status_bar.showMessage(message, 10000)

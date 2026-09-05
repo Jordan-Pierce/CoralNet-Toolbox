@@ -15,6 +15,10 @@ from coralnet_toolbox.Results import ResultsProcessor
 from coralnet_toolbox.Results import CombineResults
 from coralnet_toolbox.Results import MapResults
 
+from coralnet_toolbox.Common import get_area_mode
+from coralnet_toolbox.Common import raster_metrics
+from coralnet_toolbox.Common import resolve_area_bounds_px
+
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 
@@ -573,8 +577,28 @@ class SeeAnythingTool(Tool):
         # Filter
         self.results = results_processor.apply_filters_to_results(results)
 
-        # Calculate the area of the image
-        image_area = self.work_area_image.shape[0] * self.work_area_image.shape[1]
+        # Resolved through the same helper ResultsProcessor uses, so both filters
+        # agree. Bounds are relative to the WHOLE image: scaling by the work-area
+        # crop made the same threshold mean a different real size depending on how
+        # far the view happened to be zoomed. `None` means the threshold cannot be
+        # judged for this raster (a real-world bound with no scale), in which case
+        # every detection is kept rather than silently dropped.
+        try:
+            _raster = self.main_window.image_window.raster_manager.get_raster(self.image_path)
+        except Exception:
+            _raster = None
+
+        image_area, m2_per_px = raster_metrics(_raster)
+        if not image_area:
+            image_area = float(self.original_width or 0) * float(self.original_height or 0)
+        if not image_area:
+            image_area = self.work_area_image.shape[0] * self.work_area_image.shape[1]
+
+        area_bounds = resolve_area_bounds_px(
+            self.main_window.get_area_thresh_min(),
+            self.main_window.get_area_thresh_max(),
+            get_area_mode(self.main_window),
+            image_area, m2_per_px)
 
         # Clear previous annotations if any
         self.clear_annotations()
@@ -592,9 +616,7 @@ class SeeAnythingTool(Tool):
                     box_area = (box_work_area[2] - box_work_area[0]) * (box_work_area[3] - box_work_area[1])
 
                     # Area filtering
-                    min_area = self.main_window.get_area_thresh_min() * image_area
-                    max_area = self.main_window.get_area_thresh_max() * image_area
-                    if not (min_area <= box_area <= max_area):
+                    if area_bounds and not (area_bounds[0] <= box_area <= area_bounds[1]):
                         continue
 
                     # Convert normalized polygon points to absolute coordinates in the whole image
@@ -621,9 +643,7 @@ class SeeAnythingTool(Tool):
                                (box_abs_work_area[3] - box_abs_work_area[1])
 
                     # Area filtering
-                    min_area = self.main_window.get_area_thresh_min() * image_area
-                    max_area = self.main_window.get_area_thresh_max() * image_area
-                    if not (min_area <= box_area <= max_area):
+                    if area_bounds and not (area_bounds[0] <= box_area <= area_bounds[1]):
                         continue
 
                     # Add working area offset to get coordinates in the whole image

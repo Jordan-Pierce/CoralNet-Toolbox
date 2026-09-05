@@ -50,9 +50,7 @@ class Base(QDialog):
         self.max_detect = 300
         self.uncertainty_thresh = 0.30
         self.iou_thresh = 0.20
-        self.area_thresh_min = 0.00
-        self.area_thresh_max = 0.40
-        
+
         self.BATCH_SIZE = 16
 
         self.task = None

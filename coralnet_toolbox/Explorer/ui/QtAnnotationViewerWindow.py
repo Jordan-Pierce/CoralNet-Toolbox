@@ -14,7 +14,7 @@ from PyQt5.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot, QEvent, QSignalBlocke
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QToolBar, QComboBox,
     QLabel, QPushButton, QApplication, QListView,
-    QHBoxLayout
+    QHBoxLayout, QMessageBox
 )
 
 from coralnet_toolbox import theme as app_theme
@@ -52,7 +52,11 @@ class AnnotationViewerWindow(QWidget):
     preview_changed = pyqtSignal(list)  # List of annotation IDs with preview changes
     reset_view_requested = pyqtSignal()  # Request to reset view state
     cleared = pyqtSignal()
-    
+
+    # Number of missing crops above which applying a filter asks for confirmation.
+    # Sized so that ordinary single-image work never trips it.
+    CROP_CONFIRM_THRESHOLD = 2000
+
     def __init__(self, main_window, parent=None):
         """
         Initialize the AnnotationViewerWindow.
@@ -686,6 +690,13 @@ class AnnotationViewerWindow(QWidget):
             if getattr(self, '_cropping_in_progress', False):
                 return True
 
+            # Cropping opens every raster the filtered set touches and holds a
+            # QImage per annotation for the rest of the session, so a wide-open
+            # filter can quietly commit to a very large amount of work. Confirm
+            # before starting one; declining leaves the gallery untouched.
+            if not self._confirm_large_crop_batch(anns_needing_crops):
+                return False
+
             image_window = getattr(self.main_window, 'image_window', None)
             raster_manager = getattr(image_window, 'raster_manager', None) if image_window else None
 
@@ -795,6 +806,41 @@ class AnnotationViewerWindow(QWidget):
 
         return False
 
+
+    def _confirm_large_crop_batch(self, anns_needing_crops):
+        """Ask before committing to a large cropping run.
+
+        Returns True when cropping should proceed. Every crop is a QImage that
+        stays on its annotation for the rest of the session, and each distinct
+        image in the batch means opening another raster, so an accidental
+        project-wide filter is expensive in both time and memory.
+        """
+        count = len(anns_needing_crops)
+        if count <= self.CROP_CONFIRM_THRESHOLD:
+            return True
+
+        image_count = len({ann.image_path for ann in anns_needing_crops})
+        reply = QMessageBox.question(
+            self,
+            "Large Filter Result",
+            f"This filter needs {count:,} new crops across {image_count:,} image(s).\n\n"
+            "Cropping will open each of those images and keep the crops in memory "
+            "for the rest of the session.\n\n"
+            "Continue?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            return True
+
+        # Declined: leave the gallery exactly as it was and say why nothing happened.
+        try:
+            self.main_window.statusBar().showMessage(
+                "Filter cancelled - narrow the image or label filter and apply again.", 5000
+            )
+        except Exception:
+            pass
+        return False
 
     def _get_selected_images(self):
         """Get list of selected image names from filter combo."""

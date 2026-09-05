@@ -304,10 +304,13 @@ class DatasetProcessor(QObject):
     finished = pyqtSignal()
 
     def __init__(self, yaml_path, output_folder, task, import_as, rename_on_conflict=False,
-                 excluded_classes=None, image_import_policy='annotated_only', parent=None):
+                 excluded_classes=None, image_import_policy='annotated_only', copy_images=True,
+                 parent=None):
         super().__init__(parent)
         self.yaml_path = yaml_path
+        # None when importing in place, where there is no destination at all.
         self.output_folder = output_folder
+        self.copy_images = copy_images
         self.task = task  # 'detect' or 'segment' (source format)
         self.import_as = import_as  # 'rectangle' or 'polygon' (target format)
         self.rename_on_conflict = rename_on_conflict
@@ -336,8 +339,13 @@ class DatasetProcessor(QObject):
                 return
 
             # --- Step 2: Copy files with progress reporting ---
-            self.status_changed.emit("Copying image files...", len(source_image_label_map))
-            image_label_paths = self._copy_files_with_progress(source_image_label_map)
+            if self.copy_images:
+                self.status_changed.emit("Copying image files...", len(source_image_label_map))
+                image_label_paths = self._copy_files_with_progress(source_image_label_map)
+            else:
+                # Importing in place: the source paths are the ones the project
+                # will reference, so there is nothing to materialize.
+                image_label_paths = source_image_label_map
 
             if not self.is_running:
                 return
@@ -363,9 +371,11 @@ class DatasetProcessor(QObject):
     def _find_source_files(self):
         """Finds all source image and sidecar paths based on the import policy."""
         sidecar_kind = 'masks' if self.task == 'semantic' else 'labels'
+        # Only a copying import has an output folder to keep out of its own scan.
+        exclude_dirs = [self.output_folder] if self.output_folder else []
         return discover_dataset_files(self.yaml_path,
                                       image_import_policy=self.image_import_policy,
-                                      exclude_dirs=[self.output_folder],
+                                      exclude_dirs=exclude_dirs,
                                       sidecar_kind=sidecar_kind)
 
     def _copy_files_with_progress(self, source_image_label_map):
@@ -582,6 +592,15 @@ class Base(QDialog):
         self.browse_yaml_button.clicked.connect(self.browse_data_yaml)
         self.browse_yaml_button.setToolTip("Browse for a dataset.yaml file.")
         layout.addWidget(self.browse_yaml_button, 0, 2)
+
+        # One line describing what was actually found, so the size and label
+        # coverage of a dataset are known before committing to the import.
+        self.dataset_summary_label = QLabel("No dataset selected.")
+        self.dataset_summary_label.setWordWrap(True)
+        self.dataset_summary_label.setToolTip("What was found in the selected dataset.\n"
+                                              "Counts every split the YAML points at.")
+        layout.addWidget(self.dataset_summary_label, 1, 0, 1, 3)
+
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
@@ -589,20 +608,37 @@ class Base(QDialog):
         """Set up the layout for output directory and the advanced options accordion."""
         group_box = QGroupBox("Output Settings")
         layout = QGridLayout()
-        layout.addWidget(QLabel("Directory:"), 0, 0)
+
+        # Copying makes the project self-contained; importing in place makes it
+        # cheap to look at a dataset without duplicating it on disk first.
+        self.copy_images_radio = QRadioButton("Copy images into a project folder")
+        self.copy_images_radio.setChecked(True)
+        self.copy_images_radio.setToolTip("Copy every image (and mask) into the output directory.\n"
+                                          "The project is self-contained and can be moved or shared.")
+        self.import_in_place_radio = QRadioButton("Import in place (no copy)")
+        self.import_in_place_radio.setToolTip("Read the images where they already are; nothing is written to disk.\n"
+                                              "Much faster for a large dataset, but a saved project points at the\n"
+                                              "original dataset folder and breaks if it is moved or deleted.")
+        self.copy_images_radio.toggled.connect(self.update_output_widgets)
+        layout.addWidget(self.copy_images_radio, 0, 0, 1, 3)
+        layout.addWidget(self.import_in_place_radio, 1, 0, 1, 3)
+
+        self.output_dir_row_label = QLabel("Directory:")
+        layout.addWidget(self.output_dir_row_label, 2, 0)
         self.output_dir_label = QLineEdit()
         self.output_dir_label.setPlaceholderText("Select output directory...")
         self.output_dir_label.setToolTip("Directory where the imported dataset will be saved.\nDefault: same directory as the YAML file.")
-        layout.addWidget(self.output_dir_label, 0, 1)
+        layout.addWidget(self.output_dir_label, 2, 1)
         self.browse_output_button = QPushButton("Browse")
         self.browse_output_button.clicked.connect(self.browse_output_dir)
         self.browse_output_button.setToolTip("Browse for an output directory.")
-        layout.addWidget(self.browse_output_button, 0, 2)
-        layout.addWidget(QLabel("Folder Name:"), 1, 0)
+        layout.addWidget(self.browse_output_button, 2, 2)
+        self.output_name_row_label = QLabel("Folder Name:")
+        layout.addWidget(self.output_name_row_label, 3, 0)
         self.output_folder_name = QLineEdit("data")
         self.output_folder_name.setPlaceholderText("data")
         self.output_folder_name.setToolTip("Name for the subdirectory containing imported images.\nFinal location: Directory / Folder Name /")
-        layout.addWidget(self.output_folder_name, 1, 1, 1, 2)
+        layout.addWidget(self.output_folder_name, 3, 1, 1, 2)
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
@@ -644,6 +680,16 @@ class Base(QDialog):
         advanced_layout.addWidget(class_filter_box)
         self.layout.addWidget(self.advanced_options_frame)
 
+    def update_output_widgets(self):
+        """Grey out the destination fields when nothing is being written."""
+        copying = self.copy_images_radio.isChecked()
+        for widget in (self.output_dir_row_label,
+                       self.output_dir_label,
+                       self.browse_output_button,
+                       self.output_name_row_label,
+                       self.output_folder_name):
+            widget.setEnabled(copying)
+
     def toggle_advanced_options(self, checked):
         self.advanced_options_toggle.setArrowType(Qt.DownArrow if checked else Qt.RightArrow)
         self.advanced_options_frame.setVisible(checked)
@@ -653,7 +699,7 @@ class Base(QDialog):
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         ok_button = self.button_box.button(QDialogButtonBox.Ok)
         cancel_button = self.button_box.button(QDialogButtonBox.Cancel)
-        ok_button.setToolTip("Import the dataset with the configured settings.\nImages and annotations will be copied to the output directory.")
+        ok_button.setToolTip("Import the dataset with the configured settings.")
         cancel_button.setToolTip("Close this dialog without importing.")
         self.button_box.accepted.connect(self.start_processing)
         self.button_box.rejected.connect(self.reject)
@@ -711,10 +757,48 @@ class Base(QDialog):
                 self.class_checkboxes.append(checkbox)
 
             self.advanced_options_toggle.setEnabled(True)
+            self.update_dataset_summary(file_path, len(names_to_display))
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to read or parse YAML file:\n{e}")
             self.advanced_options_toggle.setEnabled(False)
+            self.dataset_summary_label.setText("No dataset selected.")
+
+    def update_dataset_summary(self, yaml_path, class_count):
+        """Summarize the selected dataset in a single line.
+
+        The scan is the same one the import itself runs, so the counts shown are
+        exactly what would be brought in. A previous import's output folder is
+        skipped, otherwise re-importing a dataset would count its own copies.
+        """
+        sidecar_kind = 'masks' if self.task == 'semantic' else 'labels'
+        exclude_dirs = []
+        if self.output_dir_label.text() and self.output_folder_name.text():
+            exclude_dirs.append(os.path.join(self.output_dir_label.text(),
+                                             self.output_folder_name.text()))
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            discovered = discover_dataset_files(yaml_path,
+                                                image_import_policy='all',
+                                                exclude_dirs=exclude_dirs,
+                                                sidecar_kind=sidecar_kind)
+        except Exception:
+            discovered = {}
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        plural = "es" if class_count != 1 else ""
+        if not discovered:
+            self.dataset_summary_label.setText(
+                f"{class_count} class{plural} · no images found "
+                "(check the YAML's train / val / test entries)")
+            return
+
+        annotated = sum(1 for sidecar in discovered.values() if sidecar)
+        noun = "masks" if self.task == 'semantic' else "annotations"
+        self.dataset_summary_label.setText(
+            f"{len(discovered)} images · {annotated} with {noun} · {class_count} class{plural}")
 
     def browse_output_dir(self):
         """Open a dialog to select the output directory."""
@@ -724,60 +808,72 @@ class Base(QDialog):
 
     def start_processing(self):
         """Validate inputs, check for duplicates, and start the worker thread."""
-        if not all([self.yaml_path_label.text(), self.output_dir_label.text(), self.output_folder_name.text()]):
-            QMessageBox.warning(self, "Error", "Please fill in all fields.")
+        copy_images = self.copy_images_radio.isChecked()
+        rename_files = False
+
+        if not self.yaml_path_label.text():
+            QMessageBox.warning(self, "Error", "Please select a Data YAML file.")
             return
 
-        self.output_folder = os.path.join(self.output_dir_label.text(), self.output_folder_name.text())
-        if os.path.exists(self.output_folder) and os.listdir(self.output_folder):
-            reply = QMessageBox.question(self, 
-                                         'Directory Not Empty', 
-                                         f"The directory '{self.output_folder}' is not empty. Continue?", 
-                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if reply == QMessageBox.No: return
-
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
-            # The same discovery the worker will use, so the conflict check
-            # sees exactly the files that are about to be copied.
-            image_paths = discover_dataset_files(self.yaml_path_label.text(),
-                                                 image_import_policy='all',
-                                                 exclude_dirs=[self.output_folder])
-        finally:
-            QApplication.restoreOverrideCursor()
-
-        basenames, duplicates_exist = set(), False
-        for path in image_paths:
-            basename_no_ext = os.path.splitext(os.path.basename(path))[0]
-            if basename_no_ext in basenames:
-                duplicates_exist = True
-                break
-            basenames.add(basename_no_ext)
-
-        rename_files = False
-        if duplicates_exist:
-            msg_box = QMessageBox(self)
-            msg_box.setIcon(QMessageBox.Warning)
-            msg_box.setWindowTitle('Duplicate Filenames Found')
-            msg_box.setText(
-                "Images with the same base name exist in different subdirectories.\n"
-                "This can cause files to be overwritten in the output directory."
-            )
-            msg_box.setInformativeText("How would you like to handle these conflicts?")
-            rename_button = msg_box.addButton("Rename Files (Safe)", QMessageBox.AcceptRole)
-            overwrite_button = msg_box.addButton("Overwrite", QMessageBox.DestructiveRole)
-            cancel_button = msg_box.addButton("Cancel", QMessageBox.RejectRole)
-            msg_box.setDefaultButton(rename_button)
-            msg_box.exec_()
-            clicked_button = msg_box.clickedButton()
-            if clicked_button == cancel_button: 
+        if copy_images:
+            if not all([self.output_dir_label.text(), self.output_folder_name.text()]):
+                QMessageBox.warning(self, "Error", "Please fill in all fields.")
                 return
-            elif clicked_button == rename_button: 
-                rename_files = True
-            elif clicked_button == overwrite_button: 
-                rename_files = False
-            else: 
-                return
+
+            self.output_folder = os.path.join(self.output_dir_label.text(), self.output_folder_name.text())
+            if os.path.exists(self.output_folder) and os.listdir(self.output_folder):
+                reply = QMessageBox.question(self,
+                                             'Directory Not Empty',
+                                             f"The directory '{self.output_folder}' is not empty. Continue?",
+                                             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                if reply == QMessageBox.No: return
+
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            try:
+                # The same discovery the worker will use, so the conflict check
+                # sees exactly the files that are about to be copied.
+                image_paths = discover_dataset_files(self.yaml_path_label.text(),
+                                                     image_import_policy='all',
+                                                     exclude_dirs=[self.output_folder])
+            finally:
+                QApplication.restoreOverrideCursor()
+
+            basenames, duplicates_exist = set(), False
+            for path in image_paths:
+                basename_no_ext = os.path.splitext(os.path.basename(path))[0]
+                if basename_no_ext in basenames:
+                    duplicates_exist = True
+                    break
+                basenames.add(basename_no_ext)
+
+            if duplicates_exist:
+                msg_box = QMessageBox(self)
+                msg_box.setIcon(QMessageBox.Warning)
+                msg_box.setWindowTitle('Duplicate Filenames Found')
+                msg_box.setText(
+                    "Images with the same base name exist in different subdirectories.\n"
+                    "This can cause files to be overwritten in the output directory."
+                )
+                msg_box.setInformativeText("How would you like to handle these conflicts?")
+                rename_button = msg_box.addButton("Rename Files (Safe)", QMessageBox.AcceptRole)
+                overwrite_button = msg_box.addButton("Overwrite", QMessageBox.DestructiveRole)
+                cancel_button = msg_box.addButton("Cancel", QMessageBox.RejectRole)
+                msg_box.setDefaultButton(rename_button)
+                msg_box.exec_()
+                clicked_button = msg_box.clickedButton()
+                if clicked_button == cancel_button:
+                    return
+                elif clicked_button == rename_button:
+                    rename_files = True
+                elif clicked_button == overwrite_button:
+                    rename_files = False
+                else:
+                    return
+        else:
+            # Nothing is written, so there is no destination to validate and no
+            # flattening to collide: the images keep the distinct paths they
+            # already have, which is what the project will reference.
+            self.output_folder = None
 
         excluded_classes = set()
         if self.advanced_options_toggle.isEnabled():
@@ -806,7 +902,8 @@ class Base(QDialog):
             import_as=import_as,
             rename_on_conflict=rename_files,
             excluded_classes=excluded_classes,
-            image_import_policy=image_import_policy
+            image_import_policy=image_import_policy,
+            copy_images=copy_images
         )
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
@@ -881,9 +978,13 @@ class Base(QDialog):
             progress_bar.set_title("Adding annotations to project...")
             self.annotation_window.add_annotations(newly_created_annotations)
 
-        progress_bar.set_title("Exporting annotations.json...")
-        self._export_annotations_to_json(newly_created_annotations, self.output_folder)
-        
+        # An in-place import has no folder of its own to write the sidecar into;
+        # File > Export > Annotations (JSON) covers it on demand.
+        if self.output_folder:
+            progress_bar.set_title("Exporting annotations.json...")
+            self._export_annotations_to_json(newly_created_annotations, self.output_folder)
+
+
         progress_bar.finish_progress()
         progress_bar.stop_progress()
         progress_bar.close()

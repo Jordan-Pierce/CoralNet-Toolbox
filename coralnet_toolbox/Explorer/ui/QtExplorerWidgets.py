@@ -82,7 +82,17 @@ class MultiSelectCombo(QtWidgets.QWidget):
             self.set_options(options)
 
     def set_options(self, options):
-        """options: list of (display_text, value)"""
+        """options: list of (display_text, value)
+
+        Rebuilds the menu while preserving the user's current selection. The
+        combo is repopulated whenever the available images/labels change (new
+        image loaded, annotations created), so resetting to 'All' here would
+        silently discard a deliberate filter choice made between one repopulate
+        and the next Apply. Values no longer present in `options` are dropped;
+        if nothing the user had selected survives, the combo falls back to 'All'.
+        """
+        previous = self.selected_values()  # None means 'All'
+
         self._options = list(options)
         self.menu.clear()
         self._actions = []
@@ -90,16 +100,25 @@ class MultiSelectCombo(QtWidgets.QWidget):
         # Ensure 'All' at top
         all_action = QtWidgets.QAction('All', self.menu)
         all_action.setCheckable(True)
-        all_action.setChecked(True)
         self.menu.addAction(all_action)
         self._actions.append((all_action, None))
+
+        surviving = set()
+        if previous is not None:
+            available = {value for _, value in self._options}
+            surviving = {value for value in previous if value in available}
 
         for text, value in self._options:
             act = QtWidgets.QAction(text, self.menu)
             act.setCheckable(True)
             act.setData(value)
+            act.setChecked(value in surviving)
             self.menu.addAction(act)
             self._actions.append((act, value))
+
+        # 'All' owns the selection when the user had it, or when every value
+        # they had selected has since disappeared.
+        all_action.setChecked(not surviving)
 
         self._refresh_action_styles()
         self._update_button_text()

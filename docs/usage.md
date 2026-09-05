@@ -185,11 +185,16 @@ All dock windows (Annotation Window, Label Window, Image Window, Confidence Wind
   - **Masks**: Import segmentation mask images as MaskAnnotations
   - **Metadata**: Import metadata field definitions from a YAML file
   - **AI-Ready Datasets**: Import a YOLO dataset for machine learning (Detect, Segment, Semantic)
-    - **Image Copying**: All images from the dataset are copied into the project directory
-      - Creates a copy in your project workspace (original files remain untouched)
+    - **Dataset Summary**: Selecting a data.yaml reports how many images were found, how many carry annotations, and the class count
+    - **Import Mode**: Choose whether the dataset is copied into the project
+      - **Copy images into a project folder** (default): copies every image into the output directory, leaving the originals untouched, so the project is self-contained
+        - Every split (train, val, test) is flattened into a single `images` folder
+        - Images sharing a base name across splits would overwrite each other, so a rename option is offered when duplicates are detected
+        - An `annotations.json` is written alongside the copies
+      - **Import in place**: reads the images where they already are and writes nothing to disk
+        - Faster for large datasets, and split folders are kept, so base name conflicts cannot occur
+        - A saved project references the original dataset folder and breaks if it is moved or deleted
       - Supports PNG, JPG, JPEG, JFIF, BMP, TIF, TIFF, and WebP images
-      - Every split (train, val, test) is imported, and the copies are flattened into a single `images` folder
-      - Images sharing a base name across splits would overwrite each other, so a rename option is offered when duplicates are detected
     - **Annotation Importing**: YOLO format annotations are converted and imported
       - Detection datasets: Bounding boxes converted to Rectangle annotations
       - Instance segmentation datasets: Polygon masks converted to Polygon annotations
