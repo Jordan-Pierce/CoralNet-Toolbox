@@ -2076,11 +2076,20 @@ This guide provides instructions on how to use the application, including key fu
 <li>
 <p><strong>AI-Ready Datasets</strong>: Import a YOLO dataset for machine learning (Detect, Segment, Semantic)</p>
 <ul>
-<li><strong>Image Copying</strong>: All images from the dataset are copied into the project directory</li>
-<li>Creates a copy in your project workspace (original files remain untouched)</li>
-<li>Supports PNG, JPG, JPEG, JFIF, BMP, TIF, TIFF, and WebP images</li>
-<li>Every split (train, val, test) is imported, and the copies are flattened into a single <code>images</code> folder</li>
+<li><strong>Dataset Summary</strong>: Selecting a data.yaml reports how many images were found, how many carry annotations, and the class count</li>
+<li><strong>Import Mode</strong>: Choose whether the dataset is copied into the project</li>
+<li><strong>Copy images into a project folder</strong> (default): copies every image into the output directory, leaving the originals untouched, so the project is self-contained<ul>
+<li>Every split (train, val, test) is flattened into a single <code>images</code> folder</li>
 <li>Images sharing a base name across splits would overwrite each other, so a rename option is offered when duplicates are detected</li>
+<li>An <code>annotations.json</code> is written alongside the copies</li>
+</ul>
+</li>
+<li><strong>Import in place</strong>: reads the images where they already are and writes nothing to disk<ul>
+<li>Faster for large datasets, and split folders are kept, so base name conflicts cannot occur</li>
+<li>A saved project references the original dataset folder and breaks if it is moved or deleted</li>
+</ul>
+</li>
+<li>Supports PNG, JPG, JPEG, JFIF, BMP, TIF, TIFF, and WebP images</li>
 <li><strong>Annotation Importing</strong>: YOLO format annotations are converted and imported</li>
 <li>Detection datasets: Bounding boxes converted to Rectangle annotations</li>
 <li>Instance segmentation datasets: Polygon masks converted to Polygon annotations</li>
@@ -3025,7 +3034,7 @@ This guide provides instructions on how to use the application, including key fu
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="September 3, 2026 16:51:38 UTC"><span class="timeago" datetime="2026-09-03T16:51:38+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="September 3, 2026 16:51:38 UTC">2026-09-03</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="September 4, 2026 22:26:54 UTC"><span class="timeago" datetime="2026-09-04T22:26:54+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="September 4, 2026 22:26:54 UTC">2026-09-04</span>
   </span>
 
     
