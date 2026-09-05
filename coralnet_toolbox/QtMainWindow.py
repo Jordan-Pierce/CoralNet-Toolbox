@@ -138,11 +138,16 @@ from coralnet_toolbox.Common import (
     area_slider_to_value,
     area_value_to_slider,
     convert_area_bounds,
+    count_area_ticks_outside,
+    current_area_unit,
     current_raster_metrics,
     format_area_label,
     format_area_status,
     set_area_mode_availability,
+    area_ticks_for_annotations,
+    AreaTickSlider,
     AREA_STATUS_TIMEOUT_MS,
+    AREA_TICK_DEBOUNCE_MS,
 )
 
 # Game dialogs
@@ -1197,7 +1202,7 @@ class MainWindow(QMainWindow):
             "Real-world: the bounds are an absolute area, so one setting means the same size across "
             "a whole dataset. Requires the raster to carry a scale - on an unscaled image the area "
             "filter is skipped rather than applied wrongly.")
-        self.area_threshold_min_slider = QSlider(Qt.Horizontal)
+        self.area_threshold_min_slider = AreaTickSlider(Qt.Horizontal)
         self.area_threshold_min_slider.setMinimum(0)
         self.area_threshold_min_slider.setMaximum(AREA_SLIDER_STEPS)
         self.area_threshold_min_slider.setTickPosition(QSlider.TicksBelow)
@@ -1208,8 +1213,10 @@ class MainWindow(QMainWindow):
             "Lower bound of the annotation area filter, as a fraction of the whole image area. "
             "Objects smaller than this are removed after confidence and IoU filtering.\n\n"
             "The slider is logarithmic: each tick is one decade, spanning 0.0001% up to 100% of "
-            "the image.")
-        self.area_threshold_max_slider = QSlider(Qt.Horizontal)
+            "the image.\n\n"
+            "Select annotations on the canvas and their sizes are marked in red above the groove, "
+            "showing where to put the handle to include or exclude them.")
+        self.area_threshold_max_slider = AreaTickSlider(Qt.Horizontal)
         self.area_threshold_max_slider.setMinimum(0)
         self.area_threshold_max_slider.setMaximum(AREA_SLIDER_STEPS)
         self.area_threshold_max_slider.setTickPosition(QSlider.TicksBelow)
@@ -1226,6 +1233,13 @@ class MainWindow(QMainWindow):
             "Current area filter range. The equivalent bounds for the open image - in real-world "
             "units if that raster is scaled, otherwise in pixels - are reported in the status bar "
             "whenever the range changes.")
+        # Selection churn is coalesced: a rubber-band drag emits a selection
+        # change continuously, and each refresh measures polygon areas.
+        self.area_tick_timer = QTimer(self)
+        self.area_tick_timer.setSingleShot(True)
+        self.area_tick_timer.setInterval(AREA_TICK_DEBOUNCE_MS)
+        self.area_tick_timer.timeout.connect(self.refresh_area_ticks)
+
         area_thresh_layout = QVBoxLayout()
         area_thresh_layout.addWidget(self.area_mode_combo)
         area_thresh_layout.addWidget(self.area_threshold_min_slider)
@@ -1670,6 +1684,13 @@ class MainWindow(QMainWindow):
         # ---------------------------------------------------------------------
         self.image_window.imageLoaded.connect(self.annotation_window.on_image_loaded_check_z_channel)
         self.image_window.imageLoaded.connect(self.update_area_threshold_label)
+        self.image_window.imageLoaded.connect(self.schedule_area_ticks)
+        try:
+            self.annotation_window.scale_unit_dropdown.currentTextChanged.connect(
+                self.update_area_threshold_label)
+        except Exception:
+            pass
+        self.annotation_window.annotationSelectionChanged.connect(self.schedule_area_ticks)
         self.image_window.imageLoaded.connect(self.annotation_viewer_window.on_image_loaded)
         self.image_window.imageLoaded.connect(self.embedding_viewer_window.on_image_loaded)
         self.annotation_window.imageLoaded.connect(self.close_image_specific_dialogs)
@@ -1879,6 +1900,8 @@ class MainWindow(QMainWindow):
 
         self._sync_area_sliders()
         self.push_area_threshold_status()
+        # Tick positions are relative to the unit, so they all move on a switch.
+        self.schedule_area_ticks()
         self.areaModeChanged.emit(mode)
         self.areaChanged.emit(self.area_thresh_min, self.area_thresh_max)
 
@@ -1928,8 +1951,42 @@ class MainWindow(QMainWindow):
         image_area, m2_per_px = current_raster_metrics(self)
         self.area_threshold_label.setText(
             format_area_label(self.area_thresh_min, self.area_thresh_max,
-                              image_area, m2_per_px, self.area_thresh_mode))
+                              image_area, m2_per_px, self.area_thresh_mode,
+                              current_area_unit(self)))
         set_area_mode_availability(getattr(self, 'area_mode_combo', None), m2_per_px)
+
+    def schedule_area_ticks(self, *args):
+        """Queue a tick refresh, coalescing a burst of selection changes."""
+        timer = getattr(self, 'area_tick_timer', None)
+        if timer is not None:
+            timer.start()
+
+    def refresh_area_ticks(self):
+        """Mark where the selected annotations' areas fall on the area sliders.
+
+        Both sliders get the same marks: the pair brackets one range, so seeing
+        the whole population against each handle is what makes the bracket
+        legible.
+        """
+        if not hasattr(self, 'area_threshold_min_slider'):
+            return
+
+        try:
+            annotations = list(self.annotation_window.selected_annotations)
+        except Exception:
+            annotations = []
+
+        image_area, m2_per_px = current_raster_metrics(self)
+        ticks = area_ticks_for_annotations(annotations, self.area_thresh_mode,
+                                           image_area, m2_per_px)
+
+        self.area_threshold_min_slider.set_area_ticks(ticks)
+        self.area_threshold_max_slider.set_area_ticks(ticks)
+
+        # Kept so push_area_threshold_status can say how many the handles cut,
+        # along with the selection size the marks were sampled from.
+        self._area_ticks = ticks
+        self._area_ticks_total = len(annotations)
 
     def push_area_threshold_status(self):
         """Report the full area reading in the status bar.
@@ -1941,9 +1998,28 @@ class MainWindow(QMainWindow):
         """
         try:
             image_area, m2_per_px = current_raster_metrics(self)
+            try:
+                selected_count = len(self.annotation_window.selected_annotations)
+            except Exception:
+                selected_count = 0
+
+            # Which of them the handles exclude, read off the marks already
+            # drawn. None when the areas could not be placed at all.
+            ticks = getattr(self, '_area_ticks', None)
+            if ticks:
+                filtered_count = count_area_ticks_outside(
+                    ticks,
+                    self.area_threshold_min_slider.value(),
+                    self.area_threshold_max_slider.value(),
+                    getattr(self, '_area_ticks_total', selected_count))
+            else:
+                filtered_count = None
+
             self.status_bar.showMessage(
                 format_area_status(self.area_thresh_min, self.area_thresh_max,
-                                   image_area, m2_per_px, self.area_thresh_mode),
+                                   image_area, m2_per_px, self.area_thresh_mode,
+                                   current_area_unit(self), selected_count,
+                                   filtered_count),
                 AREA_STATUS_TIMEOUT_MS)
         except Exception:
             pass

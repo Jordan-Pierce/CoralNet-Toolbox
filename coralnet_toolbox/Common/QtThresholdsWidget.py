@@ -3,12 +3,15 @@ QtThresholdsWidget - Reusable widget for threshold controls
 """
 
 import math
+import random
 
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QColor, QPainter, QPen
 from PyQt5.QtWidgets import (QComboBox, QGroupBox, QFormLayout, QLabel, QSizePolicy,
-                             QSlider, QSpinBox)
+                             QSlider, QSpinBox, QStyle, QStyleOptionSlider)
 
 from coralnet_toolbox.utilities import convert_scale_units
+from coralnet_toolbox.utilities import format_measurement
 from coralnet_toolbox.utilities import is_length_unit
 
 
@@ -80,18 +83,35 @@ def format_area_fraction(fraction: float) -> str:
     return f"{percent:.1e}%"
 
 
-def format_area_metric_range(min_m2: float, max_m2: float) -> str:
-    """Render a real-world area range, picking one unit for both ends.
+def format_area_metric_range(min_m2: float, max_m2: float, unit: str = 'm') -> str:
+    """Render a real-world area range, with one unit for both ends.
 
-    The unit is chosen from the larger bound so the two numbers stay
-    comparable; mixing them ("0 cm2 - 2,314 m2") reads as a mistake.
+    Mixing them ("0 cm2 - 2,314 m2") reads as a mistake, so both are shown in
+    the same unit. Areas are held in metres squared; `unit` is the linear unit
+    the user selected on the annotation toolbar, squared here.
+
+    Metres are the default rather than a choice, so they auto-scale to whatever
+    reads best. Any other unit was picked deliberately and is left alone.
     """
+    if unit and unit != 'm' and is_length_unit(unit):
+        factor = convert_scale_units(1.0, 'm', unit) ** 2
+        return (f"{format_measurement(min_m2 * factor)} - "
+                f"{format_measurement(max_m2 * factor)} {unit}\u00b2")
+
     largest = max(min_m2, max_m2)
     if largest < 1.0:
         return f"{min_m2 * 1e4:,.1f} - {max_m2 * 1e4:,.1f} cm\u00b2"
     if largest < 1e6:
         return f"{min_m2:,.2f} - {max_m2:,.2f} m\u00b2"
     return f"{min_m2 / 1e6:,.3f} - {max_m2 / 1e6:,.3f} km\u00b2"
+
+
+def current_area_unit(main_window) -> str:
+    """The linear unit the user picked on the annotation toolbar, squared for area."""
+    try:
+        return main_window.annotation_window.current_unit_scale or 'm'
+    except Exception:
+        return 'm'
 
 
 def raster_metrics(raster):
@@ -175,6 +195,28 @@ def convert_area_bounds(min_value, max_value, from_mode, to_mode, image_area, m2
     return AREA_MODE_DEFAULTS[to_mode]
 
 
+def count_area_ticks_outside(ticks, min_position, max_position, total=None):
+    """How many of the marked annotations the current bounds exclude.
+
+    Works off the tick positions rather than re-measuring: a mark sits where its
+    annotation's area puts it, so anything left of the min handle or right of the
+    max handle is filtered out.
+
+    `ticks` may be a sample of a larger selection, so the sampled proportion is
+    scaled back up to `total` when one is given.
+    """
+    sampled = sum(ticks.values()) if ticks else 0
+    if not sampled:
+        return 0
+
+    outside = sum(count for position, count in ticks.items()
+                  if position < min_position or position > max_position)
+
+    if not total or total == sampled:
+        return outside
+    return int(round(outside * total / sampled))
+
+
 def get_area_mode(main_window) -> str:
     """The active area threshold mode, defaulting to the image-share mode.
 
@@ -189,16 +231,16 @@ def get_area_mode(main_window) -> str:
 
 
 def format_area_range(min_value: float, max_value: float,
-                      mode: str = AREA_MODE_FRACTION) -> str:
+                      mode: str = AREA_MODE_FRACTION, unit: str = 'm') -> str:
     """The bounds on their own, in the active unit."""
     if mode == AREA_MODE_METRIC:
-        return format_area_metric_range(min_value, max_value)
+        return format_area_metric_range(min_value, max_value, unit)
     return f"{format_area_fraction(min_value)} - {format_area_fraction(max_value)}"
 
 
 def format_area_equivalent(min_value: float, max_value: float,
                            image_area: float = None, m2_per_px: float = None,
-                           mode: str = AREA_MODE_FRACTION) -> str:
+                           mode: str = AREA_MODE_FRACTION, unit: str = 'm') -> str:
     """The same bounds restated for the open image.
 
     Returns "" when the open raster cannot say anything useful. A percentage is
@@ -220,13 +262,13 @@ def format_area_equivalent(min_value: float, max_value: float,
     min_px = min_value * image_area
     max_px = max_value * image_area
     if m2_per_px:
-        return "~" + format_area_metric_range(min_px * m2_per_px, max_px * m2_per_px)
+        return "~" + format_area_metric_range(min_px * m2_per_px, max_px * m2_per_px, unit)
     return f"~{min_px:,.0f} - {max_px:,.0f} px\u00b2"
 
 
 def format_area_label(min_value: float, max_value: float,
                       image_area: float = None, m2_per_px: float = None,
-                      mode: str = AREA_MODE_FRACTION) -> str:
+                      mode: str = AREA_MODE_FRACTION, unit: str = 'm') -> str:
     """Compact form for the threshold panel.
 
     The equivalents live in the status bar instead - spelled out in the panel
@@ -234,7 +276,7 @@ def format_area_label(min_value: float, max_value: float,
     abbreviated, because a filter that is silently doing nothing has to say so
     where the controls are.
     """
-    text = format_area_range(min_value, max_value, mode)
+    text = format_area_range(min_value, max_value, mode, unit)
     if mode == AREA_MODE_METRIC and image_area and not m2_per_px:
         text += "  (inactive)"
     return text
@@ -242,12 +284,29 @@ def format_area_label(min_value: float, max_value: float,
 
 def format_area_status(min_value: float, max_value: float,
                        image_area: float = None, m2_per_px: float = None,
-                       mode: str = AREA_MODE_FRACTION) -> str:
-    """The full reading, for the status bar."""
-    text = f"Area threshold: {format_area_range(min_value, max_value, mode)}"
-    equivalent = format_area_equivalent(min_value, max_value, image_area, m2_per_px, mode)
+                       mode: str = AREA_MODE_FRACTION, unit: str = 'm',
+                       selected_count: int = 0, filtered_count: int = None) -> str:
+    """The full reading, for the status bar.
+
+    Leads with how the current bounds treat the selection, so the ticks on the
+    sliders are unambiguous about both which annotations they represent and
+    which of them the handles are actually excluding.
+    """
+    text = f"Area threshold: {format_area_range(min_value, max_value, mode, unit)}"
+    equivalent = format_area_equivalent(min_value, max_value, image_area, m2_per_px, mode, unit)
     if equivalent:
         text += f"  ({equivalent})"
+
+    if selected_count:
+        noun = "annotation" if selected_count == 1 else "annotations"
+        if filtered_count is None:
+            # Areas could not be placed, so nothing can be said about the cut.
+            lead = f"{selected_count:,} selected {noun}"
+        else:
+            lead = (f"Filtering out {filtered_count:,} of {selected_count:,} "
+                    f"selected {noun}")
+        text = f"{lead}  -  {text}"
+
     return text
 
 
@@ -278,6 +337,115 @@ def set_area_mode_availability(combo, m2_per_px) -> None:
 
 # How long the area reading lingers in the status bar after the last change.
 AREA_STATUS_TIMEOUT_MS = 5000
+
+# Selection churn is coalesced before the areas are measured: a rubber-band drag
+# emits a selection change continuously, and measuring is not free.
+AREA_TICK_DEBOUNCE_MS = 40
+
+# Areas measured per refresh, however many annotations are selected. The groove
+# is only a few hundred pixels wide and measured selections saturate its
+# distinguishable positions by ~500 samples, while measuring the full selection
+# costs real time: get_area rebuilds a Shapely geometry on every call, so 20,000
+# dense polygons is seconds rather than milliseconds.
+AREA_TICK_MAX_SAMPLES = 1000
+
+# Matches the annotation ticks on the video scrubber.
+AREA_TICK_COLOR = (230, 62, 0)
+
+
+def area_ticks_for_annotations(annotations, mode=AREA_MODE_FRACTION,
+                               image_area=None, m2_per_px=None,
+                               max_samples=AREA_TICK_MAX_SAMPLES):
+    """Where the given annotations' areas fall on the area slider.
+
+    Returns {slider_position: how many landed there}, empty when the areas
+    cannot be placed - a real-world threshold against a raster with no scale,
+    or no image at all.
+
+    Areas are polygon areas, which for a rectangle is the rectangle itself.
+
+    Large selections are sampled from a fixed seed: deterministic, so the ticks
+    do not shimmer between refreshes of the same selection, but unordered, so it
+    cannot alias against a selection that is itself ordered by size or by a
+    spatial scan - a fixed stride collapsed 200,000 annotations onto three tick
+    positions when the ordering happened to be periodic.
+    """
+    if not annotations:
+        return {}
+
+    if mode == AREA_MODE_METRIC:
+        if not m2_per_px:
+            return {}
+        scale = m2_per_px
+    else:
+        if not image_area:
+            return {}
+        scale = 1.0 / image_area
+
+    if max_samples and len(annotations) > max_samples:
+        annotations = random.Random(0).sample(list(annotations), max_samples)
+
+    ticks = {}
+    for annotation in annotations:
+        try:
+            area_px = annotation.get_area()
+        except Exception:
+            continue
+        if not area_px or area_px <= 0:
+            continue
+        position = area_value_to_slider(area_px * scale, mode)
+        ticks[position] = ticks.get(position, 0) + 1
+
+    return ticks
+
+
+class AreaTickSlider(QSlider):
+    """An area slider that marks where the selected annotations' areas fall.
+
+    The marks are placed with the same value-to-position mapping as the handle,
+    so a tick sits exactly where the handle would for an annotation of that
+    size: drag the handle onto a tick and that annotation is on the boundary.
+    """
+
+    def __init__(self, orientation, parent=None):
+        super().__init__(orientation, parent)
+        self._area_ticks = {}
+        self._max_count = 0
+
+    def set_area_ticks(self, ticks):
+        """Adopt {slider_position: count} and repaint."""
+        self._area_ticks = dict(ticks or {})
+        self._max_count = max(self._area_ticks.values()) if self._area_ticks else 0
+        self.update()
+
+    def area_ticks(self):
+        """The marks currently drawn, for tests and callers that mirror them."""
+        return dict(self._area_ticks)
+
+    def paintEvent(self, event):
+        # The groove, the style's own ticks and the handle first; ours go on top.
+        super().paintEvent(event)
+
+        if not self._area_ticks or self.maximum() <= self.minimum():
+            return
+
+        painter = QPainter(self)
+        option = QStyleOptionSlider()
+        self.initStyleOption(option)
+        groove = self.style().subControlRect(QStyle.CC_Slider, option, QStyle.SC_SliderGroove, self)
+        span = max(1, self.maximum() - self.minimum())
+
+        red, green, blue = AREA_TICK_COLOR
+        for position, count in self._area_ticks.items():
+            ratio = (position - self.minimum()) / span
+            x = groove.x() + int(ratio * groove.width())
+            # Busier buckets draw more opaque, so a cluster of a hundred
+            # annotations reads differently from a lone outlier.
+            weight = count / self._max_count if self._max_count else 1.0
+            painter.setPen(QPen(QColor(red, green, blue, 90 + int(150 * weight)), 2))
+            painter.drawLine(x, groove.top() - 6, x, groove.top())
+
+        painter.end()
 
 
 class ThresholdsWidget(QGroupBox):
@@ -505,7 +673,8 @@ class ThresholdsWidget(QGroupBox):
         """The compact reading shown beside the sliders."""
         image_area, m2_per_px = current_raster_metrics(self.main_window)
         return format_area_label(self.area_thresh_min, self.area_thresh_max,
-                                 image_area, m2_per_px, self.area_thresh_mode)
+                                 image_area, m2_per_px, self.area_thresh_mode,
+                                 current_area_unit(self.main_window))
 
     def _push_area_status(self):
         """Put the full reading in the status bar.
@@ -517,7 +686,8 @@ class ThresholdsWidget(QGroupBox):
             image_area, m2_per_px = current_raster_metrics(self.main_window)
             self.main_window.status_bar.showMessage(
                 format_area_status(self.area_thresh_min, self.area_thresh_max,
-                                   image_area, m2_per_px, self.area_thresh_mode),
+                                   image_area, m2_per_px, self.area_thresh_mode,
+                                   current_area_unit(self.main_window)),
                 AREA_STATUS_TIMEOUT_MS)
         except Exception:
             pass
