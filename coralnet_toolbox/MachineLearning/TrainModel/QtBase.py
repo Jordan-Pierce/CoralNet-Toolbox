@@ -585,12 +585,14 @@ class Base(QDialog):
 
         # Create a QLabel with explanatory text and hyperlink
         info_label = QLabel(
-            "Train a model on a dataset that has already been exported to disk. Choose the "
-            "dataset and a starting model on the left, and set how it trains on the right.\n"
-            "Training runs in the background and writes to the Project / Name folder, "
-            "one run per training.\n"
-            "Details on the individual parameters can be found "
-            "<a href='https://docs.ultralytics.com/modes/train/#train-settings'>here</a>.")
+            "Train a model on a dataset that has already been exported to disk. "
+            "Choose the dataset and a starting model on the left, and set how it "
+            "trains on the right.<br>"
+            "Training runs in the background and writes to the Project / Name "
+            "folder, one run per training.<br>"
+            "Details on the individual parameters can be found in the "
+            "<a href='https://docs.ultralytics.com/modes/train/'>"
+            "Ultralytics training documentation</a>.")
 
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
