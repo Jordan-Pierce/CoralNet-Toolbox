@@ -220,6 +220,9 @@ class TrainModelWorker(QThread):
         self.model_path = None
         self.weighted = False
         self.temp_data_yaml = None
+        # Set when training reads straight from the project instead of a
+        # dataset on disk; owns the patched dataset class and its scaffolding.
+        self.in_place_dataset = None
 
     def pre_run(self):
         """
@@ -228,8 +231,15 @@ class TrainModelWorker(QThread):
         try:
             # Extract model path
             self.model_path = self.params.pop('model', None)
+            # Private marker; must not reach model.train()
+            self.in_place_dataset = self.params.pop('in_place_dataset', None)
             # Get the weighted flag
             self.weighted = self.set_weighted_dataset()
+            if self.in_place_dataset is not None:
+                # Swaps in the dataset class that reads from the project. Done
+                # after set_weighted_dataset so it wins the shared patch slot,
+                # which its own class folds weighted sampling into.
+                self.in_place_dataset.install(weighted=bool(self.weighted))
             # Load the model (8.3.141) YOLO handles RTDETR
             self.model = YOLO(self.model_path)
             # Set the task in the model itself
@@ -252,8 +262,13 @@ class TrainModelWorker(QThread):
             # Dataset YAMLs exported by this toolbox (or produced by yolo-tiler) can have
             # train/val/test baked in as absolute paths from wherever they were created;
             # moving or sharing the dataset folder then leaves them pointing nowhere.
+            # Rerooting exists to repair exported yamls carrying absolute paths
+            # from another machine. An in-place yaml was written moments ago
+            # against paths that resolve here, so it is left alone.
             data_path = self.params.get('data')
-            if isinstance(data_path, str) and data_path.lower().endswith(('.yaml', '.yml')):
+            if (self.in_place_dataset is None
+                    and isinstance(data_path, str)
+                    and data_path.lower().endswith(('.yaml', '.yml'))):
                 self.params['data'] = self._reroot_dataset_yaml(data_path)
 
         except Exception as e:
@@ -399,6 +414,13 @@ class TrainModelWorker(QThread):
         """
         Clean up resources after training.
         """
+        # Undo the in-place patch first: it replaced whatever the weighted
+        # branch installed, so restoring in the other order would leave the
+        # in-place class in place for the next run.
+        if self.in_place_dataset is not None:
+            self.in_place_dataset.remove()
+            self.in_place_dataset = None
+
         # Revert to the original dataset class without weighted sampling
         if self.weighted and self.params['task'] == 'classify':
             train_build.ClassificationDataset = ClassificationDataset
@@ -492,7 +514,7 @@ class Base(QDialog):
 
         self.setWindowIcon(get_window_icon("coralnet.svg"))
         self.setWindowTitle("Train Model")
-        self.resize(450, 750)
+        self.resize(1000, 500)
 
         # Set window settings
         self.setWindowFlags(Qt.Window |
@@ -518,12 +540,25 @@ class Base(QDialog):
         self.imgsz = 640
         self.batch = 4
 
-        # Create the layout
+        # Two columns: the setup fields on the left, the long scrolling list of
+        # training parameters on the right. Stacked in one column the dialog
+        # wanted 1000 px of height against 450 of width, so the parameters were
+        # reached by scrolling a scroll area inside a scrolling dialog.
         main_layout = QVBoxLayout(self)
+        columns_layout = QHBoxLayout()
 
-        self.layout = main_layout  # Keep backward compatibility for subclasses
-        self.left_layout = main_layout
-        self.right_layout = None
+        left_column = QVBoxLayout()
+        right_column = QVBoxLayout()
+        columns_layout.addLayout(left_column, 1)
+        columns_layout.addLayout(right_column, 1)
+        main_layout.addLayout(columns_layout, 1)
+
+        # Subclasses add their dataset group to self.layout, so it has to stay
+        # the left column for them to keep working unchanged.
+        self.layout = left_column
+        self.left_layout = left_column
+        self.right_layout = right_column
+        self.main_layout = main_layout
 
         # Create the info layout
         self.setup_info_layout()
@@ -533,7 +568,8 @@ class Base(QDialog):
         self.setup_output_layout()
         # Create the model layout (new)
         self.setup_model_layout()
-        # Reserve space so the parameters section lands below the main setup fields.
+        # Push the left column's groups to the top; the right column carries the
+        # height, so the left one should not stretch to match it.
         self.layout.addStretch(1)
         # Create and set up the parameters layout
         self.setup_parameters_layout()
@@ -548,11 +584,19 @@ class Base(QDialog):
         layout = QVBoxLayout()
 
         # Create a QLabel with explanatory text and hyperlink
-        info_label = QLabel("Details on different hyperparameters can be found "
-                            "<a href='https://docs.ultralytics.com/modes/train/#train-settings'>here</a>.")
+        info_label = QLabel(
+            "Train a model on a dataset that has already been exported to disk. Choose the "
+            "dataset and a starting model on the left, and set how it trains on the right.\n"
+            "Training runs in the background and writes to the Project / Name folder, "
+            "one run per training.\n"
+            "Details on the individual parameters can be found "
+            "<a href='https://docs.ultralytics.com/modes/train/#train-settings'>here</a>.")
 
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
+        info_label.setToolTip(
+            "To train directly from the annotations in the open project instead of an\n"
+            "exported dataset, use AI-Assist > Active Learning.")
         layout.addWidget(info_label)
 
         group_box.setLayout(layout)
@@ -812,7 +856,7 @@ class Base(QDialog):
         self.remove_param_button.setToolTip("Remove the most recently added custom parameter.\nDisabled when no custom parameters are present.")
         form_layout.addRow(self.remove_param_button)
 
-        self.layout.addWidget(group_box)
+        self.right_layout.addWidget(group_box, 1)
 
     def _create_cache_combo(self):
         """Create the Ultralytics cache mode combo box."""
@@ -917,17 +961,26 @@ class Base(QDialog):
             self.remove_param_button.setEnabled(False)
 
     def setup_buttons_layout(self):
-        """Set up the layout and widgets for the OK and Cancel buttons."""
+        """Set up the layout and widgets for the OK and Cancel buttons.
+
+        Below both columns rather than at the foot of one, so the action does
+        not read as belonging to whichever column it sits under.
+        """
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+
         # Add OK and Cancel buttons
         self.buttons = QPushButton("OK")
         self.buttons.clicked.connect(self.accept)
         self.buttons.setToolTip("Start training with the configured parameters.\nTraining will run in the background.")
-        self.layout.addWidget(self.buttons)
+        button_layout.addWidget(self.buttons)
 
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.reject)
         self.cancel_button.setToolTip("Close this dialog without starting training.")
-        self.layout.addWidget(self.cancel_button)
+        button_layout.addWidget(self.cancel_button)
+
+        self.main_layout.addLayout(button_layout)
 
     def load_model_combobox(self):
         raise NotImplementedError("Subclasses must implement this method.")
