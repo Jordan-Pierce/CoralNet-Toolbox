@@ -102,6 +102,8 @@ from coralnet_toolbox.MachineLearning import (
     MergeDetect as DetectMergeDatasetsDialog,
     MergeSegment as SegmentMergeDatasetsDialog,
     MergeSemantic as SemanticMergeDatasetsDialog,
+    ActiveLearningDetect as ActiveLearningDetectDialog,
+    ActiveLearningSegment as ActiveLearningSegmentDialog,
     OptimizeModel as OptimizeModelDialog,
     TileClassifyDataset as ClassifyTileDatasetDialog,
     TileDetectDataset as DetectTileDatasetDialog,
@@ -312,6 +314,8 @@ class MainWindow(QMainWindow):
         self.detect_merge_datasets_dialog = DetectMergeDatasetsDialog(self)
         self.segment_merge_datasets_dialog = SegmentMergeDatasetsDialog(self)
         self.semantic_merge_datasets_dialog = SemanticMergeDatasetsDialog(self)
+        self.detect_active_learning_dialog = ActiveLearningDetectDialog(self)
+        self.segment_active_learning_dialog = ActiveLearningSegmentDialog(self)
         self.pretrain_model_dialog = PreTrainModelDialog(self)
         self.classify_train_model_dialog = ClassifyTrainModelDialog(self)
         self.detect_train_model_dialog = DetectTrainModelDialog(self)
@@ -664,6 +668,26 @@ class MainWindow(QMainWindow):
         self.feature_selector_deploy_action.setToolTip("Deploy feature selector model for dense feature extraction")
         self.feature_selector_deploy_action.triggered.connect(self.open_feature_deploy_model_dialog)
         self.feature_selector_menu.addAction(self.feature_selector_deploy_action)
+
+        # Add a separator: what follows runs training rounds against the
+        # project, rather than deploying a model to use by hand.
+        self.ai_assist_menu.addSeparator()
+
+        # Active Learning submenu
+        self.active_learning_menu = self.ai_assist_menu.addMenu("Active Learning")
+        self.active_learning_menu.setToolTipsVisible(True)
+        # Active Learning for Detection
+        self.detect_active_learning_action = QAction("Detect", self)
+        self.detect_active_learning_action.setToolTip(
+            "Train a detector on confirmed annotations, then let it propose more to review")
+        self.detect_active_learning_action.triggered.connect(self.open_detect_active_learning_dialog)
+        self.active_learning_menu.addAction(self.detect_active_learning_action)
+        # Active Learning for Instance Segmentation
+        self.segment_active_learning_action = QAction("Segment", self)
+        self.segment_active_learning_action.setToolTip(
+            "Train an instance segmentor on confirmed annotations, then let it propose more to review")
+        self.segment_active_learning_action.triggered.connect(self.open_segment_active_learning_dialog)
+        self.active_learning_menu.addAction(self.segment_active_learning_action)
 
         # ========== MACHINE LEARNING MENU ==========
         # Machine Learning menu
@@ -3503,6 +3527,33 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.see_anything_deploy_generator_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"An error occurred: {e}")
+
+    def open_detect_active_learning_dialog(self):
+        """Open the detection Active Learning session."""
+        self.open_active_learning_dialog(self.detect_active_learning_dialog)
+
+    def open_segment_active_learning_dialog(self):
+        """Open the instance segmentation Active Learning session."""
+        self.open_active_learning_dialog(self.segment_active_learning_dialog)
+
+    def open_active_learning_dialog(self, dialog):
+        """Open one Active Learning session to run train / predict / review rounds.
+
+        Each task has its own dialog, and so its own round history: a detection
+        session and a segmentation session are separate experiments and should
+        not share a scoreboard.
+        """
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "Active Learning",
+                                "No images are present in the project.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"An error occurred: {e}")
 

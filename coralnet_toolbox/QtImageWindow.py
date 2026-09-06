@@ -153,13 +153,30 @@ class CheckableComboBox(QComboBox):
                 self.uncheck_item("No Annotations")
             elif text == "Has Mask":
                 self.uncheck_item("No Annotations")
+            elif text == "Needs Review":
+                self.uncheck_item("No Annotations")
             elif text == "No Annotations":
                 self.uncheck_item("Has Annotations")
                 self.uncheck_item("Has Mask")
+                self.uncheck_item("Needs Review")
         # ----------------------------------
 
         self.filterChanged.emit()
         self._block_signals = False
+
+    def check_item(self, text):
+        """Find an item by its text and check it.
+
+        Setting the state goes through on_item_changed, so the mutual
+        exclusivity rules apply and filterChanged is emitted, exactly as if the
+        user had ticked it.
+        """
+        for i in range(self.count()):
+            item = self.model().item(i)
+            if item.text() == text and item.checkState() != Qt.Checked:
+                item.setCheckState(Qt.Checked)
+                return True
+        return False
 
     def uncheck_item(self, text):
         """Find an item by its text and uncheck it."""
@@ -278,10 +295,11 @@ class ImageWindow(QWidget):
         self.filter_combo.addItem("Has Annotations")
         self.filter_combo.addItem("Has Mask")
         self.filter_combo.addItem("No Annotations")
+        self.filter_combo.addItem("Needs Review")
         self.filter_combo.setCurrentIndex(-1)
         self.filter_combo.filterChanged.connect(self.schedule_filter)
         self.filter_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.filter_combo.setToolTip("Filter images by type (Image, Ortho, Video), Z-channel presence, predictions, annotation status, mask presence, checked state, and highlight state.\nSelect multiple filters to apply all criteria.")
+        self.filter_combo.setToolTip("Filter images by type (Image, Ortho, Video), Z-channel presence, predictions, annotation status, mask presence, checked state, and highlight state.\nSelect multiple filters to apply all criteria.\nNeeds Review shows images carrying annotations nobody has confirmed yet, which is where model predictions land.")
 
         # Setup filter/search controls
         self.search_layout.addRow("Filters:", self.filter_combo)
@@ -1158,6 +1176,7 @@ class ImageWindow(QWidget):
         has_mask = "Has Mask" in checked_filters
         no_annotations = "No Annotations" in checked_filters
         require_checked = "Checked" in checked_filters
+        needs_review = "Needs Review" in checked_filters
         # --- End new logic ---
         
         
@@ -1175,6 +1194,7 @@ class ImageWindow(QWidget):
             allowed_raster_types=allowed_raster_types,
             require_z_channel=require_z_channel,
             require_checked=require_checked,
+            require_unverified=needs_review,
             selected_paths=highlighted_paths,
             use_threading=use_threading
         )

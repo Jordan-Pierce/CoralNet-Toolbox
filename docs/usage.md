@@ -350,6 +350,30 @@ All dock windows (Annotation Window, Label Window, Image Window, Confidence Wind
     - Use the Feature Select Tool to click-to-query semantic similarity across images
     - Supports binary mode (single object) and multi-class mode (multiple classes)
 
+- **Active Learning**: Train on the annotations you have already confirmed, then let the
+  model propose more for you to review
+  - **Detect**: run rounds that train an object detector
+  - **Segment**: run rounds that train an instance segmentor
+    - Rounds send the same training parameters as the Train Model dialog; only the
+      model, epochs, image size and batch are adjustable per round
+    - Each task keeps its own round history
+    - Nothing is exported: training reads the project directly, so no dataset is written to disk
+    - **Setup** tab: what to train on and with what; **Session** tab: what each round produced
+    - Trains on **verified** annotations only; predictions always arrive unverified
+    - The Training Data table shows verified counts per label, where they land across the
+      splits, and how many predictions are still **Awaiting** your review
+    - Splits are fixed at 80/20 train/val and derived from each image path, so an image
+      never moves between them from one round to the next (which also means Refresh
+      cannot change a split). There is no test split: nothing in a round would read it
+    - **Image Budget** controls how many un-reviewed images each round predicts on
+    - **Disagreements** lists where the model confidently contradicts a label you confirmed;
+      double-click a row to open that image with the annotation selected
+    - After a round the Session tab says what it produced and what to do next;
+      **Review Predictions** filters the Image Window to images awaiting review
+    - The Image Window gains a **Needs Review** filter for images carrying
+      annotations nobody has confirmed yet
+    - **Deploy Model** loads the round's weights into the matching Deploy dialog
+
 ### Machine Learning
 
 - **Machine Learning**:
