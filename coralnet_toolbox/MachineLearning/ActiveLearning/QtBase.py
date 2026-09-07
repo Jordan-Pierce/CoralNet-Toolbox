@@ -64,6 +64,8 @@ import shutil
 import datetime
 import statistics
 
+import numpy as np
+
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QBrush, QColor, QFont
 from PyQt5.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,
@@ -75,6 +77,8 @@ from PyQt5.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboB
 from coralnet_toolbox import theme as app_theme
 
 from coralnet_toolbox.Common.QtThresholdsWidget import ThresholdsWidget
+
+from coralnet_toolbox.Features.FeatureMapCodec import load_feature_vector
 
 from coralnet_toolbox.MachineLearning import InPlaceTraining
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
@@ -399,11 +403,103 @@ KEEP_ROUND_WEIGHTS = 3
 # the project nobody had looked at yet.
 EXPLORE_SHARE = 0.75
 
+# Acquisition ranks by descriptor diversity only when this share of the images
+# it is choosing between actually carries a pooled descriptor.
+#
+# A partial bake is the dangerous case, not a missing one. With three baked
+# images in a project of six hundred, the diverse three would take the front of
+# every round's budget forever -- not because they are worth predicting on, but
+# because they are the only ones the ranking can see. Below the share the whole
+# pool falls back to the counting order, which at least ranks every image by the
+# same rule.
+DIVERSITY_MIN_SHARE = 0.5
+
+# The smallest set a farthest-point traversal says anything about. One vector
+# has no distances in it.
+DIVERSITY_MIN_VECTORS = 2
+
 # An object smaller than this after the image is resized to imgsz is not going
 # to be detected. Below it the session says so up front rather than letting the
 # user find out after five rounds that the loop cannot converge.
 MIN_OBJECT_PIXELS = 12
 
+
+
+class SessionResetPrompt(QDialog):
+    """What starting a new session costs, and what it can clear out.
+
+    A QMessageBox would have done for the question, but not for the two answers
+    that come with it: the weights on disk are a separate decision from the
+    session, and they default differently. This session's checkpoints may be the
+    model currently loaded in a Deploy dialog, so removing them is opt-in;
+    weights from a session that has already ended cannot be reached by anything
+    in the application, so removing them is the default.
+    """
+
+    def __init__(self, rounds, reviewed, mine, mine_count, stale, stale_count, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("New Session")
+        self.setWindowIcon(get_window_icon("coralnet.svg"))
+
+        layout = QVBoxLayout(self)
+
+        discarded = []
+        if rounds:
+            discarded.append(f"{rounds} round{'s' if rounds != 1 else ''} of history")
+        if reviewed:
+            discarded.append(f"the review state on {reviewed} image"
+                             f"{'s' if reviewed != 1 else ''}")
+        summary = ", ".join(discarded) if discarded else "nothing yet -- no rounds have run"
+
+        heading = QLabel(
+            f"<b>Start a new session?</b><br><br>"
+            f"Discards {summary}, and the best model this session produced.<br><br>"
+            f"Your annotations are untouched -- including predictions waiting for "
+            f"review and everything you have confirmed. Images you cleared as "
+            f"background stop counting as background, because that is a fact about "
+            f"this session rather than about the image.")
+        heading.setWordWrap(True)
+        layout.addWidget(heading)
+
+        self.mine_check = QCheckBox(
+            f"Also delete this session's checkpoints "
+            f"({mine_count} round folder{'s' if mine_count != 1 else ''}, "
+            f"{Base.as_megabytes(mine)})")
+        self.mine_check.setToolTip(
+            "Off by default: the best of these may be the model currently loaded in\n"
+            "a Deploy dialog, and it is the only copy.\n"
+            "results.csv and the plots are kept either way.")
+        self.mine_check.setChecked(False)
+        self.mine_check.setEnabled(bool(mine_count))
+        layout.addWidget(self.mine_check)
+
+        self.stale_check = QCheckBox(
+            f"Delete checkpoints left by earlier sessions "
+            f"({stale_count} round folder{'s' if stale_count != 1 else ''}, "
+            f"{Base.as_megabytes(stale)})")
+        self.stale_check.setToolTip(
+            "On by default: a session's round history dies with the session, so\n"
+            "nothing in the application can warm start from or deploy these weights\n"
+            "any more. They are simply taking up room.\n"
+            "results.csv and the plots are kept either way.")
+        self.stale_check.setChecked(bool(stale_count))
+        self.stale_check.setEnabled(bool(stale_count))
+        layout.addWidget(self.stale_check)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Cancel, self)
+        start_button = QPushButton("Start New Session")
+        buttons.addButton(start_button, QDialogButtonBox.AcceptRole)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def delete_mine(self):
+        """Whether this session's own checkpoints were opted in for deletion."""
+        return self.mine_check.isChecked() and self.mine_check.isEnabled()
+
+    def delete_stale(self):
+        """Whether the earlier sessions' checkpoints should go."""
+        return self.stale_check.isChecked() and self.stale_check.isEnabled()
 
 
 def bool_combo(default=True, tooltip=""):
@@ -475,6 +571,13 @@ class Base(QDialog):
         # that predicted on nothing can say what it skipped rather than leaving
         # the user to guess. The open image is the one that surprises people.
         self.last_skipped = {}
+
+        # How the last pass ranked its candidates: 'diversity' when the project
+        # carries pooled descriptors and k-center greedy decided the order,
+        # 'counts' when it fell back to annotation counts. Reported rather than
+        # asked for -- there is no knob, because a project with no descriptors
+        # has no choice to make.
+        self.last_acquisition = 'counts'
 
         # Per-label verified counts as of the last round, which is what the
         # automatic trigger measures against. Captured when a round starts, so
@@ -720,9 +823,15 @@ class Base(QDialog):
 
         self.warm_start_combo = bool_combo(
             True,
-            "Start each round from the weights the last one produced rather than from\n"
-            "scratch, which makes later rounds much cheaper.\n"
-            "Set to False to train from the selected model every round.")
+            "Start each round from the best weights any round has produced so far,\n"
+            "which makes later rounds much cheaper.\n"
+            "False trains from the model above every round. That is not training from\n"
+            "scratch: a .pt file is a COCO-pretrained checkpoint, so a cold round still\n"
+            "begins with a backbone that has seen a million photographs.\n"
+            "Either way, a round that scores worse than the best one is recorded and\n"
+            "set aside -- predictions and Deploy keep using the best model, not the\n"
+            "newest -- so a cold round can leave the application behaving exactly as\n"
+            "it did before.")
         layout.addRow("Warm Start:", self.warm_start_combo)
 
         self.free_gpu_combo = bool_combo(
@@ -941,6 +1050,9 @@ class Base(QDialog):
             "A round spends most of the budget on images with nothing on them and the\n"
             "rest on images you have already annotated, so it looks for new objects and\n"
             "checks itself where you are working.\n"
+            "Where the project has been baked for features, the images within each of\n"
+            "those groups are chosen to be as unalike as possible, so a budget of ten is\n"
+            "not spent on ten pictures of the same thing.\n"
             "Images already carrying predictions you have not reviewed are skipped, and\n"
             "so is the image open on the canvas.")
         layout.addRow("Image Budget:", self.budget_spinbox)
@@ -1428,6 +1540,21 @@ class Base(QDialog):
     def setup_buttons_layout(self):
         """The action row, outside the tabs so it never goes out of reach."""
         button_layout = QHBoxLayout()
+
+        # On the left, away from Train: it undoes a session rather than
+        # advancing one, and a destructive action next to the one the user
+        # presses every few minutes is a misclick waiting to happen.
+        self.new_session_button = QPushButton("New Session")
+        self.new_session_button.setToolTip(
+            "Forget this session's rounds and start over.\n"
+            "The round history, the best model and the review state on every image\n"
+            "are discarded. Your annotations -- including predictions you have\n"
+            "already confirmed -- are untouched.\n"
+            "Also where round folders left on disk can be cleared out.")
+        self.new_session_button.clicked.connect(self.new_session)
+        button_layout.addWidget(self.new_session_button)
+
+        button_layout.addSpacing(16)
 
         self.ready_label = QLabel("❌ Not Ready")
         self.ready_label.setToolTip("Whether a round can be started with the current selection.")
@@ -1946,6 +2073,7 @@ class Base(QDialog):
             self.ready_status = ready
             self.ready_label.setText("✅ Ready" if ready else f"❌ Not Ready - {reason}")
             self.train_button.setEnabled(ready and self.worker is None)
+            self.new_session_button.setEnabled(self.worker is None)
             self.maybe_auto_train()
 
         except Exception as e:
@@ -2387,14 +2515,16 @@ class Base(QDialog):
         self.epoch_bar.setRange(0, self.epochs_spinbox.value())
         self.epoch_bar.setValue(0)
         self.epoch_bar.setVisible(True)
+        source_note = self.model_source_note(model)
         self.progress_label.setText(
-            f"Round {round_number} starting on {dataset.image_count('train')} training images."
-            + (" " + warm_note if warm_note else ""))
+            f"Round {round_number} starting on {dataset.image_count('train')} training "
+            f"images. {source_note}" + (" " + warm_note if warm_note else ""))
         self.progress_label.setVisible(True)
         self.set_headline('running', f"Round {round_number} training")
         # The rounds fill in on the other tab, so send the user there to watch.
         self.tabs.setCurrentIndex(1)
         self.show_status(f"Active Learning: training round {round_number}...")
+        print(f"Active Learning: round {round_number}. {source_note}")
         if warm_note:
             print(f"Active Learning: {warm_note}")
 
@@ -2436,6 +2566,207 @@ class Base(QDialog):
             note = ("Warm start kept the backbone; the detection head was reset because "
                     "the label set grew.")
         return self.last_model_path, note
+
+    def model_source_note(self, model):
+        """One phrase naming what this round is about to train from.
+
+        A warm-started round and a cold one looked identical on screen, and
+        which of the two it was is the first thing worth knowing when reading
+        the metric it produces. Naming the file also makes it plain that a cold
+        round starts from a COCO-pretrained checkpoint rather than from nothing.
+        """
+        if self.last_model_path and model == self.last_model_path:
+            previous = self.best_round.get('round') if self.best_round else None
+            if previous is None:
+                return "Warm starting from the best round's weights."
+            return f"Warm starting from round {previous}'s weights."
+
+        return f"Training from {os.path.basename(str(model))}."
+
+    # ------------------------------------------------------------------
+    # Starting over
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def directory_size(directory):
+        """Bytes held under a directory; 0 if it is missing or unreadable."""
+        total = 0
+        for root, _dirs, files in os.walk(directory):
+            for name in files:
+                try:
+                    total += os.path.getsize(os.path.join(root, name))
+                except OSError:
+                    continue
+        return total
+
+    def session_run_dirs(self):
+        """The run directories this session has written, absolute."""
+        dirs = {entry['run_dir'] for entry in self.round_history if entry.get('run_dir')}
+        if self._pending and self._pending.get('run_dir'):
+            dirs.add(os.path.abspath(self._pending['run_dir']))
+        return dirs
+
+    def weights_on_disk(self, run_dirs):
+        """[(weights directory, bytes)] for the run directories that still hold any."""
+        found = []
+        for run_dir in sorted(run_dirs):
+            weights = os.path.join(run_dir, 'weights')
+            if not os.path.isdir(weights):
+                continue
+            size = self.directory_size(weights)
+            if size:
+                found.append((weights, size))
+        return found
+
+    def stale_round_weights(self):
+        """[(weights directory, bytes)] for rounds no session can reach any more.
+
+        A session is ephemeral by design, and its round history goes with it --
+        so weights from a session that has ended cannot be warm started from,
+        deployed, or even named by the dialog: nothing reads a run directory
+        back off disk. They are also the entire cost of keeping rounds around.
+        Measured on a real project: 10.9 MB of checkpoints against 3 MB of
+        results.csv and plots per round, and eight abandoned sessions had left
+        260 MB of weights nothing could ever load again.
+
+        That asymmetry is the policy. The sweep takes `weights/` and leaves the
+        run directory, because results.csv and the plots are what the plan says
+        survives a session and they cost almost nothing to keep.
+        """
+        root = self.runs_root()
+        if not os.path.isdir(root):
+            return []
+
+        mine = self.session_run_dirs()
+        candidates = []
+        for name in os.listdir(root):
+            run_dir = os.path.abspath(os.path.join(root, name))
+            if not name.startswith('round_') or not os.path.isdir(run_dir):
+                continue
+            if run_dir in mine:
+                continue
+            candidates.append(run_dir)
+
+        return self.weights_on_disk(candidates)
+
+    @staticmethod
+    def as_megabytes(size):
+        """A size in MB, for a sentence rather than a table."""
+        return f"{size / (1024 * 1024):.0f} MB"
+
+    def delete_weights(self, entries):
+        """Remove the weights directories in `entries`, returning what went.
+
+        Failures are reported and skipped rather than raised: a checkpoint held
+        open by something else is a reason to keep the other ones, not to
+        abandon the sweep.
+        """
+        removed = 0
+        freed = 0
+        for directory, size in entries:
+            try:
+                shutil.rmtree(directory)
+            except Exception as e:
+                print(f"Warning: could not delete {directory}: {e}")
+                continue
+            removed += 1
+            freed += size
+
+        for entry in self.round_history:
+            weights = entry.get('weights')
+            if weights and not os.path.isfile(weights):
+                entry['weights'] = None
+
+        return removed, freed
+
+    def reviewed_image_count(self):
+        """How many images carry a review state for this task."""
+        return sum(1 for _path, raster in self.image_rasters()
+                   if self.review_state(raster) is not None)
+
+    def new_session(self):
+        """Discard this session and start a fresh one, with the disk clean-up.
+
+        The dialog is built once per task on the MainWindow and re-shown, so
+        closing it never ended a session: the round counter, the best model and
+        every image's review state carried straight into what looked like a new
+        sitting. This is the seam that actually ends one.
+
+        The clean-up rides along here because this is the only moment the answer
+        to "which rounds no longer matter?" is knowable: the session that owned
+        them is the one being thrown away.
+        """
+        if self.worker is not None:
+            QMessageBox.information(
+                self, "Round Still Running",
+                "A round is training. Stop it before starting a new session.")
+            return
+
+        rounds = len(self.round_history)
+        reviewed = self.reviewed_image_count()
+        mine = self.weights_on_disk(self.session_run_dirs())
+        stale = self.stale_round_weights()
+
+        prompt = SessionResetPrompt(
+            rounds=rounds,
+            reviewed=reviewed,
+            mine=sum(size for _dir, size in mine),
+            mine_count=len(mine),
+            stale=sum(size for _dir, size in stale),
+            stale_count=len(stale),
+            parent=self)
+        if prompt.exec_() != QDialog.Accepted:
+            return
+
+        entries = []
+        if prompt.delete_mine():
+            entries += mine
+        if prompt.delete_stale():
+            entries += stale
+
+        removed, freed = self.delete_weights(entries)
+        self.reset_session()
+
+        message = "New session started."
+        if removed:
+            message += f" Freed {self.as_megabytes(freed)} from {removed} round folders."
+        self.show_status(f"Active Learning: {message}")
+        print(f"Active Learning: {message}")
+
+    def reset_session(self):
+        """Forget everything one sitting accumulated, and redraw.
+
+        Annotations are deliberately not touched -- not the predictions waiting
+        for review, and certainly not what the user has confirmed. What goes is
+        the session's own bookkeeping: the rounds, the model they produced, and
+        the per-image review state that says which images have been through the
+        loop.
+        """
+        self.round_history = []
+        self.best_round = None
+        self.last_model_path = None
+        self.last_round_outcome = None
+        self.last_predicted_images = []
+        self.predicted_ever = set()
+        self.last_skipped = {}
+        self.last_acquisition = 'counts'
+        self.baseline_counts = None
+        # The frozen class order goes too. It exists to keep round n+1's class
+        # indices lined up with round n's weights, and there are no weights now.
+        self.class_memory = []
+
+        for _image_path, raster in self.image_rasters():
+            states = getattr(raster, 'active_learning', None)
+            if isinstance(states, dict):
+                states.pop(self.task, None)
+
+        self.populate_history_table()
+        self.rerun_button.setEnabled(False)
+        self.epoch_bar.setVisible(False)
+        self.progress_label.setVisible(False)
+        self.refresh_dataset(quiet=False)
+        self.update_next_step()
+        self.update_status_message()
 
     def stop_round(self):
         """Ask the running round to end after the current epoch."""
@@ -3209,6 +3540,10 @@ class Base(QDialog):
 
         self.round_history.append({
             'round': pending['round'],
+            # The run directory, not just the weights inside it: pruning clears
+            # 'weights' and the housekeeping still has to know which folders on
+            # disk belong to this session.
+            'run_dir': os.path.abspath(pending['run_dir']),
             'train_images': dataset.image_count('train'),
             'background': dataset.negative_count('train'),
             'annotations': dataset.annotation_count('train'),
@@ -3437,10 +3772,18 @@ class Base(QDialog):
         then fewest annotations; then a stable hash, so the choice does not
         wander between rounds for no reason.
 
-        Ranking by distance from the labelled set in the Explorer's embedding
-        index would be better still, and is still not possible by default: that
-        index is keyed by annotation, and images with nothing on them -- exactly
-        the ones being ranked -- are not in it.
+        Within those tiers, when the project carries pooled per-image
+        descriptors, the order is decided by **k-center greedy** rather than by
+        annotation count: the image furthest from everything already covered
+        first, each pick joining the covered set. That is what stops a budget of
+        ten going on ten pictures of the same sand patch. It falls back to the
+        counting order silently when the descriptors are not there --- see
+        rank_by_diversity.
+
+        The Explorer's FAISS index is not what this reads, and cannot be: it is
+        keyed by annotation, and images with nothing on them -- exactly the ones
+        being ranked -- are not in it at all. The descriptors come from the
+        feature bake instead, one pooled [C] vector per image.
 
         :param budget: How many images to return at most.
         :param include_current: Whether the image open on the canvas may be
@@ -3456,12 +3799,19 @@ class Base(QDialog):
         skipped = {'open': 0, 'awaiting': 0, 'background': 0}
         untouched = []
         working = []
+        # Every annotated image, eligible or not: the set diversity measures
+        # distance *from*. An image excluded from this round still covers the
+        # part of the project it sits in.
+        covered_paths = []
         for image_path, raster in self.image_rasters():
+            annotations = self.annotation_window.get_image_annotations(image_path)
+            if annotations:
+                covered_paths.append(image_path)
+
             if current is not None and image_path == current:
                 skipped['open'] += 1
                 continue
 
-            annotations = self.annotation_window.get_image_annotations(image_path)
             unverified = sum(1 for a in annotations if not getattr(a, 'verified', True))
             if unverified:
                 # Already carrying work for the user; do not pile more on.
@@ -3482,6 +3832,9 @@ class Base(QDialog):
         untouched.sort()
         working.sort()
         self.last_skipped = skipped
+
+        untouched, working = self.rank_by_diversity(untouched, working,
+                                                    covered_paths, budget)
         return self.spend_budget(untouched, working, budget)
 
     @staticmethod
@@ -3501,6 +3854,236 @@ class Base(QDialog):
 
         chosen = untouched[:explore] + working[:exploit]
         return [entry[-1] for entry in chosen]
+
+    # ------------------------------------------------------------------
+    # Acquisition: diversity
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def image_descriptor(raster):
+        """The pooled [C] descriptor for one raster, or None if it has none.
+
+        `Raster.to_dict()` persists the feature map's path, model, stride and
+        dimension -- but not the pooled vector, so after a project reload the
+        descriptor exists only on disk. It is read back out of the sidecar it
+        was already saved in, which costs a few kilobytes of JSON rather than
+        the dense [h, w, C] array a full load_feature_map() would pull into
+        memory once per image in the project.
+
+        Cached back onto the raster, so a round pays for the read once.
+        """
+        if raster is None:
+            return None
+
+        vector = getattr(raster, 'feature_vector', None)
+        if vector is None:
+            path = getattr(raster, 'feature_map_path', None)
+            if not path:
+                return None
+            vector = load_feature_vector(path)
+            if vector is None:
+                return None
+            raster.feature_vector = vector
+
+        vector = np.asarray(vector, dtype=np.float32).ravel()
+        if vector.size == 0 or not np.isfinite(vector).all():
+            return None
+        return vector
+
+    def descriptors_for(self, paths):
+        """Pooled descriptors for `paths`, keyed by path, at one dimension.
+
+        Descriptors from two different backbones are not comparable, and a
+        project can be baked twice. Whichever dimension covers more images wins
+        and the rest are dropped: they then rank like an image with no
+        descriptor at all, which is a worse position than they deserve but an
+        honest one -- the alternative is a distance between two numbers that do
+        not mean the same thing.
+        """
+        found = {}
+        raster_manager = self.image_window.raster_manager
+        for image_path in paths:
+            vector = self.image_descriptor(raster_manager.get_raster(image_path))
+            if vector is not None:
+                found[image_path] = vector
+
+        if not found:
+            return found
+
+        counts = {}
+        for vector in found.values():
+            counts[vector.size] = counts.get(vector.size, 0) + 1
+        dim = max(counts, key=lambda size: (counts[size], size))
+        return {path: vector for path, vector in found.items() if vector.size == dim}
+
+    def rank_by_diversity(self, untouched, working, covered_paths, budget):
+        """Re-order both pools by descriptor diversity, or leave them as found.
+
+        Diversity is an upgrade to the ranking and never a requirement of it: a
+        project that has never been baked must behave exactly as it did before,
+        with no dialog, no error, and no minutes silently spent baking features
+        nobody asked for. Every early return here is that fallback.
+
+        :param covered_paths: Every annotated image in the project, whether or
+                              not this round may predict on it. An image
+                              excluded from the budget still covers the part of
+                              the project it sits in.
+        """
+        self.last_acquisition = 'counts'
+
+        candidates = [entry[-1] for entry in untouched] + [entry[-1] for entry in working]
+        if budget <= 0 or len(candidates) < DIVERSITY_MIN_VECTORS:
+            return untouched, working
+
+        vectors = self.descriptors_for(candidates)
+        if len(vectors) < max(DIVERSITY_MIN_VECTORS,
+                              DIVERSITY_MIN_SHARE * len(candidates)):
+            return untouched, working
+
+        dim = next(iter(vectors.values())).size
+        covered = [vector for vector in self.descriptors_for(covered_paths).values()
+                   if vector.size == dim]
+        covered = np.stack(covered) if covered else None
+
+        self.last_acquisition = 'diversity'
+        # The untouched pool is measured against the annotated set, because
+        # reaching the parts of the project nobody has covered is the whole
+        # point of it. The working pool *is* that set: measuring it against
+        # itself would make every distance zero, so it is spread out within
+        # itself instead, from its most typical image outwards.
+        return (self.diversify(untouched, vectors, covered, budget),
+                self.diversify(working, vectors, None, budget))
+
+    @staticmethod
+    def diversify(entries, vectors, covered, budget):
+        """Re-order one pool by k-center greedy, tier by tier.
+
+        The tiers are the pool's existing first sort key -- images no round has
+        predicted on come before ones that have -- and diversity re-orders
+        *within* them rather than across them. Both rules are about spending the
+        budget somewhere new; where they disagree the cheaper one wins, since an
+        image already predicted on this session has a result waiting no matter
+        how distinct it looks.
+
+        Entries whose image has no descriptor keep their counting order and go
+        behind the ranked ones in their tier. Picks made in an earlier tier join
+        the covered set, so a later tier is not ranked as though the budget were
+        still unspent.
+        """
+        if budget <= 0 or not entries:
+            return list(entries)
+
+        tiers = {}
+        for entry in entries:
+            tiers.setdefault(entry[0], []).append(entry)
+
+        ordered = []
+        remaining = budget
+        for tier in sorted(tiers):
+            tier_entries = tiers[tier]
+            described = [entry for entry in tier_entries if entry[-1] in vectors]
+
+            if remaining > 0 and len(described) >= DIVERSITY_MIN_VECTORS:
+                matrix = np.stack([vectors[entry[-1]] for entry in described])
+                picked = Base.kcenter_greedy(matrix, covered, remaining)
+                taken = set(picked)
+                tier_order = ([described[index] for index in picked]
+                              + [entry for index, entry in enumerate(described)
+                                 if index not in taken]
+                              + [entry for entry in tier_entries if entry[-1] not in vectors])
+            else:
+                # One descriptor is not a ranking, and neither is a spent
+                # budget. The tier keeps the order it arrived in rather than
+                # being shuffled by which of its images happen to be baked.
+                tier_order = list(tier_entries)
+
+            # Whatever this tier is about to spend covers the part of the
+            # project it sits in, ranked or not: a later tier that ignored it
+            # would send the rest of the budget straight back to the same place.
+            spent = [vectors[entry[-1]] for entry in tier_order[:max(remaining, 0)]
+                     if entry[-1] in vectors]
+            if spent:
+                block = np.stack(spent)
+                covered = block if covered is None else np.concatenate([covered, block])
+
+            remaining -= len(tier_order)
+            ordered.extend(tier_order)
+
+        return ordered
+
+    @staticmethod
+    def kcenter_greedy(vectors, covered, k):
+        """Farthest-point traversal over `vectors`, returning row indices.
+
+        The classic diversity acquisition: repeatedly take the row furthest from
+        everything covered so far, each pick joining the covered set. O(k x n)
+        distances, which at project scale is milliseconds of numpy and needs no
+        index -- see the plan's note on why FAISS is not reached for here.
+
+        :param covered: Rows already accounted for, or None. With none, the
+                        first pick is the pool's medoid: the most typical image
+                        rather than the strangest, which is where a maximum over
+                        an empty covered set lands and is usually a blurred
+                        frame or a hand in the shot.
+        """
+        vectors = np.asarray(vectors, dtype=np.float32)
+        count = len(vectors)
+        if k <= 0 or count == 0:
+            return []
+        k = min(k, count)
+
+        if covered is None or len(covered) == 0:
+            centre = vectors.mean(axis=0, keepdims=True)
+            first = int(np.argmin(Base.min_square_distance(vectors, centre)))
+            running = np.full(count, np.inf, dtype=np.float32)
+        else:
+            running = Base.min_square_distance(vectors, covered)
+            first = int(np.argmax(running))
+
+        picked = [first]
+        running = np.minimum(
+            running, Base.min_square_distance(vectors, vectors[first:first + 1]))
+
+        while len(picked) < k:
+            # Excluded explicitly rather than by trusting a picked row's
+            # distance to itself to be zero: two identical images could
+            # otherwise take each other's place forever.
+            running[picked] = -1.0
+            nearest = int(np.argmax(running))
+            if running[nearest] < 0.0:
+                break
+            picked.append(nearest)
+            running = np.minimum(
+                running, Base.min_square_distance(vectors, vectors[nearest:nearest + 1]))
+
+        return picked
+
+    @staticmethod
+    def min_square_distance(vectors, others, chunk=1024):
+        """Squared distance from each row of `vectors` to its nearest row of `others`.
+
+        Chunked over `others` and expanded as |a|^2 - 2a.b + |b|^2, so the work
+        is one matmul per block rather than the n x m x C broadcast a project of
+        ten thousand images cannot hold.
+        """
+        vectors = np.asarray(vectors, dtype=np.float32)
+        others = np.asarray(others, dtype=np.float32)
+        if others.ndim == 1:
+            others = others[None, :]
+
+        best = np.full(len(vectors), np.inf, dtype=np.float32)
+        if others.size == 0 or len(vectors) == 0:
+            return best
+
+        squared = (vectors ** 2).sum(axis=1)[:, None]
+        for start in range(0, len(others), chunk):
+            block = others[start:start + chunk]
+            distances = squared - 2.0 * (vectors @ block.T) + (block ** 2).sum(axis=1)[None, :]
+            best = np.minimum(best, distances.min(axis=1))
+
+        # Floating point can put an identical pair slightly below zero, and a
+        # negative distance reads as "already picked" to kcenter_greedy.
+        return np.maximum(best, 0.0)
 
     @property
     def trained_labels(self):

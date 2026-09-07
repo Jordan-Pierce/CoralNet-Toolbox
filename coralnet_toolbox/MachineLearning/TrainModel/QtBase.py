@@ -414,8 +414,11 @@ class TrainModelWorker(QThread):
             for event, callback in callbacks.items():
                 self.model.add_callback(event, callback)
 
-            # Added after the reporting callbacks so a stop request is honoured
-            # once this epoch's metrics have already been emitted.
+            # on_train_epoch_end, which fires before validation: the trainer
+            # reads `stop` after validating, so the epoch still validates,
+            # reports through on_fit_epoch_end and saves before the loop exits.
+            # A stopped round therefore still produces best.pt and a full
+            # results.csv row rather than half of one.
             self.model.add_callback('on_train_epoch_end', self._stop_if_requested)
 
             # Train the model
@@ -640,8 +643,13 @@ class Base(QDialog):
         group_box = QGroupBox("Model Selection")
         layout = QVBoxLayout()
 
-        # Create tabbed widget
+        # Held on the dialog because the visible tab is what decides which model
+        # trains. The dialog is long-lived -- one per task on the MainWindow,
+        # re-shown rather than rebuilt -- so both fields keep whatever was last
+        # put in them, and "whichever field is non-empty" cannot tell the two
+        # apart. See selected_model().
         tab_widget = QTabWidget()
+        self.model_tabs = tab_widget
 
         # Tab 1: Select model from dropdown
         model_select_tab = QWidget()
@@ -650,10 +658,13 @@ class Base(QDialog):
         # Model combo box
         self.model_combo = QComboBox()
         self.load_model_combobox()
-        self.model_combo.setToolTip("Select a pre-trained base model to train from.\nLarger models (e.g., YOLOv8x) are more accurate but slower.")
+        self.model_combo.setToolTip(
+            "Select a pre-trained base model to train from.\n"
+            "Larger models (e.g., YOLOv8x) are more accurate but slower.\n"
+            "Used while this tab is the one selected, whatever the other tab holds.")
         model_select_layout.addRow("Model:", self.model_combo)
 
-        tab_widget.addTab(model_select_tab, "Select Model")
+        self.model_combo_tab_index = tab_widget.addTab(model_select_tab, "Select Model")
 
         # Tab 2: Use existing model
         model_existing_tab = QWidget()
@@ -663,14 +674,18 @@ class Base(QDialog):
         self.model_edit = QLineEdit()
         self.model_button = QPushButton("Browse...")
         self.model_button.clicked.connect(self.browse_model_file)
-        self.model_edit.setToolTip("Path to a previously trained model file (.pt or .onnx).\nUseful for fine-tuning or continuing interrupted training.")
+        self.model_edit.setToolTip(
+            "Path to a previously trained model file (.pt or .onnx).\n"
+            "Useful for fine-tuning or continuing interrupted training.\n"
+            "Used only while this tab is the one selected, and training from it\n"
+            "lowers the learning rate and skips warmup.")
         self.model_button.setToolTip("Open file browser to select a model file.")
         model_layout = QHBoxLayout()
         model_layout.addWidget(self.model_edit)
         model_layout.addWidget(self.model_button)
         model_existing_layout.addRow("Existing Model:", model_layout)
 
-        tab_widget.addTab(model_existing_tab, "Use Existing Model")
+        self.model_existing_tab_index = tab_widget.addTab(model_existing_tab, "Use Existing Model")
 
         layout.addWidget(tab_widget)
         group_box.setLayout(layout)
@@ -1013,6 +1028,28 @@ class Base(QDialog):
     def load_model_combobox(self):
         raise NotImplementedError("Subclasses must implement this method.")
 
+    def selected_model(self):
+        """Return (model, from_existing) for the tab the user is actually on.
+
+        The tab is the answer, not "is the Existing Model box non-empty". This
+        dialog lives for as long as the application does -- MainWindow builds one
+        per task and re-shows it -- so a path browsed once stayed in the box for
+        every later run. Reading the box first meant that path silently won over
+        the model dropdown even with the dropdown's tab in front of the user,
+        and quietly brought fine-tuning defaults (AdamW, lr0 0.0005, no warmup)
+        with it. Switching back to Select Model is now enough to undo it.
+
+        Returns:
+            tuple: (model name or path, True when it came from Existing Model)
+        """
+        existing = self.model_edit.text().strip()
+        on_existing_tab = self.model_tabs.currentIndex() == self.model_existing_tab_index
+
+        if on_existing_tab and existing:
+            return existing, True
+
+        return self.model_combo.currentText(), False
+
     def _autofill_output_fields(self, dataset_root):
         """
         Auto-fill the Project and Name fields from the selected dataset's location,
@@ -1343,14 +1380,22 @@ class Base(QDialog):
         now = datetime.datetime.now()
         now = now.strftime("%Y-%m-%d_%H-%M-%S")
         params['name'] = params['name'] if params['name'] else now
-        # Either the model path, or the model name provided from combo box
-        params['model'] = self.model_edit.text() if self.model_edit.text() else self.model_combo.currentText()
-        
-        # If using an existing model, set specific parameters
-        if self.model_edit.text():
+        # Either the model path from the Existing Model tab, or the model name
+        # from the dropdown -- whichever tab is in front of the user.
+        params['model'], from_existing = self.selected_model()
+
+        # Continuing from trained weights wants a gentler schedule than starting
+        # from a pretrained checkpoint: no warmup, a small learning rate.
+        if from_existing:
             params['warmup_epochs'] = 0
             params['lr0'] = 0.0005
-            params['optimizer'] = 'AdamW'
+            # Only when the optimizer was left on 'auto'. Overriding an explicit
+            # choice meant the dialog trained with an optimizer other than the
+            # one on screen, with nothing said about it.
+            if params.get('optimizer') == 'auto':
+                params['optimizer'] = 'AdamW'
+            print(f"Note: fine-tuning from {params['model']} "
+                  f"(warmup_epochs=0, lr0={params['lr0']}, optimizer={params['optimizer']}).")
     
         # Add custom parameters (allows overriding the above parameters)
         for param_info in self.custom_params:

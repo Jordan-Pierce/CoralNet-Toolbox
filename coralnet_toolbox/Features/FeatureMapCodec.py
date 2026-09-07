@@ -116,6 +116,35 @@ def load_feature_map(npy_path: str) -> Dict[str, Any]:
     }
 
 
+def load_feature_vector(npy_path: str):
+    """
+    Load only the pooled [C] descriptor for a feature map, without its dense array.
+
+    The vector lives in the .json sidecar, so reading it costs a few kilobytes
+    while load_feature_map() pulls the whole [h, w, C] map into memory. A caller
+    that ranks every image in a project by descriptor -- Active Learning's
+    acquisition pass -- would otherwise load an entire project's dense maps to
+    read one row of metadata each.
+
+    Returns None when the sidecar is missing, unreadable, or carries no
+    feature_vector: the descriptor is optional and its absence is not an error.
+    """
+    npy_path = os.fspath(npy_path)
+    json_path = os.path.splitext(npy_path)[0] + ".json"
+
+    try:
+        with open(json_path, "r") as f:
+            metadata = json.load(f)
+    except (OSError, ValueError):
+        return None
+
+    values = metadata.get("feature_vector")
+    if values is None or len(values) == 0:
+        return None
+
+    return np.array(values, dtype=np.float16)
+
+
 class FeatureMapLRU:
     """
     Bounded, thread-safe cache of decompressed feature maps, keyed by .npy path.
