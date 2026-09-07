@@ -48,6 +48,23 @@ import yaml
 import ultralytics.data.build as detection_build
 from ultralytics.data.dataset import YOLODataset
 
+# RT-DETR does not build its dataset through ultralytics.data.build: its trainer
+# and validator each construct RTDETRDataset directly, by a name imported into
+# their own module. Patching build.YOLODataset therefore never reaches it, and a
+# round on rtdetr-l.pt read the empty sentinel directory instead of the project
+# and died with "No images found in __project_train__". These modules are the
+# ones that have to be patched, so they are imported here rather than reached
+# for at install time.
+try:
+    import ultralytics.models.rtdetr.train as rtdetr_train
+    import ultralytics.models.rtdetr.val as rtdetr_val
+    from ultralytics.models.rtdetr.val import RTDETRDataset
+except Exception as _rtdetr_error:  # pragma: no cover - depends on the install
+    rtdetr_train = None
+    rtdetr_val = None
+    RTDETRDataset = None
+    print(f"Note: RT-DETR in-place training unavailable in this Ultralytics: {_rtdetr_error}")
+
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
@@ -205,8 +222,14 @@ def group_images_by_split(image_paths, train_ratio, val_ratio, overrides=None):
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class InMemoryYOLODataset(YOLODataset):
-    """A YOLODataset whose images and labels come from a registry.
+class InMemoryRecords:
+    """Images and labels served from a registry instead of from a directory.
+
+    A mixin rather than a base class, because two unrelated dataset families
+    need it: YOLODataset, which Ultralytics builds through
+    ultralytics.data.build, and RTDETRDataset, which the RT-DETR trainer
+    constructs itself. Both end up with the same two overrides in front of
+    whatever else they do.
 
     The registry is a class attribute rather than a constructor argument because
     build_yolo_dataset() constructs the dataset itself with a fixed keyword set,
@@ -219,11 +242,15 @@ class InMemoryYOLODataset(YOLODataset):
 
     @classmethod
     def register(cls, key, records):
-        cls.REGISTRY[key] = records
+        # Written on this class explicitly, never on the subclass the caller
+        # happened to use: every in-memory dataset reads one registry, and
+        # `cls.REGISTRY[key] = ...` on a subclass that had rebound it would
+        # leave the other family looking at an empty one.
+        InMemoryRecords.REGISTRY[key] = records
 
     @classmethod
     def reset(cls):
-        cls.REGISTRY = {}
+        InMemoryRecords.REGISTRY = {}
 
     @staticmethod
     def split_key(img_path):
@@ -263,6 +290,10 @@ class InMemoryYOLODataset(YOLODataset):
         return labels
 
 
+class InMemoryYOLODataset(InMemoryRecords, YOLODataset):
+    """The in-memory records in front of Ultralytics' own YOLO dataset."""
+
+
 class WeightedInMemoryDataset(InMemoryYOLODataset, WeightedInstanceDataset):
     """In-memory labels plus weighted sampling.
 
@@ -271,6 +302,38 @@ class WeightedInMemoryDataset(InMemoryYOLODataset, WeightedInstanceDataset):
     get_img_files / get_labels, and WeightedInstanceDataset.__init__ then
     computes its sampling probabilities from the labels it finds already there.
     """
+
+
+if RTDETRDataset is None:
+    InMemoryRTDETRDataset = None
+    WeightedInMemoryRTDETRDataset = None
+else:
+    class InMemoryRTDETRDataset(InMemoryRecords, RTDETRDataset):
+        """The same records, wearing RT-DETR's dataset.
+
+        RTDETRDataset subclasses YOLODataset and changes how images are loaded
+        and transformed; only get_img_files and get_labels are taken from the
+        mixin, so everything RT-DETR does differently still happens.
+        """
+
+    class WeightedInMemoryRTDETRDataset(InMemoryRecords, WeightedInstanceDataset, RTDETRDataset):
+        """In-memory records, weighted sampling, RT-DETR loading.
+
+        The method resolution order carries all three: the mixin answers for
+        the labels, WeightedInstanceDataset.__init__ computes its sampling
+        probabilities from them, and its super() call lands on RTDETRDataset
+        rather than on YOLODataset, so RT-DETR's own setup still runs.
+        """
+
+
+def rtdetr_in_place_supported():
+    """Whether an RT-DETR model can be trained in place with this Ultralytics."""
+    return RTDETRDataset is not None and rtdetr_train is not None and rtdetr_val is not None
+
+
+def is_rtdetr_model(model):
+    """Whether `model` names an RT-DETR checkpoint or config."""
+    return os.path.basename(str(model)).lower().startswith('rtdetr')
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -532,13 +595,30 @@ class InPlaceDataset:
         return self.yaml_path
 
     def install(self, weighted=False):
-        """Register the records and swap in the dataset class."""
-        InMemoryYOLODataset.reset()
+        """Register the records and swap in the dataset class.
+
+        Two families, because two of them build datasets by name: YOLO reaches
+        ultralytics.data.build.YOLODataset, and RT-DETR's trainer and validator
+        each construct RTDETRDataset out of their own module namespace. Patching
+        only the first left an RT-DETR round reading the empty sentinel
+        directory, which is the "No images found in __project_train__" failure.
+        """
+        InMemoryRecords.reset()
         for split, records in self.records_by_split.items():
-            InMemoryYOLODataset.register(SPLIT_SENTINELS[split], records)
+            InMemoryRecords.register(SPLIT_SENTINELS[split], records)
 
         self._original_dataset = detection_build.YOLODataset
         detection_build.YOLODataset = WeightedInMemoryDataset if weighted else InMemoryYOLODataset
+
+        # (module, attribute name, what it held) so remove() puts back exactly
+        # what was there rather than what this module imported at start-up.
+        self._original_rtdetr = []
+        if rtdetr_in_place_supported():
+            replacement = WeightedInMemoryRTDETRDataset if weighted else InMemoryRTDETRDataset
+            for module in (rtdetr_train, rtdetr_val):
+                self._original_rtdetr.append((module, getattr(module, 'RTDETRDataset', None)))
+                module.RTDETRDataset = replacement
+
         self._installed = True
 
     def remove(self):
@@ -546,9 +626,13 @@ class InPlaceDataset:
         if self._installed:
             detection_build.YOLODataset = self._original_dataset
             self._original_dataset = None
+            for module, original in getattr(self, '_original_rtdetr', []):
+                if original is not None:
+                    module.RTDETRDataset = original
+            self._original_rtdetr = []
             self._installed = False
 
-        InMemoryYOLODataset.reset()
+        InMemoryRecords.reset()
 
         if self.root and os.path.isdir(self.root):
             try:

@@ -389,6 +389,11 @@ HISTORY_HEADERS = ["Round", "Train Images", "Background", "Annotations",
 REVIEW_PENDING = 'pending'
 REVIEW_REVIEWED = 'reviewed'
 
+# Round directories live under the launch directory's .cache, beside the
+# Explorer's embedding cache and in-place training's scaffolding. They are
+# derived data -- rebuildable, and nothing anybody opens by hand.
+RUNS_SUBDIR = 'active_learning'
+
 # Weights are kept for the most recent rounds only. Every round writes a full
 # Ultralytics run directory; ten rounds of a nano model is a few hundred MB of
 # checkpoints nobody will open again, and nothing pruned them.
@@ -1625,23 +1630,27 @@ class Base(QDialog):
     def project_root(self):
         """The directory a session writes its runs and scaffolding under.
 
-        Anchored to the open project rather than the process working directory.
-        `abspath` on a relative path only fixed the Ultralytics-nesting bug --
-        it still resolves against wherever the application happened to be
-        launched from, so the same project would scatter its rounds across the
-        disk depending on how it was started, and a restored round history would
-        point at weights that are not there.
+        The launch directory, which is where the rest of the application keeps
+        its generated data: the Explorer's embeddings are in `.cache/embedding`
+        and in-place training's scaffolding in `.cache/in_place_training`, both
+        resolved the same way. A session's rounds are the same kind of thing --
+        derived, rebuildable, and nothing a user opens by hand -- so they sit
+        beside them rather than in a `Data/` folder next to the project file.
+
+        This did anchor to the open project, to stop the same project
+        scattering rounds across the disk depending on where the application was
+        launched from. That cost is now smaller than it looks: a session is
+        ephemeral, so no round history is ever restored from disk, and a folder
+        left under a previous working directory costs disk rather than
+        correctness. What it buys is one place to look, and one place to clear.
         """
-        path = getattr(self.main_window, 'current_project_path', '') or ''
-        if path:
-            directory = os.path.dirname(os.path.abspath(path))
-            if os.path.isdir(directory):
-                return directory
         return os.path.abspath(os.getcwd())
 
     def runs_root(self):
         """Where this session's Ultralytics run directories go."""
-        return os.path.join(self.project_root(), 'Data', 'ActiveLearning')
+        return os.path.join(self.project_root(),
+                            InPlaceTraining.CACHE_BASE,
+                            RUNS_SUBDIR)
 
     def cache_root(self):
         """Where the generated yaml and its empty split directories go."""
@@ -2822,9 +2831,9 @@ class Base(QDialog):
             # Absolute, and anchored to the project rather than to the working
             # directory. Ultralytics resolves a relative `project` under its own
             # runs directory -- the round would land in
-            # runs/detect/Data/ActiveLearning/... while everything here looked
-            # in Data/ActiveLearning/..., so results.csv and best.pt were never
-            # found and the whole post-round chain silently did nothing.
+            # runs/detect/.cache/active_learning/... while everything here
+            # looked in .cache/active_learning/..., so results.csv and best.pt
+            # were never found and the whole post-round chain did nothing.
             'project': os.path.abspath(self.runs_root()),
             'name': run_name,
             'epochs': self.epochs_spinbox.value(),

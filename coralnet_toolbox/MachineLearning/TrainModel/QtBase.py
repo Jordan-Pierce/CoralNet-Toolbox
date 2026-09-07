@@ -565,6 +565,14 @@ class Base(QDialog):
         self.is_optimizing = False
         self.exported_model_path = None
 
+        # The run this dialog started, if it is still going. The dialog closes
+        # as soon as training begins -- it is modal, and holding the application
+        # hostage for the length of a run would be worse -- but the object lives
+        # on the MainWindow, so reopening it from the menu comes back to this
+        # same instance with its worker still attached. That is what makes Stop
+        # reachable at all.
+        self.worker = None
+
         # Task specific parameters
         self.imgsz = 640
         self.batch = 4
@@ -1018,6 +1026,20 @@ class Base(QDialog):
         self.buttons.setToolTip("Start training with the configured parameters.\nTraining will run in the background.")
         button_layout.addWidget(self.buttons)
 
+        # Ultralytics checks `trainer.stop` at the end of every epoch, so a
+        # stopped run still validates, saves best.pt and writes results.csv --
+        # it becomes a short run rather than a lost one. Killing the thread
+        # instead would leave the patched dataset class installed.
+        self.stop_button = QPushButton("Stop Training")
+        self.stop_button.clicked.connect(self.stop_training)
+        self.stop_button.setEnabled(False)
+        self.stop_button.setToolTip(
+            "End the running training after the current epoch.\n"
+            "What has been trained so far is still saved, so a stopped run is a short\n"
+            "run rather than a lost one.\n"
+            "Enabled only while a run this dialog started is still going.")
+        button_layout.addWidget(self.stop_button)
+
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.reject)
         self.cancel_button.setToolTip("Close this dialog without starting training.")
@@ -1027,6 +1049,44 @@ class Base(QDialog):
 
     def load_model_combobox(self):
         raise NotImplementedError("Subclasses must implement this method.")
+
+    def training_is_running(self):
+        """Whether a run this dialog started is still going."""
+        return self.worker is not None and self.worker.isRunning()
+
+    def sync_training_buttons(self):
+        """OK starts a run; Stop ends one. Never both at once.
+
+        Called on every transition rather than set at each call site, because
+        the dialog can be reopened in the middle of a run and has to arrive in
+        the right state -- which is the only way Stop is reached.
+        """
+        running = self.training_is_running()
+        self.buttons.setEnabled(not running)
+        self.buttons.setText("Training..." if running else "OK")
+        stoppable = running and not getattr(self.worker, '_stop_requested', False)
+        self.stop_button.setEnabled(stoppable)
+        self.stop_button.setText("Stopping..." if running and not stoppable else "Stop Training")
+
+    def stop_training(self):
+        """Ask the running training to end cleanly after the current epoch."""
+        if not self.training_is_running():
+            self.sync_training_buttons()
+            return
+
+        self.worker.request_stop()
+        self.sync_training_buttons()
+
+        message = ("Stopping after the current epoch. The model trained so far is still "
+                   "saved.")
+        print(f"Note: {message}")
+        if hasattr(self.main_window, 'statusBar'):
+            self.main_window.statusBar().showMessage(message, 10000)
+
+    def showEvent(self, event):
+        """Arrive in the right state, whether or not a run is going."""
+        super().showEvent(event)
+        self.sync_training_buttons()
 
     def selected_model(self):
         """Return (model, from_existing) for the tab the user is actually on.
@@ -1336,6 +1396,18 @@ class Base(QDialog):
         """
         Handle the OK button click event.
         """
+        # A second run started on top of the first would fight it for the GPU and
+        # for the patched dataset class, and only one of them could write to the
+        # output folder. The dialog is reopened mid-run to reach Stop, so this is
+        # a button somebody will press.
+        if self.training_is_running():
+            QMessageBox.information(
+                self, "Training In Progress",
+                "A training run started from this dialog is still going.\n\n"
+                "Wait for it to finish, or press Stop Training to end it after the "
+                "current epoch.")
+            return
+
         self.train_model()
         # Close the dialog immediately after starting training so the UI is free.
         # The training continues in a background thread and will emit completion/error signals.
@@ -1432,7 +1504,8 @@ class Base(QDialog):
         # Get training parameters
         self.params = self.get_parameters()
 
-        # Create and start the worker thread
+        # Create and start the worker thread. Held on the dialog so Stop can
+        # reach it after the dialog has closed and been reopened.
         self.worker = TrainModelWorker(self.params, self.main_window.device)
         self.worker.training_started.connect(self.on_training_started)
         self.worker.training_completed.connect(self.on_training_completed)
@@ -1440,6 +1513,7 @@ class Base(QDialog):
         self.worker.training_status.connect(self.on_training_status)
         self.worker.epoch_completed.connect(self.on_epoch_completed)
         self.worker.start()
+        self.sync_training_buttons()
 
     def on_training_started(self):
         """
@@ -1479,7 +1553,10 @@ class Base(QDialog):
             with open(f"{output_dir_path}/class_mapping.json", 'w') as json_file:
                 json.dump(mapping_to_save, json_file, indent=4)
 
-        message = "Model training has commenced.\nMonitor the console for real-time progress."
+        message = ("Model training has commenced.\n"
+                   "Monitor the console for real-time progress.\n\n"
+                   "To stop it early, reopen this dialog and press Stop Training: the "
+                   "model trained so far is kept.")
         QMessageBox.information(self, "Model Training Status", message)
         
     def on_training_error(self, error_message):
@@ -1489,6 +1566,7 @@ class Base(QDialog):
         Args:
             error_message (str): The error message.
         """
+        self.release_worker()
         QMessageBox.critical(self, "Error", error_message)
         print(error_message)
     
@@ -1525,10 +1603,16 @@ class Base(QDialog):
         if hasattr(self.main_window, 'statusBar'):
             self.main_window.statusBar().showMessage(message, 5000)
 
+    def release_worker(self):
+        """Let go of a finished run and put the buttons back."""
+        self.worker = None
+        self.sync_training_buttons()
+
     def on_training_completed(self):
         """
         Handle the event when the training completes.
         """
+        self.release_worker()
         msg_box = QMessageBox(self)
         msg_box.setWindowTitle("Model Training Status")
         msg_box.setText("Model training has successfully been completed.")
