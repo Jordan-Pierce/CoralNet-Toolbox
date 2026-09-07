@@ -223,6 +223,28 @@ class TrainModelWorker(QThread):
         # Set when training reads straight from the project instead of a
         # dataset on disk; owns the patched dataset class and its scaffolding.
         self.in_place_dataset = None
+        # Set by request_stop(); read at the end of each epoch. A round is
+        # minutes long, and abandoning one has to be possible without killing
+        # the application.
+        self._stop_requested = False
+
+    def request_stop(self):
+        """Ask training to end cleanly after the current epoch.
+
+        Ultralytics' own early stopping sets ``trainer.stop``, and the trainer
+        checks it at the end of every epoch, saves, and exits the loop -- so a
+        stopped round still produces best.pt and results.csv. Killing the thread
+        instead would leave the patched dataset class installed.
+        """
+        self._stop_requested = True
+
+    def _stop_if_requested(self, trainer):
+        """Callback: end the run if request_stop() was called."""
+        if self._stop_requested:
+            try:
+                trainer.stop = True
+            except Exception:
+                pass
 
     def pre_run(self):
         """
@@ -391,6 +413,10 @@ class TrainModelWorker(QThread):
             callbacks = create_training_callbacks(signal_emitter)
             for event, callback in callbacks.items():
                 self.model.add_callback(event, callback)
+
+            # Added after the reporting callbacks so a stop request is honoured
+            # once this epoch's metrics have already been emitted.
+            self.model.add_callback('on_train_epoch_end', self._stop_if_requested)
 
             # Train the model
             self.model.train(**self.params, device=self.device)

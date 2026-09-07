@@ -127,6 +127,22 @@ class Raster(QObject):
         # pinned by hand is stored here.
         self.split_override = None
 
+        # Active Learning review state, per task ('detect' / 'segment').
+        #
+        # 'pending'  -- a round put predictions on this image; a person has not
+        #               finished with them yet.
+        # 'reviewed' -- a person has been through it. If it then carries no
+        #               verified annotations for that task, that is a real
+        #               negative and the image trains as background, which is
+        #               the only way deleting a false positive teaches anything.
+        #
+        # Deliberately NOT persisted, unlike split_override beside it. This
+        # describes what happened during one Active Learning session rather than
+        # anything about the image, and writing it into the project file would
+        # make a mistaken "reviewed" permanent -- an image quietly training as
+        # empty in every future session, with nothing on screen to explain why.
+        self.active_learning = {}
+
         # UI state and table information
         self.checkbox_state = False
         self.row_in_table = -1

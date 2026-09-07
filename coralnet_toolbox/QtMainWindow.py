@@ -3544,6 +3544,14 @@ class MainWindow(QMainWindow):
         Each task has its own dialog, and so its own round history: a detection
         session and a segmentation session are separate experiments and should
         not share a scoreboard.
+
+        Modeless, unlike almost every other dialog here, and that is the whole
+        design rather than a preference. The loop is annotate -> train ->
+        predict -> review -> annotate: Review Predictions opens an image on the
+        canvas, the disagreement queue selects annotations on it, and the review
+        controls act on what is in front of the user. Behind a modal dialog none
+        of that is reachable, so the session would have to be closed and
+        reopened between every step.
         """
         if not self.image_window.raster_manager.image_paths:
             QMessageBox.warning(self,
@@ -3553,7 +3561,16 @@ class MainWindow(QMainWindow):
 
         try:
             self.untoggle_all_tools()
-            dialog.exec_()
+            dialog.setModal(False)
+            # A session the user minimized to get it out of the way is reopened
+            # by this menu item, and show() alone leaves a minimized window
+            # minimized: it is already visible as far as Qt is concerned.
+            dialog.setWindowState((dialog.windowState() & ~Qt.WindowMinimized)
+                                  | Qt.WindowActive)
+            dialog.show()
+            # Bring an already-open session forward rather than opening a second.
+            dialog.raise_()
+            dialog.activateWindow()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"An error occurred: {e}")
 

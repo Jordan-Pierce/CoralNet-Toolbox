@@ -348,7 +348,8 @@ def _bbox_from_polygon(values):
     ]
 
 
-def build_records(image_paths, annotations_by_image, label_to_index, task, dimensions_for):
+def build_records(image_paths, annotations_by_image, label_to_index, task, dimensions_for,
+                  negatives=()):
     """Build Ultralytics label dicts for one split.
 
     The geometry conversion is delegated to the annotations' own
@@ -356,24 +357,34 @@ def build_records(image_paths, annotations_by_image, label_to_index, task, dimen
     path uses -- so an in-place dataset and an exported one describe identical
     objects, and any future fix to that conversion reaches both.
 
+    An image in `negatives` produces a record with zero objects rather than
+    being skipped. That is not a detail: an image a person reviewed and cleared
+    of false positives is the only evidence the model gets that it was wrong
+    there, and dropping it -- which is what happens to any image with no
+    annotations -- throws that correction away. Ultralytics trains happily on
+    zero-object labels; they are its background images.
+
     Args:
         image_paths (list): Images in this split, in order.
         annotations_by_image (dict): image path -> list of annotations.
         label_to_index (dict): short_label_code -> class index.
         task (str): 'detect' or 'segment'.
         dimensions_for (callable): image path -> (height, width).
+        negatives (collection): Paths allowed to produce an empty record.
 
     Returns:
-        list: One label dict per image that produced at least one object, in the
-            format pinned by tests/active_learning (im_file, shape, cls, bboxes,
-            segments, keypoints, normalized, bbox_format).
+        list: One label dict per image that produced at least one object -- or
+            that is a confirmed negative -- in the format pinned by
+            tests/active_learning (im_file, shape, cls, bboxes, segments,
+            keypoints, normalized, bbox_format).
     """
     allowed_types = TASK_ANNOTATION_TYPES[task]
+    negatives = set(negatives)
     records = []
 
     for image_path in image_paths:
         annotations = annotations_by_image.get(image_path, [])
-        if not annotations:
+        if not annotations and image_path not in negatives:
             continue
 
         try:
@@ -408,7 +419,7 @@ def build_records(image_paths, annotations_by_image, label_to_index, task, dimen
                 else:
                     bboxes.append(values)
 
-        if not classes:
+        if not classes and image_path not in negatives:
             continue
 
         records.append({
@@ -471,11 +482,17 @@ class InPlaceDataset:
     def annotation_count(self, split):
         return sum(len(record["cls"]) for record in self.records_by_split.get(split, []))
 
+    def negative_count(self, split):
+        """Images in this split that train as background, carrying no objects."""
+        return sum(1 for record in self.records_by_split.get(split, []) if not len(record["cls"]))
+
     def summary(self):
         """One line describing what a run would train on."""
         images = sum(self.image_count(split) for split in SPLIT_SENTINELS)
         annotations = sum(self.annotation_count(split) for split in SPLIT_SENTINELS)
-        return (f"{images} images · {annotations} annotations · {len(self.names)} labels · "
+        negatives = sum(self.negative_count(split) for split in SPLIT_SENTINELS)
+        return (f"{images} images ({negatives} background) · {annotations} annotations · "
+                f"{len(self.names)} labels · "
                 f"Train {self.image_count('train')} / "
                 f"Val {self.image_count('val')} / "
                 f"Test {self.image_count('test')}")
