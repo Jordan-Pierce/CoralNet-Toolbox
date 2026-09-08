@@ -71,6 +71,11 @@ class AnnotationViewerWindow(QWidget):
         self.label_window = main_window.label_window
         
         # Animation manager reference
+        # Annotations a cropping run could not produce a crop for -- an image
+        # the project has no raster for, or one that will not open. Remembered
+        # so the gallery asks once rather than re-running forever.
+        self._uncroppable = set()
+
         # Cropping state
         self._cropping_in_progress = False
         self._cropping_worker = None
@@ -682,7 +687,8 @@ class AnnotationViewerWindow(QWidget):
         # Ensure cropped images are available. If any are missing, run
         # cropping in a background worker and show a modal ProgressBar.
         anns_needing_crops = [ann for ann in filtered_annotations
-                              if not hasattr(ann, 'cropped_image') or ann.cropped_image is None]
+                              if (not hasattr(ann, 'cropped_image') or ann.cropped_image is None)
+                              and ann.id not in self._uncroppable]
 
         if anns_needing_crops:
             # If already cropping, wait for the worker to finish. That run still
@@ -725,9 +731,11 @@ class AnnotationViewerWindow(QWidget):
 
                 def _on_progress(step):
                     try:
-                        # Increment internal counter and update dialog by one step.
+                        # `step` is a count of annotations resolved, so the bar
+                        # is set to the running total rather than nudged once
+                        # per signal: a skipped image resolves several at once.
                         processed_counter['count'] += int(step)
-                        progress_bar.update_progress()
+                        progress_bar.set_value(processed_counter['count'])
                         # Update status message with percentage
                         pct = int((processed_counter['count'] / max(1, len(anns_needing_crops))) * 100)
                         # Re-issued on every crop, so the timeout is invisible in
@@ -737,6 +745,14 @@ class AnnotationViewerWindow(QWidget):
                         pass
 
                 def _on_finished():
+                    # Anything this run could not crop is remembered, so the
+                    # re-run below does not ask for it again. Without this a
+                    # single unreachable image loops forever: refresh finds the
+                    # same annotations uncropped and starts another worker,
+                    # behind a modal progress bar, with no way out but killing
+                    # the application.
+                    self._uncroppable.update(
+                        ann_id for ann_id in getattr(worker, 'failed_ids', []) if ann_id)
                     try:
                         progress_bar.finish_progress()
                     except Exception:
@@ -2146,30 +2162,100 @@ class AnnotationViewerWindow(QWidget):
         # Fallback to native behavior
         QListView.keyPressEvent(self.list_view, event)
 
+    def annotations_to_confirm(self):
+        """Which annotations Ctrl+Space acts on, and where they came from.
+
+        The gallery selection first, then whatever the canvas has selected.
+
+        The fallback is what makes Ctrl+Right-click usable: that gesture
+        navigates the canvas to an annotation and deliberately leaves the
+        gallery selection alone, so with focus still in the gallery there was
+        nothing for Ctrl+Space to act on and the key did nothing at all. Delete
+        has never had this problem -- it is handled by the application-wide
+        event filter against the canvas selection, so it works from wherever
+        focus happens to be, and the two keys behaving differently in the same
+        moment is the actual complaint.
+
+        Returns:
+            tuple: (annotation ids, True when they came from the canvas)
+        """
+        gallery_ids = [ann_id for ann_id in (self.get_selected_annotation_ids() or []) if ann_id]
+        if gallery_ids:
+            return gallery_ids, False
+
+        canvas_ids = [getattr(ann, 'id', None)
+                      for ann in getattr(self.annotation_window, 'selected_annotations', []) or []]
+        return [ann_id for ann_id in canvas_ids if ann_id], True
+
     def _confirm_selected_annotations(self):
         """Confirm selected annotations from the gallery with Ctrl+Space."""
         if not hasattr(self.annotation_window, 'annotations_dict'):
             return
 
-        selected_ids = self.get_selected_annotation_ids()
+        selected_ids, from_canvas = self.annotations_to_confirm()
         if not selected_ids:
             return
 
+        confirmed = []
         for annotation_id in selected_ids:
             ann = self.annotation_window.annotations_dict.get(annotation_id)
             if not ann:
                 continue
             if ann.machine_confidence:
                 ann.update_user_confidence(next(iter(ann.machine_confidence)))
+            confirmed.append(ann)
+
+        had_focus = False
+        try:
+            had_focus = self.list_view is not None and self.list_view.hasFocus()
+        except Exception:
+            pass
 
         try:
             self.refresh_annotations()
         except Exception:
             pass
 
+        # The refresh rebuilds the model, and confirming can move an annotation
+        # out of the filtered set entirely -- its label changes from Review to
+        # whatever the model proposed. Either way the user is left with nothing
+        # selected and has to find their place again, which is the other half of
+        # "the focus is lost".
+        self._restore_selection_after_confirm(selected_ids, confirmed, from_canvas, had_focus)
+
         if len(selected_ids) == 1 and hasattr(self.main_window, 'confidence_window'):
             try:
                 self.main_window.confidence_window.refresh_display()
+            except Exception:
+                pass
+
+    def _restore_selection_after_confirm(self, selected_ids, confirmed, from_canvas, had_focus):
+        """Put the selection back where the user left it.
+
+        A confirmation is not a navigation: whatever was selected before should
+        still be selected after, so the next key press acts on the same thing.
+        """
+        if from_canvas:
+            # The canvas owns this selection. Re-assert it only if the refresh
+            # dropped it, so a still-correct selection is never disturbed.
+            try:
+                current = getattr(self.annotation_window, 'selected_annotations', []) or []
+                if not current and confirmed:
+                    for ann in confirmed:
+                        self.annotation_window.select_annotation(ann, quiet_mode=True)
+            except Exception:
+                pass
+            return
+
+        try:
+            self.render_selection_from_ids(set(selected_ids))
+        except Exception:
+            pass
+
+        # Selection without focus still means the next Ctrl+Space goes nowhere.
+        if had_focus:
+            try:
+                self.list_view.setFocus()
             except Exception:
                 pass
 

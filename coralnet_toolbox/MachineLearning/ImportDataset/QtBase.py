@@ -276,7 +276,20 @@ def discover_dataset_files(yaml_path, image_import_policy='annotated_only', excl
     for image_dir in image_dirs:
         sidecar_dir = _sidecar_dir_for(image_dir, sidecar_name)
         for image_path in _iter_images(image_dir, exclude_dirs):
-            normalized = os.path.normpath(image_path)
+            # Forward slashes, because a raster is looked up by the exact string
+            # it was registered under and the rest of the application settled on
+            # that form: Qt's file dialogs hand back forward slashes on Windows,
+            # and ResultsProcessor writes `results.path.replace("\\", "/")` onto
+            # every annotation it creates. os.path.normpath alone gives
+            # backslashes here, so an in-place import registered
+            # `C:\data\images\a.jpg` while every prediction landing on that
+            # image claimed `C:/data/images/a.jpg` -- two keys for one file, and
+            # `raster_manager.get_raster()` finding neither.
+            #
+            # The copying branch already normalized its destinations this way
+            # (see _copy_files_with_progress), which is why only in-place
+            # imports were affected.
+            normalized = os.path.normpath(image_path).replace("\\", "/")
             # An image reachable through two entries keeps the first sidecar found.
             if normalized in source_map and source_map[normalized]:
                 continue

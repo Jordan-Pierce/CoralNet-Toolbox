@@ -113,7 +113,26 @@ class RasterManager(QObject):
         if '::frame_' in image_path:
             video_path = image_path.rsplit('::frame_', 1)[0]
             return self.rasters.get(video_path)
-        return self.rasters.get(image_path)
+
+        raster = self.rasters.get(image_path)
+        if raster is not None:
+            return raster
+
+        # One file, two spellings. The application settled on forward slashes --
+        # Qt's file dialogs return them on Windows, and ResultsProcessor writes
+        # `results.path.replace("\\", "/")` onto every annotation it creates --
+        # but a path that reached the manager through os.path.normpath carries
+        # backslashes, and an exact-match lookup finds neither from the other.
+        # A project imported in place before that was fixed still holds such
+        # keys, so the separator is tried the other way before giving up.
+        if '\\' in image_path or '/' in image_path:
+            for alternate in (image_path.replace('\\', '/'), image_path.replace('/', '\\')):
+                if alternate != image_path:
+                    raster = self.rasters.get(alternate)
+                    if raster is not None:
+                        return raster
+
+        return None
 
     def add_video_raster(self, video_path: str) -> bool:
         """
