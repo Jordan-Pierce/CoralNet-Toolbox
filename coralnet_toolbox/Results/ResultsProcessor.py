@@ -87,26 +87,50 @@ class ResultsProcessor:
                                       image_area, m2_per_px)
 
     def _area_pass_mask(self, results):
-        """Boolean mask over results whose box area falls inside the area threshold."""
+        """Boolean mask over results whose box area falls inside the area threshold.
+
+        Unresolvable bounds accept everything, in either mode. A real-world bound
+        on an unscaled raster cannot be judged at all, and dropping every
+        detection on an image the user simply never scaled would be far worse.
+
+        The image-share mode used to fall back to the area relative to the model
+        input instead, on the reasoning that some filtering beats none. It does
+        not: the input is the work-area crop whenever one is in use, so the
+        fallback silently measured a share of the crop against a threshold the
+        user set as a share of the image, over-rejecting by the ratio between
+        them. Worse, it did so only in that one mode, so the two modes disagreed
+        about the same objects. Both now decline to guess, and say so.
+        """
         bounds = self._get_area_bounds_px(results)
         xyxy = results.boxes.xyxy
         area_px = (xyxy[:, 2] - xyxy[:, 0]) * (xyxy[:, 3] - xyxy[:, 1])
 
         if bounds is None:
-            if get_area_mode(self.main_window) == AREA_MODE_METRIC:
-                # A real-world bound against a raster carrying no scale cannot be
-                # judged at all. Accept everything: dropping every detection on an
-                # image the user simply never scaled would be far worse.
-                return area_px >= 0
-            # No raster to resolve against, so fall back to the model-input
-            # relative area and at least keep filtering.
-            x_norm, y_norm, w_norm, h_norm = results.boxes.xywhn.T
-            area_norm = w_norm * h_norm
-            return ((area_norm >= self._get_area_thresh_min()) &
-                    (area_norm <= self._get_area_thresh_max()))
+            self._warn_area_unresolved(results)
+            return area_px >= 0
 
         min_px, max_px = bounds
         return (area_px >= min_px) & (area_px <= max_px)
+
+    def _warn_area_unresolved(self, results):
+        """Say once per path that the area filter is not being applied.
+
+        Silence is what let a work-area crop go unfiltered for a whole session:
+        the setting was live in the panel and doing nothing to the results.
+        """
+        path = getattr(results, 'path', None)
+        seen = getattr(self, '_area_unresolved_paths', None)
+        if seen is None:
+            seen = self._area_unresolved_paths = set()
+        if path in seen:
+            return
+        seen.add(path)
+
+        if get_area_mode(self.main_window) == AREA_MODE_METRIC:
+            reason = "this image carries no scale"
+        else:
+            reason = f"no raster matches {path!r}"
+        print(f"Area filter inactive: {reason}, so every detection is kept.")
 
     def filter_by_area(self, results):
         """

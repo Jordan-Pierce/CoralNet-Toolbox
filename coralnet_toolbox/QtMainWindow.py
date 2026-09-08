@@ -1267,9 +1267,11 @@ class MainWindow(QMainWindow):
         self.area_tick_timer.timeout.connect(self.refresh_area_ticks)
 
         area_thresh_layout = QVBoxLayout()
-        area_thresh_layout.addWidget(self.area_mode_combo)
         area_thresh_layout.addWidget(self.area_threshold_min_slider)
         area_thresh_layout.addWidget(self.area_threshold_max_slider)
+        # Units below the pair, matching ThresholdsWidget: it is what the two
+        # handles are read in rather than a setting of its own.
+        area_thresh_layout.addWidget(self.area_mode_combo)
         area_thresh_layout.addWidget(self.area_threshold_label)
         area_thresh_widget = QWidget()
         area_thresh_widget.setLayout(area_thresh_layout)

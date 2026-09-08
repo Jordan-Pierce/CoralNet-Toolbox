@@ -731,14 +731,6 @@ class ThresholdsWidget(QGroupBox):
                 max(0, self.area_mode_combo.findData(self.area_thresh_mode)))
             stretch_field(self.area_mode_combo)
             self.area_mode_combo.currentIndexChanged.connect(self._update_area_mode)
-            layout.addRow("Area Units", self.area_mode_combo)
-            apply_row_tooltip(
-                self.area_mode_combo,
-                "Image %: the bounds are a share of each image's area, so the same setting picks out "
-                "a different physical size on every raster.\n\n"
-                "Real-world: the bounds are an absolute area, so one setting means the same size "
-                "across a whole dataset. Requires the raster to carry a scale - on an unscaled image "
-                "the area filter is skipped rather than applied wrongly.")
 
             area_tick = area_slider_tick(self.area_thresh_mode)
             self.area_threshold_min_slider = QSlider(Qt.Horizontal)
@@ -765,7 +757,17 @@ class ThresholdsWidget(QGroupBox):
             self.area_threshold_label = QLabel(self._area_label_text())
             layout.addRow("Area Threshold Min", self.area_threshold_min_slider)
             layout.addRow("Area Threshold Max", self.area_threshold_max_slider)
+            # Units below the pair, since it is what the two handles are read in
+            # rather than a setting of its own.
+            layout.addRow("Area Units", self.area_mode_combo)
             layout.addRow("", self.area_threshold_label)
+            apply_row_tooltip(
+                self.area_mode_combo,
+                "Image %: the bounds are a share of each image's area, so the same setting picks out "
+                "a different physical size on every raster.\n\n"
+                "Real-world: the bounds are an absolute area, so one setting means the same size "
+                "across a whole dataset. Requires the raster to carry a scale - on an unscaled image "
+                "the area filter is skipped rather than applied wrongly.")
             apply_row_tooltip(
                 self.area_threshold_min_slider,
                 "Lower bound of the annotation area filter, as a fraction of the whole image area. "
