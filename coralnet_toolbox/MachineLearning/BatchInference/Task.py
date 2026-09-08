@@ -220,6 +220,20 @@ class SemanticBatchInferenceTask(AsyncYoloBatchInferenceTask):
         except Exception:
             dialog._semantic_include_bg = False
 
+        # Whether the finished masks become polygons, and whether touching
+        # objects are separated first, are the deploy dialog's settings -- there
+        # is no second set of controls here. Snapshotted rather than read live
+        # because the run is asynchronous: a toggle part-way through would
+        # otherwise apply to some of the batch and not the rest.
+        try:
+            dialog._semantic_auto_vectorize = bool(
+                self.model_dialog.should_auto_vectorize())
+            dialog._semantic_split_touching = bool(
+                self.model_dialog.should_split_touching())
+        except Exception:
+            dialog._semantic_auto_vectorize = False
+            dialog._semantic_split_touching = False
+
         dialog._semantic_processed_images = set()
 
         try:

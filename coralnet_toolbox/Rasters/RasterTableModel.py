@@ -69,6 +69,32 @@ class RasterTableModel(QAbstractTableModel):
             return self.column_headers[section]
         return None
         
+    @staticmethod
+    def _training_split(raster) -> str:
+        """Return the train / val / test split this image would train in.
+
+        Only meaningful for plain image rasters, which are the ones the project
+        can currently train from. A pinned split is reported as such so the
+        difference from a derived one is visible.
+        """
+        if getattr(raster, 'raster_type', '') != 'ImageRaster':
+            return ""
+
+        try:
+            from coralnet_toolbox.MachineLearning.InPlaceTraining import (
+                assign_split, get_split_ratios)
+        except Exception:
+            return ""
+
+        override = getattr(raster, 'split_override', None)
+        try:
+            train_ratio, val_ratio = get_split_ratios()
+            split = assign_split(raster.image_path, train_ratio, val_ratio, override)
+        except Exception:
+            return ""
+
+        return f"{split} (pinned)" if override else split
+
     def data(self, index: QModelIndex, role: int = Qt.DisplayRole) -> Any:
         """Return data for the given index and role."""
         if not index.isValid() or index.row() >= len(self.filtered_paths):
@@ -140,6 +166,13 @@ class RasterTableModel(QAbstractTableModel):
                 # Add scale information if it exists
                 if raster.scale_x and raster.scale_units:
                     tooltip_parts.append(f"<b>Scale:</b> {raster.scale_x:.6f} {raster.scale_units}/pixel")
+
+                # Which split this image falls in when training from the project.
+                # Derived from the path unless the user pinned it, so it is shown
+                # rather than stored, and stays the same between training rounds.
+                split = self._training_split(raster)
+                if split:
+                    tooltip_parts.append(f"<b>Split:</b> {split}")
 
                 # Add z_channel information if it exists
                 if raster.z_channel is not None:

@@ -34,6 +34,8 @@ from .MergeDatasets.QtClassify import Classify as MergeClassify
 from .MergeDatasets.QtDetect import Detect as MergeDetect
 from .MergeDatasets.QtSegment import Segment as MergeSegment
 from .MergeDatasets.QtSemantic import Semantic as MergeSemantic
+from .ActiveLearning.QtDetect import Detect as ActiveLearningDetect
+from .ActiveLearning.QtSegment import Segment as ActiveLearningSegment
 from .OptimizeModel.QtBase import Base as OptimizeModel
 
 from .TileDataset.QtClassify import Classify as TileClassifyDataset
@@ -73,5 +75,7 @@ __all__ = [
     'MergeDetect',
     'MergeSegment',
     'MergeSemantic',
+    'ActiveLearningDetect',
+    'ActiveLearningSegment',
     'OptimizeModel'
 ]

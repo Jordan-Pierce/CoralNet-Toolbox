@@ -102,6 +102,8 @@ from coralnet_toolbox.MachineLearning import (
     MergeDetect as DetectMergeDatasetsDialog,
     MergeSegment as SegmentMergeDatasetsDialog,
     MergeSemantic as SemanticMergeDatasetsDialog,
+    ActiveLearningDetect as ActiveLearningDetectDialog,
+    ActiveLearningSegment as ActiveLearningSegmentDialog,
     OptimizeModel as OptimizeModelDialog,
     TileClassifyDataset as ClassifyTileDatasetDialog,
     TileDetectDataset as DetectTileDatasetDialog,
@@ -312,6 +314,8 @@ class MainWindow(QMainWindow):
         self.detect_merge_datasets_dialog = DetectMergeDatasetsDialog(self)
         self.segment_merge_datasets_dialog = SegmentMergeDatasetsDialog(self)
         self.semantic_merge_datasets_dialog = SemanticMergeDatasetsDialog(self)
+        self.detect_active_learning_dialog = ActiveLearningDetectDialog(self)
+        self.segment_active_learning_dialog = ActiveLearningSegmentDialog(self)
         self.pretrain_model_dialog = PreTrainModelDialog(self)
         self.classify_train_model_dialog = ClassifyTrainModelDialog(self)
         self.detect_train_model_dialog = DetectTrainModelDialog(self)
@@ -664,6 +668,26 @@ class MainWindow(QMainWindow):
         self.feature_selector_deploy_action.setToolTip("Deploy feature selector model for dense feature extraction")
         self.feature_selector_deploy_action.triggered.connect(self.open_feature_deploy_model_dialog)
         self.feature_selector_menu.addAction(self.feature_selector_deploy_action)
+
+        # Add a separator: what follows runs training rounds against the
+        # project, rather than deploying a model to use by hand.
+        self.ai_assist_menu.addSeparator()
+
+        # Active Learning submenu
+        self.active_learning_menu = self.ai_assist_menu.addMenu("Active Learning")
+        self.active_learning_menu.setToolTipsVisible(True)
+        # Active Learning for Detection
+        self.detect_active_learning_action = QAction("Detect", self)
+        self.detect_active_learning_action.setToolTip(
+            "Train a detector on confirmed annotations, then let it propose more to review")
+        self.detect_active_learning_action.triggered.connect(self.open_detect_active_learning_dialog)
+        self.active_learning_menu.addAction(self.detect_active_learning_action)
+        # Active Learning for Instance Segmentation
+        self.segment_active_learning_action = QAction("Segment", self)
+        self.segment_active_learning_action.setToolTip(
+            "Train an instance segmentor on confirmed annotations, then let it propose more to review")
+        self.segment_active_learning_action.triggered.connect(self.open_segment_active_learning_dialog)
+        self.active_learning_menu.addAction(self.segment_active_learning_action)
 
         # ========== MACHINE LEARNING MENU ==========
         # Machine Learning menu
@@ -1243,9 +1267,11 @@ class MainWindow(QMainWindow):
         self.area_tick_timer.timeout.connect(self.refresh_area_ticks)
 
         area_thresh_layout = QVBoxLayout()
-        area_thresh_layout.addWidget(self.area_mode_combo)
         area_thresh_layout.addWidget(self.area_threshold_min_slider)
         area_thresh_layout.addWidget(self.area_threshold_max_slider)
+        # Units below the pair, matching ThresholdsWidget: it is what the two
+        # handles are read in rather than a setting of its own.
+        area_thresh_layout.addWidget(self.area_mode_combo)
         area_thresh_layout.addWidget(self.area_threshold_label)
         area_thresh_widget = QWidget()
         area_thresh_widget.setLayout(area_thresh_layout)
@@ -1937,11 +1963,15 @@ class MainWindow(QMainWindow):
         if min_val > max_val:
             min_val = max_val
             self.area_threshold_min_slider.setValue(min_val)
-        self.area_thresh_min = area_slider_to_value(min_val, self.area_thresh_mode)
-        self.area_thresh_max = area_slider_to_value(max_val, self.area_thresh_mode)
+        # Hand the new pair to update_area_thresh rather than storing it here
+        # first: that method's guard compares the incoming values against the
+        # stored ones, so pre-assigning made it a no-op and areaChanged never
+        # reached the dialogs - their sliders kept filtering on the old bounds
+        # until some other change (a unit switch) emitted the signal for real.
+        self.update_area_thresh(area_slider_to_value(min_val, self.area_thresh_mode),
+                                area_slider_to_value(max_val, self.area_thresh_mode))
         self.update_area_threshold_label()
         self.push_area_threshold_status()
-        self.update_area_thresh(self.area_thresh_min, self.area_thresh_max)
 
     def update_area_threshold_label(self, *args):
         """Redraw the area range label for the raster currently on display.
@@ -3503,6 +3533,50 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.see_anything_deploy_generator_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"An error occurred: {e}")
+
+    def open_detect_active_learning_dialog(self):
+        """Open the detection Active Learning session."""
+        self.open_active_learning_dialog(self.detect_active_learning_dialog)
+
+    def open_segment_active_learning_dialog(self):
+        """Open the instance segmentation Active Learning session."""
+        self.open_active_learning_dialog(self.segment_active_learning_dialog)
+
+    def open_active_learning_dialog(self, dialog):
+        """Open one Active Learning session to run train / predict / review rounds.
+
+        Each task has its own dialog, and so its own round history: a detection
+        session and a segmentation session are separate experiments and should
+        not share a scoreboard.
+
+        Modeless, unlike almost every other dialog here, and that is the whole
+        design rather than a preference. The loop is annotate -> train ->
+        predict -> review -> annotate: Review Predictions opens an image on the
+        canvas, the disagreement queue selects annotations on it, and the review
+        controls act on what is in front of the user. Behind a modal dialog none
+        of that is reachable, so the session would have to be closed and
+        reopened between every step.
+        """
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "Active Learning",
+                                "No images are present in the project.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            dialog.setModal(False)
+            # A session the user minimized to get it out of the way is reopened
+            # by this menu item, and show() alone leaves a minimized window
+            # minimized: it is already visible as far as Qt is concerned.
+            dialog.setWindowState((dialog.windowState() & ~Qt.WindowMinimized)
+                                  | Qt.WindowActive)
+            dialog.show()
+            # Bring an already-open session forward rather than opening a second.
+            dialog.raise_()
+            dialog.activateWindow()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"An error occurred: {e}")
 

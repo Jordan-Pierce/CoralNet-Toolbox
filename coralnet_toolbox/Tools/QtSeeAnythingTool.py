@@ -574,6 +574,18 @@ class SeeAnythingTool(Tool):
         if self.results:
             results = CombineResults().combine_results([self.results, results])
 
+        # The model ran on the work-area crop, a numpy array, so Ultralytics
+        # named the result after the array ("image0.jpg"). The area filter
+        # resolves its bounds by looking that path up in the raster manager, and
+        # a name no raster answers to leaves it with nothing to measure against:
+        # a real-world bound went unresolved and filtered nothing at all, while
+        # an image-share bound fell back to the fraction of the *crop*, which is
+        # larger than the fraction of the image by the ratio between them -- 25x
+        # for an 800x600 work area on a 4000x3000 raster, enough to reject
+        # objects the same threshold keeps when the work area is not used.
+        # Naming the raster is what makes both bounds whole-image.
+        results.path = self.image_path
+
         # Filter
         self.results = results_processor.apply_filters_to_results(results)
 

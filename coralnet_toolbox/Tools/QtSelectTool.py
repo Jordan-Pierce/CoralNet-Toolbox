@@ -321,14 +321,17 @@ class SelectTool(Tool):
         px, py = position.x(), position.y()
 
         # The grid narrows the scan to one cell's worth of annotations. None
-        # means the phantom layer has not been built yet, in which case the
-        # original scan over every annotation is still correct.
+        # means there is nothing to index, in which case the original scan over
+        # every annotation is still correct.
         hit_index = self.annotation_window.get_phantom_hit_index()
 
         if hit_index is not None:
             candidates = hit_index.candidates(px, py)
+            indexed = True
         else:
             candidates = self.annotation_window.get_image_annotations()
+            indexed = False
+        annotations_dict = self.annotation_window.annotations_dict
 
         best_center = None
         best_general = None
@@ -337,13 +340,21 @@ class SelectTool(Tool):
             # Skip selected annotations (already checked above) and invisible labels
             if annotation.is_selected or not getattr(annotation.label, 'is_visible', True):
                 continue
-            
+
             # Fast bounding-box pre-filter: skip annotations whose bbox
             # doesn't contain the click point (near-zero cost vs Shapely).
             bbox = annotation.cropped_bbox
             if bbox and not (bbox[0] <= px <= bbox[2] and bbox[1] <= py <= bbox[3]):
                 continue
-            
+
+            # A guard against an index that outlived one of its entries: the
+            # membership epoch is bumped from four call sites, and a fifth
+            # appearing later would otherwise resurface a deleted annotation as
+            # a clickable ghost. One dict lookup, and placed after the bbox
+            # filter so only the handful of survivors pay it.
+            if indexed and annotation.id not in annotations_dict:
+                continue
+
             # Full geometric check (Shapely) only for bbox survivors
             if annotation.contains_point(position):
                 center_distance = (position - annotation.center_xy).manhattanLength()

@@ -60,7 +60,7 @@ class NoArrowKeyTableView(QTableView):
         # Call the base class implementation to handle standard behavior
         # like row selection and context menu triggers.
         super().mousePressEvent(event)
-        
+
 
 class CheckableComboBox(QComboBox):
     """
@@ -153,13 +153,37 @@ class CheckableComboBox(QComboBox):
                 self.uncheck_item("No Annotations")
             elif text == "Has Mask":
                 self.uncheck_item("No Annotations")
+            elif text == "Needs Review":
+                self.uncheck_item("No Annotations")
             elif text == "No Annotations":
                 self.uncheck_item("Has Annotations")
                 self.uncheck_item("Has Mask")
+                self.uncheck_item("Needs Review")
         # ----------------------------------
 
+        # The line edit is the only thing telling the user what is being
+        # filtered by, and it used to be refreshed only when the popup closed.
+        # Anything that checks an item without opening the popup -- Active
+        # Learning's Review Predictions, which applies "Needs Review" itself --
+        # therefore filtered the list correctly while the control went on
+        # displaying the previous filter, or "Select filters...".
+        self.update_display_text()
         self.filterChanged.emit()
         self._block_signals = False
+
+    def check_item(self, text):
+        """Find an item by its text and check it.
+
+        Setting the state goes through on_item_changed, so the mutual
+        exclusivity rules apply and filterChanged is emitted, exactly as if the
+        user had ticked it.
+        """
+        for i in range(self.count()):
+            item = self.model().item(i)
+            if item.text() == text and item.checkState() != Qt.Checked:
+                item.setCheckState(Qt.Checked)
+                return True
+        return False
 
     def uncheck_item(self, text):
         """Find an item by its text and uncheck it."""
@@ -278,10 +302,11 @@ class ImageWindow(QWidget):
         self.filter_combo.addItem("Has Annotations")
         self.filter_combo.addItem("Has Mask")
         self.filter_combo.addItem("No Annotations")
+        self.filter_combo.addItem("Needs Review")
         self.filter_combo.setCurrentIndex(-1)
         self.filter_combo.filterChanged.connect(self.schedule_filter)
         self.filter_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.filter_combo.setToolTip("Filter images by type (Image, Ortho, Video), Z-channel presence, predictions, annotation status, mask presence, checked state, and highlight state.\nSelect multiple filters to apply all criteria.")
+        self.filter_combo.setToolTip("Filter images by type (Image, Ortho, Video), Z-channel presence, predictions, annotation status, mask presence, checked state, and highlight state.\nSelect multiple filters to apply all criteria.\nNeeds Review shows images carrying annotations nobody has confirmed yet, which is where model predictions land.")
 
         # Setup filter/search controls
         self.search_layout.addRow("Filters:", self.filter_combo)
@@ -495,6 +520,11 @@ class ImageWindow(QWidget):
         # Update raster table and counts when annotation labels change
         self.annotation_window.annotationLabelChanged.connect(self.on_annotation_label_changed)
         self.annotation_window.annotationsLabelsChanged.connect(self.on_annotations_labels_changed)
+        # An annotation being verified changes no label and creates nothing, so
+        # none of the signals above fire for it -- and the raster's unverified
+        # counters, which the Needs Review filter reads, went on holding what was
+        # true before the user confirmed anything.
+        self.annotation_window.annotationModified.connect(self.on_annotation_modified)
         
         # Connect our own signals
         self.imageLoaded.connect(self.on_image_loaded)
@@ -513,6 +543,33 @@ class ImageWindow(QWidget):
             annotation = self.annotation_window.annotations_dict.get(ann_id)
             if annotation and getattr(annotation, 'image_path', None):
                 self.update_image_annotations(annotation.image_path)
+                if "Needs Review" in self.filter_combo.get_checked_items():
+                    self.schedule_filter()
+        except Exception:
+            pass
+
+    def on_annotation_modified(self, ann_id):
+        """Handler for a single annotation changing in place.
+
+        Verification is the case that matters: it creates nothing, deletes
+        nothing and changes no label, so without this the raster keeps the
+        unverified count it had before, and an image the user has just finished
+        reviewing stays in the Needs Review list describing work that is done.
+
+        The re-filter is scheduled only while that filter is on, matching
+        on_checkbox_state_changed -- rebuilding the table on every annotation
+        edit would cost more than it tells anyone.
+        """
+        try:
+            if not ann_id:
+                return
+            annotation = self.annotation_window.annotations_dict.get(ann_id)
+            image_path = getattr(annotation, 'image_path', None) if annotation else None
+            if not image_path:
+                return
+            self.update_image_annotations(image_path, update_counts=False)
+            if "Needs Review" in self.filter_combo.get_checked_items():
+                self.schedule_filter()
         except Exception:
             pass
 
@@ -570,6 +627,9 @@ class ImageWindow(QWidget):
                 self.main_window.label_window.update_annotation_count()
             except Exception:
                 pass
+
+            if "Needs Review" in self.filter_combo.get_checked_items():
+                self.schedule_filter()
         except Exception:
             pass
         
@@ -1158,6 +1218,7 @@ class ImageWindow(QWidget):
         has_mask = "Has Mask" in checked_filters
         no_annotations = "No Annotations" in checked_filters
         require_checked = "Checked" in checked_filters
+        needs_review = "Needs Review" in checked_filters
         # --- End new logic ---
         
         
@@ -1175,6 +1236,7 @@ class ImageWindow(QWidget):
             allowed_raster_types=allowed_raster_types,
             require_z_channel=require_z_channel,
             require_checked=require_checked,
+            require_unverified=needs_review,
             selected_paths=highlighted_paths,
             use_threading=use_threading
         )
@@ -1457,6 +1519,12 @@ class ImageWindow(QWidget):
         remove_feature_action.triggered.connect(
             lambda: self.remove_feature_map_highlighted_images()
         )
+
+        # Active Learning review-state and Training Split pin used to be set from
+        # bulk actions here. Pulled out: setting them from a raster list decoupled
+        # from any open session let them drift out of sync with what the session
+        # actually knew about. Stubbed in the Active Learning workflow instead --
+        # see ActiveLearning/QtBase.py -- to be wired up later.
 
         context_menu.addSeparator()
 

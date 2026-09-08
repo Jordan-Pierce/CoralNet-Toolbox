@@ -220,6 +220,31 @@ class TrainModelWorker(QThread):
         self.model_path = None
         self.weighted = False
         self.temp_data_yaml = None
+        # Set when training reads straight from the project instead of a
+        # dataset on disk; owns the patched dataset class and its scaffolding.
+        self.in_place_dataset = None
+        # Set by request_stop(); read at the end of each epoch. A round is
+        # minutes long, and abandoning one has to be possible without killing
+        # the application.
+        self._stop_requested = False
+
+    def request_stop(self):
+        """Ask training to end cleanly after the current epoch.
+
+        Ultralytics' own early stopping sets ``trainer.stop``, and the trainer
+        checks it at the end of every epoch, saves, and exits the loop -- so a
+        stopped round still produces best.pt and results.csv. Killing the thread
+        instead would leave the patched dataset class installed.
+        """
+        self._stop_requested = True
+
+    def _stop_if_requested(self, trainer):
+        """Callback: end the run if request_stop() was called."""
+        if self._stop_requested:
+            try:
+                trainer.stop = True
+            except Exception:
+                pass
 
     def pre_run(self):
         """
@@ -228,8 +253,15 @@ class TrainModelWorker(QThread):
         try:
             # Extract model path
             self.model_path = self.params.pop('model', None)
+            # Private marker; must not reach model.train()
+            self.in_place_dataset = self.params.pop('in_place_dataset', None)
             # Get the weighted flag
             self.weighted = self.set_weighted_dataset()
+            if self.in_place_dataset is not None:
+                # Swaps in the dataset class that reads from the project. Done
+                # after set_weighted_dataset so it wins the shared patch slot,
+                # which its own class folds weighted sampling into.
+                self.in_place_dataset.install(weighted=bool(self.weighted))
             # Load the model (8.3.141) YOLO handles RTDETR
             self.model = YOLO(self.model_path)
             # Set the task in the model itself
@@ -252,8 +284,13 @@ class TrainModelWorker(QThread):
             # Dataset YAMLs exported by this toolbox (or produced by yolo-tiler) can have
             # train/val/test baked in as absolute paths from wherever they were created;
             # moving or sharing the dataset folder then leaves them pointing nowhere.
+            # Rerooting exists to repair exported yamls carrying absolute paths
+            # from another machine. An in-place yaml was written moments ago
+            # against paths that resolve here, so it is left alone.
             data_path = self.params.get('data')
-            if isinstance(data_path, str) and data_path.lower().endswith(('.yaml', '.yml')):
+            if (self.in_place_dataset is None
+                    and isinstance(data_path, str)
+                    and data_path.lower().endswith(('.yaml', '.yml'))):
                 self.params['data'] = self._reroot_dataset_yaml(data_path)
 
         except Exception as e:
@@ -377,6 +414,13 @@ class TrainModelWorker(QThread):
             for event, callback in callbacks.items():
                 self.model.add_callback(event, callback)
 
+            # on_train_epoch_end, which fires before validation: the trainer
+            # reads `stop` after validating, so the epoch still validates,
+            # reports through on_fit_epoch_end and saves before the loop exits.
+            # A stopped round therefore still produces best.pt and a full
+            # results.csv row rather than half of one.
+            self.model.add_callback('on_train_epoch_end', self._stop_if_requested)
+
             # Train the model
             self.model.train(**self.params, device=self.device)
 
@@ -399,6 +443,13 @@ class TrainModelWorker(QThread):
         """
         Clean up resources after training.
         """
+        # Undo the in-place patch first: it replaced whatever the weighted
+        # branch installed, so restoring in the other order would leave the
+        # in-place class in place for the next run.
+        if self.in_place_dataset is not None:
+            self.in_place_dataset.remove()
+            self.in_place_dataset = None
+
         # Revert to the original dataset class without weighted sampling
         if self.weighted and self.params['task'] == 'classify':
             train_build.ClassificationDataset = ClassificationDataset
@@ -492,7 +543,7 @@ class Base(QDialog):
 
         self.setWindowIcon(get_window_icon("coralnet.svg"))
         self.setWindowTitle("Train Model")
-        self.resize(450, 750)
+        self.resize(1000, 500)
 
         # Set window settings
         self.setWindowFlags(Qt.Window |
@@ -514,16 +565,37 @@ class Base(QDialog):
         self.is_optimizing = False
         self.exported_model_path = None
 
+        # The run this dialog started, if it is still going. The dialog closes
+        # as soon as training begins -- it is modal, and holding the application
+        # hostage for the length of a run would be worse -- but the object lives
+        # on the MainWindow, so reopening it from the menu comes back to this
+        # same instance with its worker still attached. That is what makes Stop
+        # reachable at all.
+        self.worker = None
+
         # Task specific parameters
         self.imgsz = 640
         self.batch = 4
 
-        # Create the layout
+        # Two columns: the setup fields on the left, the long scrolling list of
+        # training parameters on the right. Stacked in one column the dialog
+        # wanted 1000 px of height against 450 of width, so the parameters were
+        # reached by scrolling a scroll area inside a scrolling dialog.
         main_layout = QVBoxLayout(self)
+        columns_layout = QHBoxLayout()
 
-        self.layout = main_layout  # Keep backward compatibility for subclasses
-        self.left_layout = main_layout
-        self.right_layout = None
+        left_column = QVBoxLayout()
+        right_column = QVBoxLayout()
+        columns_layout.addLayout(left_column, 1)
+        columns_layout.addLayout(right_column, 1)
+        main_layout.addLayout(columns_layout, 1)
+
+        # Subclasses add their dataset group to self.layout, so it has to stay
+        # the left column for them to keep working unchanged.
+        self.layout = left_column
+        self.left_layout = left_column
+        self.right_layout = right_column
+        self.main_layout = main_layout
 
         # Create the info layout
         self.setup_info_layout()
@@ -533,7 +605,8 @@ class Base(QDialog):
         self.setup_output_layout()
         # Create the model layout (new)
         self.setup_model_layout()
-        # Reserve space so the parameters section lands below the main setup fields.
+        # Push the left column's groups to the top; the right column carries the
+        # height, so the left one should not stretch to match it.
         self.layout.addStretch(1)
         # Create and set up the parameters layout
         self.setup_parameters_layout()
@@ -548,11 +621,21 @@ class Base(QDialog):
         layout = QVBoxLayout()
 
         # Create a QLabel with explanatory text and hyperlink
-        info_label = QLabel("Details on different hyperparameters can be found "
-                            "<a href='https://docs.ultralytics.com/modes/train/#train-settings'>here</a>.")
+        info_label = QLabel(
+            "Train a model on a dataset that has already been exported to disk. "
+            "Choose the dataset and a starting model on the left, and set how it "
+            "trains on the right.<br>"
+            "Training runs in the background and writes to the Project / Name "
+            "folder, one run per training.<br>"
+            "Details on the individual parameters can be found in the "
+            "<a href='https://docs.ultralytics.com/modes/train/'>"
+            "Ultralytics training documentation</a>.")
 
         info_label.setOpenExternalLinks(True)
         info_label.setWordWrap(True)
+        info_label.setToolTip(
+            "To train directly from the annotations in the open project instead of an\n"
+            "exported dataset, use AI-Assist > Active Learning.")
         layout.addWidget(info_label)
 
         group_box.setLayout(layout)
@@ -568,8 +651,13 @@ class Base(QDialog):
         group_box = QGroupBox("Model Selection")
         layout = QVBoxLayout()
 
-        # Create tabbed widget
+        # Held on the dialog because the visible tab is what decides which model
+        # trains. The dialog is long-lived -- one per task on the MainWindow,
+        # re-shown rather than rebuilt -- so both fields keep whatever was last
+        # put in them, and "whichever field is non-empty" cannot tell the two
+        # apart. See selected_model().
         tab_widget = QTabWidget()
+        self.model_tabs = tab_widget
 
         # Tab 1: Select model from dropdown
         model_select_tab = QWidget()
@@ -578,10 +666,13 @@ class Base(QDialog):
         # Model combo box
         self.model_combo = QComboBox()
         self.load_model_combobox()
-        self.model_combo.setToolTip("Select a pre-trained base model to train from.\nLarger models (e.g., YOLOv8x) are more accurate but slower.")
+        self.model_combo.setToolTip(
+            "Select a pre-trained base model to train from.\n"
+            "Larger models (e.g., YOLOv8x) are more accurate but slower.\n"
+            "Used while this tab is the one selected, whatever the other tab holds.")
         model_select_layout.addRow("Model:", self.model_combo)
 
-        tab_widget.addTab(model_select_tab, "Select Model")
+        self.model_combo_tab_index = tab_widget.addTab(model_select_tab, "Select Model")
 
         # Tab 2: Use existing model
         model_existing_tab = QWidget()
@@ -591,14 +682,18 @@ class Base(QDialog):
         self.model_edit = QLineEdit()
         self.model_button = QPushButton("Browse...")
         self.model_button.clicked.connect(self.browse_model_file)
-        self.model_edit.setToolTip("Path to a previously trained model file (.pt or .onnx).\nUseful for fine-tuning or continuing interrupted training.")
+        self.model_edit.setToolTip(
+            "Path to a previously trained model file (.pt or .onnx).\n"
+            "Useful for fine-tuning or continuing interrupted training.\n"
+            "Used only while this tab is the one selected, and training from it\n"
+            "lowers the learning rate and skips warmup.")
         self.model_button.setToolTip("Open file browser to select a model file.")
         model_layout = QHBoxLayout()
         model_layout.addWidget(self.model_edit)
         model_layout.addWidget(self.model_button)
         model_existing_layout.addRow("Existing Model:", model_layout)
 
-        tab_widget.addTab(model_existing_tab, "Use Existing Model")
+        self.model_existing_tab_index = tab_widget.addTab(model_existing_tab, "Use Existing Model")
 
         layout.addWidget(tab_widget)
         group_box.setLayout(layout)
@@ -812,7 +907,7 @@ class Base(QDialog):
         self.remove_param_button.setToolTip("Remove the most recently added custom parameter.\nDisabled when no custom parameters are present.")
         form_layout.addRow(self.remove_param_button)
 
-        self.layout.addWidget(group_box)
+        self.right_layout.addWidget(group_box, 1)
 
     def _create_cache_combo(self):
         """Create the Ultralytics cache mode combo box."""
@@ -917,20 +1012,103 @@ class Base(QDialog):
             self.remove_param_button.setEnabled(False)
 
     def setup_buttons_layout(self):
-        """Set up the layout and widgets for the OK and Cancel buttons."""
+        """Set up the layout and widgets for the OK and Cancel buttons.
+
+        Below both columns rather than at the foot of one, so the action does
+        not read as belonging to whichever column it sits under.
+        """
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+
         # Add OK and Cancel buttons
         self.buttons = QPushButton("OK")
         self.buttons.clicked.connect(self.accept)
         self.buttons.setToolTip("Start training with the configured parameters.\nTraining will run in the background.")
-        self.layout.addWidget(self.buttons)
+        button_layout.addWidget(self.buttons)
+
+        # Ultralytics checks `trainer.stop` at the end of every epoch, so a
+        # stopped run still validates, saves best.pt and writes results.csv --
+        # it becomes a short run rather than a lost one. Killing the thread
+        # instead would leave the patched dataset class installed.
+        self.stop_button = QPushButton("Stop Training")
+        self.stop_button.clicked.connect(self.stop_training)
+        self.stop_button.setEnabled(False)
+        self.stop_button.setToolTip(
+            "End the running training after the current epoch.\n"
+            "What has been trained so far is still saved, so a stopped run is a short\n"
+            "run rather than a lost one.\n"
+            "Enabled only while a run this dialog started is still going.")
+        button_layout.addWidget(self.stop_button)
 
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.reject)
         self.cancel_button.setToolTip("Close this dialog without starting training.")
-        self.layout.addWidget(self.cancel_button)
+        button_layout.addWidget(self.cancel_button)
+
+        self.main_layout.addLayout(button_layout)
 
     def load_model_combobox(self):
         raise NotImplementedError("Subclasses must implement this method.")
+
+    def training_is_running(self):
+        """Whether a run this dialog started is still going."""
+        return self.worker is not None and self.worker.isRunning()
+
+    def sync_training_buttons(self):
+        """OK starts a run; Stop ends one. Never both at once.
+
+        Called on every transition rather than set at each call site, because
+        the dialog can be reopened in the middle of a run and has to arrive in
+        the right state -- which is the only way Stop is reached.
+        """
+        running = self.training_is_running()
+        self.buttons.setEnabled(not running)
+        self.buttons.setText("Training..." if running else "OK")
+        stoppable = running and not getattr(self.worker, '_stop_requested', False)
+        self.stop_button.setEnabled(stoppable)
+        self.stop_button.setText("Stopping..." if running and not stoppable else "Stop Training")
+
+    def stop_training(self):
+        """Ask the running training to end cleanly after the current epoch."""
+        if not self.training_is_running():
+            self.sync_training_buttons()
+            return
+
+        self.worker.request_stop()
+        self.sync_training_buttons()
+
+        message = ("Stopping after the current epoch. The model trained so far is still "
+                   "saved.")
+        print(f"Note: {message}")
+        if hasattr(self.main_window, 'statusBar'):
+            self.main_window.statusBar().showMessage(message, 10000)
+
+    def showEvent(self, event):
+        """Arrive in the right state, whether or not a run is going."""
+        super().showEvent(event)
+        self.sync_training_buttons()
+
+    def selected_model(self):
+        """Return (model, from_existing) for the tab the user is actually on.
+
+        The tab is the answer, not "is the Existing Model box non-empty". This
+        dialog lives for as long as the application does -- MainWindow builds one
+        per task and re-shows it -- so a path browsed once stayed in the box for
+        every later run. Reading the box first meant that path silently won over
+        the model dropdown even with the dropdown's tab in front of the user,
+        and quietly brought fine-tuning defaults (AdamW, lr0 0.0005, no warmup)
+        with it. Switching back to Select Model is now enough to undo it.
+
+        Returns:
+            tuple: (model name or path, True when it came from Existing Model)
+        """
+        existing = self.model_edit.text().strip()
+        on_existing_tab = self.model_tabs.currentIndex() == self.model_existing_tab_index
+
+        if on_existing_tab and existing:
+            return existing, True
+
+        return self.model_combo.currentText(), False
 
     def _autofill_output_fields(self, dataset_root):
         """
@@ -1218,6 +1396,18 @@ class Base(QDialog):
         """
         Handle the OK button click event.
         """
+        # A second run started on top of the first would fight it for the GPU and
+        # for the patched dataset class, and only one of them could write to the
+        # output folder. The dialog is reopened mid-run to reach Stop, so this is
+        # a button somebody will press.
+        if self.training_is_running():
+            QMessageBox.information(
+                self, "Training In Progress",
+                "A training run started from this dialog is still going.\n\n"
+                "Wait for it to finish, or press Stop Training to end it after the "
+                "current epoch.")
+            return
+
         self.train_model()
         # Close the dialog immediately after starting training so the UI is free.
         # The training continues in a background thread and will emit completion/error signals.
@@ -1262,14 +1452,22 @@ class Base(QDialog):
         now = datetime.datetime.now()
         now = now.strftime("%Y-%m-%d_%H-%M-%S")
         params['name'] = params['name'] if params['name'] else now
-        # Either the model path, or the model name provided from combo box
-        params['model'] = self.model_edit.text() if self.model_edit.text() else self.model_combo.currentText()
-        
-        # If using an existing model, set specific parameters
-        if self.model_edit.text():
+        # Either the model path from the Existing Model tab, or the model name
+        # from the dropdown -- whichever tab is in front of the user.
+        params['model'], from_existing = self.selected_model()
+
+        # Continuing from trained weights wants a gentler schedule than starting
+        # from a pretrained checkpoint: no warmup, a small learning rate.
+        if from_existing:
             params['warmup_epochs'] = 0
             params['lr0'] = 0.0005
-            params['optimizer'] = 'AdamW'
+            # Only when the optimizer was left on 'auto'. Overriding an explicit
+            # choice meant the dialog trained with an optimizer other than the
+            # one on screen, with nothing said about it.
+            if params.get('optimizer') == 'auto':
+                params['optimizer'] = 'AdamW'
+            print(f"Note: fine-tuning from {params['model']} "
+                  f"(warmup_epochs=0, lr0={params['lr0']}, optimizer={params['optimizer']}).")
     
         # Add custom parameters (allows overriding the above parameters)
         for param_info in self.custom_params:
@@ -1306,7 +1504,8 @@ class Base(QDialog):
         # Get training parameters
         self.params = self.get_parameters()
 
-        # Create and start the worker thread
+        # Create and start the worker thread. Held on the dialog so Stop can
+        # reach it after the dialog has closed and been reopened.
         self.worker = TrainModelWorker(self.params, self.main_window.device)
         self.worker.training_started.connect(self.on_training_started)
         self.worker.training_completed.connect(self.on_training_completed)
@@ -1314,6 +1513,7 @@ class Base(QDialog):
         self.worker.training_status.connect(self.on_training_status)
         self.worker.epoch_completed.connect(self.on_epoch_completed)
         self.worker.start()
+        self.sync_training_buttons()
 
     def on_training_started(self):
         """
@@ -1353,7 +1553,10 @@ class Base(QDialog):
             with open(f"{output_dir_path}/class_mapping.json", 'w') as json_file:
                 json.dump(mapping_to_save, json_file, indent=4)
 
-        message = "Model training has commenced.\nMonitor the console for real-time progress."
+        message = ("Model training has commenced.\n"
+                   "Monitor the console for real-time progress.\n\n"
+                   "To stop it early, reopen this dialog and press Stop Training: the "
+                   "model trained so far is kept.")
         QMessageBox.information(self, "Model Training Status", message)
         
     def on_training_error(self, error_message):
@@ -1363,6 +1566,7 @@ class Base(QDialog):
         Args:
             error_message (str): The error message.
         """
+        self.release_worker()
         QMessageBox.critical(self, "Error", error_message)
         print(error_message)
     
@@ -1399,10 +1603,16 @@ class Base(QDialog):
         if hasattr(self.main_window, 'statusBar'):
             self.main_window.statusBar().showMessage(message, 5000)
 
+    def release_worker(self):
+        """Let go of a finished run and put the buttons back."""
+        self.worker = None
+        self.sync_training_buttons()
+
     def on_training_completed(self):
         """
         Handle the event when the training completes.
         """
+        self.release_worker()
         msg_box = QMessageBox(self)
         msg_box.setWindowTitle("Model Training Status")
         msg_box.setText("Model training has successfully been completed.")
