@@ -59,6 +59,14 @@ class Base(QDialog):
         self.class_names = []
         self.class_mapping = {}
         self.auto_created_labels = set()  # Track which labels were auto-created
+
+        # Set while something other than the user is loading a model, so
+        # load_model() maps classes without asking and without announcing
+        # itself. A model trained in place has no class_mapping.json and never
+        # will -- it was trained on the project's own labels, so its class names
+        # are label short codes, and "shall I invent generic labels?" is a
+        # question with one answer that nobody needs to be asked for.
+        self.quiet_load = False
         self.label_to_class_name = {}  # Map row index to class name for checkbox tracking
 
         # Create main horizontal layout
@@ -305,10 +313,35 @@ class Base(QDialog):
         """
         raise NotImplementedError("Subclasses must implement this method")
 
-    def check_and_display_class_names(self):
+    def load_model_quietly(self, reset_mapping=True):
+        """Load the model at self.model_path without asking or announcing.
+
+        For callers that already know what the model's classes are. A class
+        name matching a project label is mapped onto it; anything left over gets
+        a generic label made for it silently, which is what the prompt would
+        have offered anyway.
+
+        The previous model's mapping is cleared first by default. It belongs to
+        the model being replaced, and keys left over from it would be matched
+        against the new model's class names by name alone.
+        """
+        if reset_mapping:
+            self.class_mapping = {}
+            self.auto_created_labels = set()
+        self.quiet_load = True
+        try:
+            self.load_model()
+        finally:
+            self.quiet_load = False
+
+    def check_and_display_class_names(self, warn_missing=True):
         """
         Check and display the class names with their mapping status in a table.
         Shows which labels are mapped from file, auto-created, or missing.
+
+        :param warn_missing: Whether to raise a message box naming the classes
+                             with no label behind them. Off for a quiet load,
+                             whose caller has already resolved them.
         """
         if not self.loaded_model:
             return
@@ -337,8 +370,9 @@ class Base(QDialog):
                 auto_created_count += 1
             else:
                 # Check if it exists in project labels
-                label = self.label_window.get_label_by_short_code(class_name)  
-                if label.id:
+                label = self.label_window.get_label_by_short_code(class_name,
+                                                                  return_review=False)
+                if label is not None and label.id:
                     # Found in project labels (from mapping file or previous creation)
                     status_emoji = "✅"
                     status_text = "Mapped"
@@ -376,7 +410,7 @@ class Base(QDialog):
             self.labels_table.setItem(row, 2, long_label_item)
 
         # Show warning if there are missing labels
-        if missing_labels:
+        if missing_labels and warn_missing:
             missing_labels_str = "\n".join(missing_labels)
             QMessageBox.warning(
                 self,
@@ -401,14 +435,22 @@ class Base(QDialog):
                 )
             self.label_window.refresh_after_batch_add()
 
-    def handle_missing_class_mapping(self, unmapped_classes=None):
+    def handle_missing_class_mapping(self, unmapped_classes=None, ask=True):
         """
         Handle missing or incomplete class mappings.
         
         :param unmapped_classes: Optional list of class names missing from the mapping.
                                 If None, all classes are treated as unmapped (no mapping file).
                                 If provided, only these classes are unmapped (partial mapping).
+        :param ask: Whether to put the question to the user. When False the
+                    labels are resolved silently -- which for a model trained in
+                    place means matching its class names to the project labels
+                    it was trained from, with nothing new created at all.
         """
+        if not ask:
+            self.create_generic_labels(unmapped_classes)
+            return
+
         if unmapped_classes is None:
             # No mapping file at all - offer to create generic labels for all classes
             reply = QMessageBox.question(
@@ -451,12 +493,25 @@ class Base(QDialog):
         """
         Create generic labels for the given class names.
         
-        :param class_names: Optional list of class names to create labels for. 
+        :param class_names: Optional list of class names to create labels for.
                            If None, uses self.class_names
+
+        A class name the project already has a label for is mapped onto that
+        label rather than counted as auto-created: nothing is invented, and the
+        table does not warn about a label the user made themselves. That is
+        every class of a model trained in place, which is trained on the
+        project's own labels and carries their short codes as its class names.
         """
         names_to_create = class_names if class_names is not None else self.class_names
 
+        created = False
         for class_name in names_to_create:
+            existing = self.label_window.get_label_by_short_code(class_name,
+                                                                 return_review=False)
+            if existing is not None:
+                self.class_mapping[class_name] = existing.to_dict()
+                continue
+
             # Create the label in the label window
             # Defer UI refresh; batch-refresh once after the loop to avoid flashing.
             label = self.label_window.add_label_if_not_exists(
@@ -466,8 +521,9 @@ class Base(QDialog):
             )
             self.class_mapping[class_name] = label.to_dict()
             self.auto_created_labels.add(class_name)  # Track as auto-created
+            created = True
 
-        if names_to_create:
+        if created:
             self.label_window.refresh_after_batch_add()
 
     def get_checked_class_names(self):
@@ -508,7 +564,7 @@ class Base(QDialog):
         """
         self.loaded_model = None
         self.model_path = None
-        self.class_mapping = None
+        self.class_mapping = {}
         self.auto_created_labels = set()
         gc.collect()
         empty_cache()

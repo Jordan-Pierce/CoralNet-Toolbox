@@ -9,6 +9,64 @@ from coralnet_toolbox.MachineLearning.TrainModel.QtBase import Base
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 
 
+# The models this task can be trained from. Module level so the Active
+# Learning session can offer exactly the same list: it trains through the
+# same worker, and a name that exists in one dialog and not the other is a
+# download failure at the start of a round.
+STANDARD_MODELS = [
+    'yolov3u.pt',
+    'yolov3-sppu.pt',
+    'yolov3-tinyu.pt',
+    'yolov5nu.pt',
+    'yolov5su.pt',
+    'yolov5mu.pt',
+    'yolov5lu.pt',
+    'yolov5xu.pt',
+    'yolov5n6u.pt',
+    'yolov5s6u.pt',
+    'yolov5m6u.pt',
+    'yolov5l6u.pt',
+    'yolov5x6u.pt',
+    'yolov8n.pt',
+    'yolov8s.pt',
+    'yolov8m.pt',
+    'yolov8l.pt',
+    'yolov8x.pt',
+    'yolov8n-oiv7.pt',
+    'yolov8s-oiv7.pt',
+    'yolov8m-oiv7.pt',
+    'yolov8l-oiv7.pt',
+    'yolov8x-oiv7.pt',
+    'yolov9t.pt',
+    'yolov9s.pt',
+    'yolov9m.pt',
+    'yolov9c.pt',
+    'yolov9e.pt',
+    'yolov10n.pt',
+    'yolov10s.pt',
+    'yolov10m.pt',
+    'yolov10l.pt',
+    'yolov10x.pt',
+    'yolo11n.pt',
+    'yolo11s.pt',
+    'yolo11m.pt',
+    'yolo11l.pt',
+    'yolo11x.pt',
+    'yolo12n.pt',
+    'yolo12s.pt',
+    'yolo12m.pt',
+    'yolo12l.pt',
+    'yolo12x.pt',
+    'yolo26n.pt',
+    'yolo26s.pt',
+    'yolo26m.pt',
+    'yolo26l.pt',
+    'yolo26x.pt',
+    'rtdetr-l.pt',
+    'rtdetr-x.pt',
+]
+
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
@@ -61,56 +119,7 @@ class Detect(Base):
         self.model_combo.clear()
         self.model_combo.setEditable(True)
 
-        standard_models = ['yolov3u.pt',
-                           'yolov3-sppu.pt',
-                           'yolov3-tinyu.pt',
-                           'yolov5nu.pt',
-                           'yolov5su.pt',
-                           'yolov5mu.pt',
-                           'yolov5lu.pt',
-                           'yolov5xu.pt',
-                           'yolov5n6u.pt',
-                           'yolov5s6u.pt',
-                           'yolov5m6u.pt',
-                           'yolov5l6u.pt',
-                           'yolov5x6u.pt',
-                           'yolov8n.pt',
-                           'yolov8s.pt',
-                           'yolov8m.pt',
-                           'yolov8l.pt',
-                           'yolov8x.pt',
-                           'yolov8n-oiv7.pt',
-                           'yolov8s-oiv7.pt',
-                           'yolov8m-oiv7.pt',
-                           'yolov8l-oiv7.pt',
-                           'yolov8x-oiv7.pt',
-                           'yolov9t.pt',
-                           'yolov9s.pt',
-                           'yolov9m.pt',
-                           'yolov9c.pt',
-                           'yolov9e.pt',
-                           'yolov10n.pt',
-                           'yolov10s.pt',
-                           'yolov10m.pt',
-                           'yolov10l.pt',
-                           'yolov10x.pt',
-                           'yolo11n.pt',
-                           'yolo11s.pt',
-                           'yolo11m.pt',
-                           'yolo11l.pt',
-                           'yolo11x.pt',
-                           'yolo12n.pt',
-                           'yolo12s.pt',
-                           'yolo12m.pt',
-                           'yolo12l.pt',
-                           'yolo12x.pt', 
-                           'yolo26n.pt',
-                           'yolo26s.pt',
-                           'yolo26m.pt',
-                           'yolo26l.pt',
-                           'yolo26x.pt',
-                           'rtdetr-l.pt',
-                           'rtdetr-x.pt']
+        standard_models = STANDARD_MODELS
 
         self.model_combo.addItems(standard_models)
     

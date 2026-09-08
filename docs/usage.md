@@ -350,6 +350,55 @@ All dock windows (Annotation Window, Label Window, Image Window, Confidence Wind
     - Use the Feature Select Tool to click-to-query semantic similarity across images
     - Supports binary mode (single object) and multi-class mode (multiple classes)
 
+- **Active Learning**: train on what you have already confirmed, then let the model
+  propose the rest — annotate a little, train, review, repeat
+  - **Detect** / **Segment**: each task keeps its own session, for as long as the
+    application is open
+  - Choose the labels to include and a model, then press **Train Round**. Training reads
+    the project directly — no dataset is exported — and uses **verified annotations
+    only**, so a round never trains on its own guesses
+  - **Browse** to start from a model of your own, or from an earlier session's best.
+    Otherwise leave the default nano model: rounds are only useful if they are cheap
+    enough to run often
+  - After a round, predictions land on un-reviewed images and the Image Window is
+    filtered to **Needs Review**. Predictions always arrive unverified
+
+  - **Review in the Annotation Gallery. This is the fastest way to work through a
+    round, and it is worth setting up before your first one.** Open **Gallery**, press
+    **Apply Filter**, and sort by **Confidence**: the model's least certain predictions
+    group together at the top, which is exactly where your attention is worth most
+    - <kbd>Ctrl</kbd> + <kbd>Space</kbd> confirms everything selected in one press —
+      select a whole high-confidence bucket and accept it at once
+    - <kbd>Ctrl</kbd> + <kbd>Right-Click</kbd> jumps to an annotation on the canvas when
+      you need to see it in context; <kbd>Delete</kbd> removes a wrong one from there
+
+  - You can also review from the session window: **Previous** / **Next** walk what is
+    waiting, least confident first, opening each image and centring the annotation.
+    **Mark Verified** confirms it; **Mark as Review** parks anything you cannot judge yet
+  - An image you clear of predictions trains as a **background** image — deleting a wrong
+    box is how you teach the model there is nothing there. An image you simply never
+    annotated is left out of training rather than treated as empty
+  - **Image Budget**: how many un-reviewed images a round predicts on. Most of it goes to
+    images with nothing on them and the rest to images you have already worked on, so a
+    round looks for new objects and checks itself where you are annotating
+  - A round skips the image open on the canvas and images already carrying predictions
+    you have not reviewed; a round that finds nothing tells you which. **Re-run
+    Predictions** predicts again over the same images at the current thresholds, which is
+    the only way a threshold change takes effect before the next round
+  - **Auto Train** starts the next round on its own once every included label has gained
+    the given number of newly confirmed annotations
+  - A round's model is kept only if it beat the best round before it, so predictions and
+    **Deploy Model** always use the best model rather than the newest. The **Rounds**
+    table reports mAP50 and mAP50-95, and **Change** is the column to read: it is blank
+    when a round trained on different labels and is not comparable
+  - **Stop** ends a running round after the current epoch, keeping what it trained
+  - **New Session** forgets the rounds and starts over, and offers to clear out round
+    folders left on disk. **Save Session** copies the best model, its results and a
+    summary of the session to a folder you choose — rounds are kept in a cache that
+    prunes its own older weights, so this is how a model becomes something you keep
+  - The Setup tab warns when your objects are too small for the image size, which is the
+    one problem more annotating will not fix
+
 ### Machine Learning
 
 - **Machine Learning**:

@@ -120,6 +120,29 @@ class Raster(QObject):
         self._thumbnail = None  # Single thumbnail cache
         self._thumbnail_edge = None  # Longest edge the cached thumbnail was built for
         
+        # Train / validation / test split, for training directly from the
+        # project. None means "derive it from the image path", which is the
+        # normal case: a derived split survives images being deleted and
+        # re-imported, and never migrates between rounds. Only a split the user
+        # pinned by hand is stored here.
+        self.split_override = None
+
+        # Active Learning review state, per task ('detect' / 'segment').
+        #
+        # 'pending'  -- a round put predictions on this image; a person has not
+        #               finished with them yet.
+        # 'reviewed' -- a person has been through it. If it then carries no
+        #               verified annotations for that task, that is a real
+        #               negative and the image trains as background, which is
+        #               the only way deleting a false positive teaches anything.
+        #
+        # Deliberately NOT persisted, unlike split_override beside it. This
+        # describes what happened during one Active Learning session rather than
+        # anything about the image, and writing it into the project file would
+        # make a mistaken "reviewed" permanent -- an image quietly training as
+        # empty in every future session, with nothing on screen to explain why.
+        self.active_learning = {}
+
         # UI state and table information
         self.checkbox_state = False
         self.row_in_table = -1
@@ -132,6 +155,11 @@ class Raster(QObject):
         # Annotation state
         self.has_annotations = False
         self.has_predictions = False
+        # Distinct from has_predictions: an annotation keeps its machine
+        # confidence after a person confirms it, so that flag cannot answer
+        # "is there still something here to review?".
+        self.has_unverified = False
+        self.unverified_count = 0
         # Cached mirror of `has_mask_content`, refreshed by update_annotation_info.
         # Filtering reads this rather than the property because the property costs
         # a full np.count_nonzero over the mask on every call.
@@ -982,6 +1010,10 @@ class Raster(QObject):
         
         predictions = [a.machine_confidence for a in vector_annotations if a.machine_confidence]
         self.has_predictions = len(predictions) > 0
+
+        self.unverified_count = sum(1 for a in vector_annotations
+                                    if not getattr(a, 'verified', True))
+        self.has_unverified = self.unverified_count > 0
         
         # Clear previous data
         self.label_counts.clear()
@@ -1043,7 +1075,8 @@ class Raster(QObject):
                        require_mask=False,
                        allowed_raster_types: Optional[Set[str]] = None,
                        require_z_channel: bool = False,
-                       require_checked: bool = False) -> bool:
+                       require_checked: bool = False,
+                       require_unverified: bool = False) -> bool:
         """
         Check if this raster matches the given filter criteria
 
@@ -1058,6 +1091,8 @@ class Raster(QObject):
             allowed_raster_types (Set[str], optional): Allowed canonical raster types.
             require_z_channel (bool): If True, require z-channel metadata.
             require_checked (bool): If True, must have its checkbox ticked.
+            require_unverified (bool): If True, must carry at least one annotation
+                still awaiting review.
 
         Returns:
             bool: True if this raster matches all filter criteria
@@ -1123,6 +1158,10 @@ class Raster(QObject):
 
         # Check prediction filter
         if require_predictions and not self.has_predictions:
+            return False
+
+        # Check unreviewed filter
+        if require_unverified and not self.has_unverified:
             return False
 
         if require_z_channel and not self.has_z_channel_metadata():
@@ -1329,6 +1368,11 @@ class Raster(QObject):
             },
             'work_areas': work_areas_list,
         }
+
+        # Only a hand-pinned split is worth persisting; a derived one is
+        # recomputed from the path and would just be noise in the project file.
+        if self.split_override is not None:
+            raster_data['state']['split_override'] = self.split_override
         # Canonical raster type for project files (backwards-compatible with legacy 'type')
         raster_data['raster_type'] = self.raster_type
         
@@ -1394,6 +1438,7 @@ class Raster(QObject):
         # State
         state = raster_dict.get('state', {})
         self.checkbox_state = state.get('checkbox_state', False)
+        self.split_override = state.get('split_override', None)
 
         # Work areas
         work_areas_list = raster_dict.get('work_areas', [])

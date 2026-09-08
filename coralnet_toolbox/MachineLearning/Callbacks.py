@@ -80,69 +80,125 @@ def _clean_metric_name(key):
     cleaned = str(key)
     
     # Remove prefixes like "metric_metrics/", "metrics/", etc.
-    prefixes_to_remove = ['metric_metrics/', 'metrics/', 'metric_', 'loss_', 'metric_val/', 'val/']
+    prefixes_to_remove = ['metric_metrics/', 'metrics/', 'metric_', 'loss_']
     for prefix in prefixes_to_remove:
         if cleaned.startswith(prefix):
             cleaned = cleaned[len(prefix):]
+            break
+
+    # Validation losses are renamed rather than stripped. Ultralytics names them
+    # val/box_loss against the same epoch's train/box_loss, and dropping the
+    # prefix collapsed the two onto one key -- which is how validation losses
+    # came to be shown to the user as though they were training losses.
+    for prefix, replacement in (('metric_val/', 'val_'), ('val/', 'val_'), ('train/', '')):
+        if cleaned.startswith(prefix):
+            cleaned = replacement + cleaned[len(prefix):]
             break
     
     return cleaned
 
 
-def _extract_loss_from_trainer(trainer):
+def _extract_epoch_losses(trainer):
     """
-    Extract all loss values and available metrics from trainer object.
-    
+    Extract this epoch's training losses, exactly as ultralytics reports them.
+
+    `trainer.tloss` is the running mean of the loss items over the epoch: the
+    numbers on the console progress bar and in the train/ columns of
+    results.csv. It is a vector -- box, cls, dfl for detection -- so it cannot
+    be read as one scalar, and `trainer.label_loss_items()` is the trainer's own
+    method for naming its components. Ultralytics writes results.csv through the
+    same call, so what the user is shown and what the run records cannot drift.
+
+    Why not `trainer.loss`, which is a scalar and was what got reported: that is
+    the *last batch's* summed loss scaled by the batch size, an order of
+    magnitude larger than the epoch means (an epoch of 0.26/1.46/0.90 reports as
+    ~16 at batch 6), and it can fall while the epoch mean rises.
+
     Args:
         trainer: The ultralytics trainer object
-        
+
+    Returns:
+        dict: Loss component name -> value; empty if the epoch has no losses yet
+    """
+    items = getattr(trainer, 'tloss', None)
+    if items is None:
+        logger.debug("Trainer has no tloss yet")
+        return {}
+
+    try:
+        labelled = trainer.label_loss_items(items)
+    except Exception as e:
+        logger.debug(f"label_loss_items failed: {e}")
+        labelled = None
+
+    # The base trainer's label_loss_items hands back the raw value under "loss";
+    # the task trainers return floats already. Both are normalised here.
+    if not isinstance(labelled, dict):
+        scalar_val = _tensor_to_scalar(items, default=None)
+        return {} if scalar_val is None else {'loss': round(scalar_val, 5)}
+
+    losses = {}
+    for key, val in labelled.items():
+        scalar_val = _tensor_to_scalar(val, default=None)
+        if scalar_val is not None:
+            losses[_clean_metric_name(key)] = round(scalar_val, 5)
+
+    return losses
+
+
+def _extract_trainer_metrics(trainer):
+    """
+    Extract the validation metrics recorded for the epoch that just finished.
+
+    Only meaningful once validation has run. Ultralytics fires
+    `on_train_epoch_end` *before* `validate()`, so reading these there reported
+    the previous epoch's numbers under the current epoch's heading -- and, on
+    the first epoch, the zero-filled dict the trainer starts with, which read as
+    a measured mAP of 0.0. `on_fit_epoch_end` fires after validation, which is
+    why the epoch signal is emitted from there.
+
+    Args:
+        trainer: The ultralytics trainer object
+
+    Returns:
+        dict: Metric name -> value
+    """
+    metrics = getattr(trainer, 'metrics', None)
+    if not isinstance(metrics, dict):
+        return {}
+
+    extracted = {}
+    for key, val in metrics.items():
+        scalar_val = _tensor_to_scalar(val, default=None)
+        if scalar_val is not None:
+            extracted[_clean_metric_name(key)] = round(scalar_val, 5)
+
+    return extracted
+
+
+def _extract_loss_from_trainer(trainer):
+    """
+    Everything worth reporting for one finished epoch: losses first, then metrics.
+
+    Losses lead because the status line truncates to the first few entries, and
+    the training losses are what say whether the epoch did anything.
+
+    Args:
+        trainer: The ultralytics trainer object
+
     Returns:
         dict: Dictionary of all loss components and metrics
     """
-    losses = {}
-    
-    # Try to get the main loss attributes
-    loss_candidates = ['tloss', 'loss', 'losses']
-    
-    for attr_name in loss_candidates:
-        if hasattr(trainer, attr_name):
-            value = getattr(trainer, attr_name, None)
-            if value is not None:
-                if isinstance(value, dict):
-                    # If it's a dict of losses, convert all values to scalars
-                    for key, val in value.items():
-                        scalar_val = _tensor_to_scalar(val)
-                        # Only add if we got a valid scalar (not None from multi-element tensors)
-                        if scalar_val is not None and (scalar_val > 0 or 'loss' in str(key).lower()):
-                            clean_key = _clean_metric_name(key)
-                            losses[clean_key] = round(scalar_val, 4)
-                            logger.debug(f"Extracted {clean_key}: {scalar_val}")
-                else:
-                    # Single loss value
-                    scalar_val = _tensor_to_scalar(value)
-                    if scalar_val is not None and scalar_val > 0:
-                        losses[attr_name] = round(scalar_val, 4)
-                        logger.debug(f"Extracted {attr_name}: {scalar_val}")
-    
-    # Try to get metrics if available (some versions include metrics in trainer)
-    if hasattr(trainer, 'metrics') and isinstance(trainer.metrics, dict):
-        try:
-            for key, val in trainer.metrics.items():
-                scalar_val = _tensor_to_scalar(val)
-                # Only add if we got a valid scalar
-                if scalar_val is not None:
-                    clean_key = _clean_metric_name(key)
-                    if clean_key not in losses:  # Don't override loss values
-                        losses[clean_key] = round(scalar_val, 4)
-                        logger.debug(f"Extracted metric {clean_key}: {scalar_val}")
-        except Exception as e:
-            logger.debug(f"Could not extract trainer metrics: {e}")
-    
+    losses = _extract_epoch_losses(trainer)
+
+    for key, value in _extract_trainer_metrics(trainer).items():
+        losses.setdefault(key, value)
+
     # If no losses were found, return a dict with status
     if not losses:
         logger.debug("No losses extracted from trainer")
         losses['status'] = 'no_loss_data'
-    
+
     return losses
 
 
@@ -320,15 +376,27 @@ def create_training_callbacks(signal_emitter):
             logger.error(f"Error in on_train_start callback: {e}", exc_info=True)
             signal_emitter.training_status.emit(f"Error starting training: {e}")
     
-    def on_train_epoch_end(trainer):
-        """Called at the end of each training epoch."""
+    def on_fit_epoch_end(trainer):
+        """Called at the end of each epoch, after validation.
+
+        Not `on_train_epoch_end`, which fires before `validate()`: reporting
+        there attached the previous epoch's mAP to this epoch's line, and the
+        trainer's zero-filled starting metrics to the first one.
+        """
         try:
             epoch = trainer.epoch + 1
             total_epochs = trainer.epochs
-            
+
+            # Ultralytics runs one more validation pass after the last epoch and
+            # fires this callback again with the epoch counter pushed past the
+            # end. That is the final summary rather than an epoch, and reporting
+            # it would drive the progress bar past its own maximum.
+            if epoch > total_epochs:
+                return
+
             # Extract all losses and metrics as a dictionary
             losses_dict = _extract_loss_from_trainer(trainer)
-            
+
             # Get learning rate from optimizer with safeguards
             lr = 0.0
             try:
@@ -337,10 +405,10 @@ def create_training_callbacks(signal_emitter):
             except (IndexError, KeyError, TypeError, AttributeError) as e:
                 logger.warning(f"Failed to get learning rate: {e}")
                 lr = 0.0
-            
+
             # Emit all losses and metrics
             signal_emitter.epoch_completed.emit(epoch, total_epochs, losses_dict, lr)
-            
+
             # Create a readable summary for the status message
             loss_str = ", ".join([f"{k}: {v}" for k, v in list(losses_dict.items())[:5]])
             if len(losses_dict) > 5:
@@ -349,9 +417,9 @@ def create_training_callbacks(signal_emitter):
                 f"Epoch {epoch}/{total_epochs} - {loss_str}"
             )
         except Exception as e:
-            logger.error(f"Error in on_train_epoch_end callback: {e}", exc_info=True)
+            logger.error(f"Error in on_fit_epoch_end callback: {e}", exc_info=True)
             signal_emitter.training_status.emit(f"Error during epoch: {e}")
-    
+
     def on_train_end(trainer):
         """Called when training ends."""
         try:
@@ -363,7 +431,7 @@ def create_training_callbacks(signal_emitter):
     
     return {
         'on_train_start': on_train_start,
-        'on_train_epoch_end': on_train_epoch_end,
+        'on_fit_epoch_end': on_fit_epoch_end,
         'on_train_end': on_train_end,
     }
 

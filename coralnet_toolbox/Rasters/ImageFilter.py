@@ -45,6 +45,7 @@ class ImageFilter(QObject):
                       allowed_raster_types: Optional[Set[str]] = None,
                       require_z_channel: bool = False,
                       require_checked: bool = False,
+                      require_unverified: bool = False,
                       selected_paths: List[str] = None,
                       use_threading: bool = False,
                       callback: Callable = None) -> List[str]:
@@ -59,6 +60,7 @@ class ImageFilter(QObject):
             require_predictions (bool): Require images to have predictions
             require_mask (bool): Require images to have a mask annotation
             require_checked (bool): Require images to have their checkbox ticked
+            require_unverified (bool): Require images to have annotations awaiting review
             selected_paths (List[str]): List of paths to filter from
             use_threading (bool): Whether to use multithreading
             callback (Callable): Optional callback function to call when filtering is complete
@@ -76,6 +78,7 @@ class ImageFilter(QObject):
             require_mask,
             require_z_channel,
             require_checked,
+            require_unverified,
             allowed_raster_types is not None,
             selected_paths,
         ]):
@@ -92,14 +95,14 @@ class ImageFilter(QObject):
                 search_text, search_label, require_annotations,
                 require_no_annotations, require_predictions, require_mask,
                 allowed_raster_types, require_z_channel, require_checked,
-                selected_paths, callback
+                require_unverified, selected_paths, callback
             )
         else:
             return self._filter_images_sync(
                 search_text, search_label, require_annotations,
                 require_no_annotations, require_predictions, require_mask,
                 allowed_raster_types, require_z_channel, require_checked,
-                selected_paths, callback
+                require_unverified, selected_paths, callback
             )
 
     def _filter_images_sync(self,
@@ -112,6 +115,7 @@ class ImageFilter(QObject):
                             allowed_raster_types: Optional[Set[str]],
                             require_z_channel: bool,
                             require_checked: bool,
+                            require_unverified: bool,
                             selected_paths: List[str],
                             callback: Callable = None) -> List[str]:
         """
@@ -136,6 +140,7 @@ class ImageFilter(QObject):
             allowed_raster_types=allowed_raster_types,
             require_z_channel=require_z_channel,
             require_checked=require_checked,
+            require_unverified=require_unverified,
             selected_paths=selected_paths
         )
         
@@ -160,6 +165,7 @@ class ImageFilter(QObject):
                                allowed_raster_types: Optional[Set[str]],
                                require_z_channel: bool,
                                require_checked: bool,
+                               require_unverified: bool,
                                selected_paths: List[str],
                                callback: Callable = None) -> List[str]:
         """
@@ -209,6 +215,7 @@ class ImageFilter(QObject):
                     allowed_raster_types=allowed_raster_types,
                     require_z_channel=require_z_channel,
                     require_checked=require_checked,
+                    require_unverified=require_unverified,
                 )
                 futures[future] = path
             

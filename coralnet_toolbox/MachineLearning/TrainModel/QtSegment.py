@@ -9,6 +9,31 @@ from coralnet_toolbox.MachineLearning.TrainModel.QtBase import Base
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 
 
+# The models this task can be trained from. Module level so the Active
+# Learning session can offer exactly the same list: it trains through the
+# same worker, and a name that exists in one dialog and not the other is a
+# download failure at the start of a round.
+STANDARD_MODELS = [
+    'yolov8n-seg.pt',
+    'yolov8s-seg.pt',
+    'yolov8m-seg.pt',
+    'yolov8l-seg.pt',
+    'yolov8x-seg.pt',
+    'yolov9c-seg.pt',
+    'yolov9e-seg.pt',
+    'yolo11n-seg.pt',
+    'yolo11s-seg.pt',
+    'yolo11m-seg.pt',
+    'yolo11l-seg.pt',
+    'yolo11x-seg.pt',
+    'yolo26n-seg.pt',
+    'yolo26s-seg.pt',
+    'yolo26m-seg.pt',
+    'yolo26l-seg.pt',
+    'yolo26x-seg.pt',
+]
+
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
@@ -61,24 +86,7 @@ class Segment(Base):
         self.model_combo.clear()
         self.model_combo.setEditable(True)
 
-        standard_models = ['yolov8n-seg.pt',
-                           'yolov8s-seg.pt',
-                           'yolov8m-seg.pt',
-                           'yolov8l-seg.pt',
-                           'yolov8x-seg.pt',
-                           'yolov9c-seg.pt',
-                           'yolov9e-seg.pt',
-                           'yolo11n-seg.pt',
-                           'yolo11s-seg.pt',
-                           'yolo11m-seg.pt',
-                           'yolo11l-seg.pt',
-                           'yolo11x-seg.pt',
-                           'yolo26n-seg.pt',
-                           'yolo26s-seg.pt',
-                           'yolo26m-seg.pt',
-                           'yolo26l-seg.pt',
-                           'yolo26x-seg.pt'
-        ]
+        standard_models = STANDARD_MODELS
         
         self.model_combo.addItems(standard_models)
                 

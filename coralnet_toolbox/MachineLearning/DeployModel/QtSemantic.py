@@ -301,20 +301,22 @@ class Semantic(Base):
             mapped_classes, unmapped_classes, unused_mapping_keys = self._find_unmapped_classes()
 
             if not self.class_mapping:
-                self.handle_missing_class_mapping()
+                self.handle_missing_class_mapping(ask=not self.quiet_load)
             elif unmapped_classes:
                 self.add_labels_to_label_window()
-                self.handle_missing_class_mapping(unmapped_classes)
+                self.handle_missing_class_mapping(unmapped_classes,
+                                                  ask=not self.quiet_load)
             else:
                 self.add_labels_to_label_window()
 
             # Display the class names
-            self.check_and_display_class_names()
+            self.check_and_display_class_names(warn_missing=not self.quiet_load)
             self.model_state_changed.emit()
 
             # Update the status bar
             self.status_bar.setText(f"Model loaded: {os.path.basename(self.model_path)}")
-            QMessageBox.information(self, "Model Loaded", "Model loaded successfully.")
+            if not self.quiet_load:
+                QMessageBox.information(self, "Model Loaded", "Model loaded successfully.")
 
         except RuntimeError:
             # Model load was cancelled by user

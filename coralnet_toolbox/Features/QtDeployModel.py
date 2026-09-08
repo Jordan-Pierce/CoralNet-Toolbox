@@ -135,9 +135,14 @@ class FeaturesDeployModelDialog(QDialog):
 
         self.store_pooled_combo = QComboBox()
         self.store_pooled_combo.addItems(["True", "False"])
-        self.store_pooled_combo.setCurrentText("False")
+        # On by default: the pooled vector is one [C] row in the sidecar's JSON
+        # next to a dense map of megabytes, and it is what image-level ranking
+        # reads -- Active Learning's diversity acquisition included. A bake that
+        # left it out is a bake that has to be run again to be useful.
+        self.store_pooled_combo.setCurrentText("True")
         self.store_pooled_combo.setToolTip(
-            "Cache pooled vector for Explorer (enables cheap image-level similarity)"
+            "Cache pooled vector for Explorer and Active Learning\n"
+            "(enables cheap image-level similarity; a few KB per image)"
         )
         options_layout.addRow("Store Pooled Vector:", self.store_pooled_combo)
 
