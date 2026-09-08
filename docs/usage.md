@@ -376,10 +376,8 @@ All dock windows (Annotation Window, Label Window, Image Window, Confidence Wind
     waiting, least confident first, opening each image and centring the annotation.
     **Mark Verified** confirms it; **Mark as Review** parks anything you cannot judge yet
   - An image you clear of predictions trains as a **background** image — deleting a wrong
-    box is how you teach the model there is nothing there. The Raster Window's right-click
-    **Active Learning... > Mark Empty** says the same for many images at once, and
-    **Clear Review State** undoes it. An image you simply never annotated is left out of
-    training rather than treated as empty
+    box is how you teach the model there is nothing there. An image you simply never
+    annotated is left out of training rather than treated as empty
   - **Image Budget**: how many un-reviewed images a round predicts on. Most of it goes to
     images with nothing on them and the rest to images you have already worked on, so a
     round looks for new objects and checks itself where you are annotating

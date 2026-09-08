@@ -1865,7 +1865,13 @@ class Base(QDialog):
         return states.get(self.task) if isinstance(states, dict) else None
 
     def set_review_state(self, raster, state):
-        """Record this task's review state on a raster, creating the dict."""
+        """Record this task's review state on a raster, creating the dict.
+
+        A manual bulk "Mark Empty" used to be reachable from the Image Window's
+        context menu, pulled out for the same reason as the split pin above.
+        TODO: add a bulk mark-empty / clear-review control here, scoped to this
+        session's highlighted images.
+        """
         if raster is None:
             return
         if not isinstance(getattr(raster, 'active_learning', None), dict):
@@ -2292,7 +2298,15 @@ class Base(QDialog):
                 "on a few images, then train a first round")
 
     def split_overrides(self, image_paths):
-        """Per-image split assignments a user pinned on the raster."""
+        """Per-image split assignments a user pinned on the raster.
+
+        Nothing currently sets `split_override` -- it used to be reachable from
+        the Image Window's context menu, pulled out because pinning a split for
+        a raster list decoupled from any open session could drift out of sync
+        with what the session knew. TODO: add a bulk "Pin to Train / Validation"
+        control here, scoped to this session's highlighted images, so setting it
+        stays coupled to a round.
+        """
         raster_manager = self.image_window.raster_manager
         overrides = {}
         for image_path in image_paths:
@@ -2353,8 +2367,7 @@ class Base(QDialog):
             return "no images carry verified annotations for this task yet"
         if image_count < 20:
             return (f"{reason} ({image_count} images split by path, so Refresh will not "
-                    f"change it - annotate more images, or pin one in the Image Window "
-                    f"under Training Split)")
+                    f"change it - annotate more images)")
         return reason
 
     # ------------------------------------------------------------------

@@ -60,9 +60,6 @@ class NoArrowKeyTableView(QTableView):
         # Call the base class implementation to handle standard behavior
         # like row selection and context menu triggers.
         super().mousePressEvent(event)
-        
-
-NEWLINE = chr(10)
 
 
 class CheckableComboBox(QComboBox):
@@ -1523,63 +1520,11 @@ class ImageWindow(QWidget):
             lambda: self.remove_feature_map_highlighted_images()
         )
 
-        # Create Active Learning sub-menu
-        #
-        # Declaring an image empty is a statement about the image, made while
-        # looking at the list of them, and it is worth making about twenty at
-        # once -- so it lives here rather than as a button in the session
-        # dialog, which can only ever speak about whichever image is open.
-        active_learning_menu = context_menu.addMenu("Active Learning...")
-        for label, task in (("Mark Empty for Detection", 'detect'),
-                            ("Mark Empty for Segmentation", 'segment')):
-            action = active_learning_menu.addAction(
-                f"{label} ({count} Highlighted Raster{'s' if count > 1 else ''})"
-            )
-            action.setToolTip(
-                "There is nothing to annotate on these images, and nothing should be:"
-                + NEWLINE +
-                "train them as background. That is how deleting a wrong prediction"
-                + NEWLINE +
-                "teaches the model there is nothing there."
-                + NEWLINE +
-                "Do NOT use this on images that simply have not been annotated yet - it"
-                + NEWLINE +
-                "would train the model to find nothing where you have not looked."
-            )
-            action.triggered.connect(
-                lambda checked=False, t=task: self.set_highlighted_images_reviewed(t, True)
-            )
-
-        active_learning_menu.addSeparator()
-        clear_review_action = active_learning_menu.addAction(
-            f"Clear Review State ({count} Highlighted Raster{'s' if count > 1 else ''})"
-        )
-        clear_review_action.setToolTip(
-            "Take these images back out of Active Learning training as background."
-        )
-        clear_review_action.triggered.connect(
-            lambda: self.set_highlighted_images_reviewed(None, False)
-        )
-
-        # Create Training Split sub-menu
-        #
-        # The split is otherwise derived from a hash of the image path, which is
-        # what stops an image migrating between train and validation from one
-        # Active Learning round to the next and inflating every metric after it.
-        # The cost of that stability is that a small project can land badly and
-        # cannot re-roll -- measured, about one project in ten of ten images has
-        # no validation split at all -- and pinning an image by hand was the
-        # documented way out with no way to do it.
-        split_menu = context_menu.addMenu("Training Split...")
-        for label, value in (("Automatic (from path)", None),
-                             ("Pin to Train", "train"),
-                             ("Pin to Validation", "val")):
-            split_action = split_menu.addAction(
-                f"{label} for {count} Highlighted Raster{'s' if count > 1 else ''}"
-            )
-            split_action.triggered.connect(
-                lambda checked=False, v=value: self.set_highlighted_images_split(v)
-            )
+        # Active Learning review-state and Training Split pin used to be set from
+        # bulk actions here. Pulled out: setting them from a raster list decoupled
+        # from any open session let them drift out of sync with what the session
+        # actually knew about. Stubbed in the Active Learning workflow instead --
+        # see ActiveLearning/QtBase.py -- to be wired up later.
 
         context_menu.addSeparator()
 
@@ -1594,64 +1539,6 @@ class ImageWindow(QWidget):
         )
 
         context_menu.exec_(self.tableView.viewport().mapToGlobal(position))
-
-    def set_highlighted_images_reviewed(self, task, reviewed):
-        """Mark highlighted rasters reviewed for an Active Learning task, or clear it.
-
-        A reviewed image carrying no annotations is a background image: it trains
-        as empty, which is the only way a deleted false positive teaches the
-        model anything. An image nobody has reviewed is simply left out of
-        training, because unannotated does not mean empty.
-
-        Args:
-            task (str or None): 'detect', 'segment', or None to clear every task.
-            reviewed (bool): True to declare them reviewed, False to clear.
-        """
-        paths = self.table_model.get_highlighted_paths()
-        if not paths:
-            return
-
-        for path in paths:
-            raster = self.raster_manager.get_raster(path)
-            if raster is None:
-                continue
-            if not isinstance(getattr(raster, 'active_learning', None), dict):
-                raster.active_learning = {}
-            if reviewed and task:
-                raster.active_learning[task] = 'reviewed'
-            else:
-                raster.active_learning.clear()
-
-        what = f"marked reviewed for {task}" if reviewed else "cleared of review state"
-        self.main_window.status_bar.showMessage(f"{len(paths)} images {what}.", 5000)
-
-    def set_highlighted_images_split(self, split):
-        """Pin the highlighted rasters to a training split, or back to automatic.
-
-        Args:
-            split (str or None): 'train', 'val', or None to derive it from the
-                image path again.
-        """
-        paths = self.table_model.get_highlighted_paths()
-        if not paths:
-            return
-
-        for path in paths:
-            raster = self.raster_manager.get_raster(path)
-            if raster is not None:
-                raster.split_override = split
-
-        # The tooltip reports the split, so those rows are now stale.
-        rows = [self.table_model.get_row_for_path(path) for path in paths]
-        rows = [row for row in rows if row >= 0]
-        if rows:
-            self.table_model.dataChanged.emit(
-                self.table_model.index(min(rows), 0),
-                self.table_model.index(max(rows), self.table_model.columnCount() - 1))
-
-        where = "derived from the image path" if split is None else f"pinned to {split}"
-        self.main_window.status_bar.showMessage(
-            f"Training split {where} for {len(paths)} images.", 5000)
 
     def _open_extract_frames_dialog(self, video_path: str):
         """Open the Extract Frames dialog pre-loaded with a VideoRaster.
