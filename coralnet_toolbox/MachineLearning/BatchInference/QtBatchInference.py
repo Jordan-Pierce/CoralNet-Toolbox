@@ -1947,6 +1947,13 @@ class BatchInferenceDialog(QDialog):
                         # Build a stable label_id -> class_id map (same ordering as MaskAnnotation.sync_label_map)
                         mask_ann_map = {lbl.id: (i + 1) for i, lbl in enumerate(project_labels)}
 
+                        # Vectorizing belongs to the deploy dialog -- there are no
+                        # separate controls here -- and runs through its own call so
+                        # a batch run means the same thing as a single-image one.
+                        _model_dialog = getattr(self, '_active_model_dialog', None)
+                        _auto_vectorize = getattr(self, '_semantic_auto_vectorize', False)
+                        _split_touching = getattr(self, '_semantic_split_touching', False)
+
                         offset = (0, 0)
                         if inf_result.work_area is not None:
                             offset = (int(inf_result.work_area.rect.x()),
@@ -1996,6 +2003,18 @@ class BatchInferenceDialog(QDialog):
                                             transparency=128,
                                             rasterio_src=None,
                                         )
+                                        # Convert before the canvas is built: the
+                                        # polygons take their pixels out of the mask,
+                                        # and the overlay cached for this frame has to
+                                        # show what is actually left behind rather than
+                                        # the same regions twice.
+                                        if _auto_vectorize and _model_dialog is not None:
+                                            _model_dialog.vectorize_mask_annotation(
+                                                tmp_mask, raster, inf_result.batch_key,
+                                                auto_vectorize=True,
+                                                split_touching=_split_touching,
+                                            )
+
                                         # Make a deep copy of the QImage so we can drop tmp_mask safely
                                         tmp_mask._ensure_canvas()
                                         qimg_copy = tmp_mask.qimage.copy() if tmp_mask.qimage is not None else None
@@ -2408,10 +2427,24 @@ class BatchInferenceDialog(QDialog):
         if is_semantic_run:
             processed = getattr(self, '_semantic_processed_images', set())
             raster_manager = getattr(self.image_window, 'raster_manager', None)
+            # Vectorizing is per image, never per item: it has to see the whole
+            # mask, and a work-area run paints that one tile at a time. Here is
+            # the first point where every tile for an image has landed.
+            model_dialog = getattr(self, '_active_model_dialog', None)
+            auto_vectorize = getattr(self, '_semantic_auto_vectorize', False)
+            split_touching = getattr(self, '_semantic_split_touching', False)
             for image_path in processed:
                 try:
                     raster = raster_manager.get_raster(image_path) if raster_manager else None
                     if raster and raster.mask_annotation:
+                        if auto_vectorize and model_dialog is not None:
+                            # Statistics are recalculated after, not before: the
+                            # conversion empties the mask of everything it traced.
+                            model_dialog.vectorize_mask_annotation(
+                                raster.mask_annotation, raster, image_path,
+                                auto_vectorize=True,
+                                split_touching=split_touching,
+                            )
                         raster.mask_annotation.recalculate_class_statistics()
                     self.image_window.update_image_annotations(image_path)
                 except Exception as e:
