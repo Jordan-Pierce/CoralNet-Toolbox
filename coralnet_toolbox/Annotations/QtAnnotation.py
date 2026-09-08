@@ -58,6 +58,27 @@ def geometry_epoch():
     return _GEOMETRY_EPOCH
 
 
+# Bumped whenever the *set* of annotations changes -- an add or a delete.
+# Geometry epoch cannot cover this: a cache holding annotations that no longer
+# exist, or missing ones that now do, is stale without any shape having moved.
+# The canvas's click index needs both, and used to get membership implicitly by
+# being rebuilt from whatever the phantom layer last drew. That coupling is
+# what made a deselected annotation unclickable: the incremental single-group
+# rebuild redraws the layer without ever revisiting the index's source list.
+_MEMBERSHIP_EPOCH = 0
+
+
+def bump_membership_epoch():
+    """Record that an annotation was added or removed."""
+    global _MEMBERSHIP_EPOCH
+    _MEMBERSHIP_EPOCH += 1
+
+
+def membership_epoch():
+    """Current membership generation; compare for cache validity."""
+    return _MEMBERSHIP_EPOCH
+
+
 def create_pen(color: QColor, is_selected: bool, verified: bool = True) -> QPen:
     """Return a QPen styled for the given annotation state.
 

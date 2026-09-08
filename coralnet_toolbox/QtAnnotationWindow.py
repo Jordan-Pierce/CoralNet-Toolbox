@@ -24,7 +24,7 @@ from coralnet_toolbox.Annotations import (
     RectangleAnnotation,
     MaskAnnotation,
 )
-from coralnet_toolbox.Annotations.QtAnnotation import RenderMode
+from coralnet_toolbox.Annotations.QtAnnotation import RenderMode, bump_membership_epoch
 
 from coralnet_toolbox.Tools import (
     PatchTool,
@@ -4121,6 +4121,17 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
 
         return self.image_annotations_dict.get(image_path, [])
 
+    def get_hit_index_annotations(self):
+        """Feed the canvas's click index from the model, not the phantom layer.
+
+        Selected annotations are included: SelectTool resolves those through
+        Qt's own hit test first and skips them here, and leaving them out is
+        exactly what used to strand a deselected annotation outside the index.
+        """
+        if not self.active_image:
+            return None
+        return self.get_image_annotations()
+
     def get_image_review_annotations(self, image_path=None):
         """Get all annotations marked for review for the specified image path or current image."""
         if not image_path:
@@ -4231,7 +4242,8 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
             self.image_annotations_dict[annotation.image_path] = []
         if annotation not in self.image_annotations_dict[annotation.image_path]:
             self.image_annotations_dict[annotation.image_path].append(annotation)
-            
+            bump_membership_epoch()
+
         # Inject / update scale
         self.set_annotation_scale(annotation)
 
@@ -4336,6 +4348,8 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
         # Restore spatial indexing
         self.scene.setItemIndexMethod(QGraphicsScene.BspTreeIndex)
 
+        bump_membership_epoch()
+
         if images_to_update:
             # ---> Respect streaming flag to avoid O(N²) UI freezes <---
             if not getattr(self, 'is_streaming_inference', False):
@@ -4371,6 +4385,7 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
             if annotation.image_path in self.image_annotations_dict:
                 if annotation in self.image_annotations_dict[annotation.image_path]:
                     self.image_annotations_dict[annotation.image_path].remove(annotation)
+                    bump_membership_epoch()
 
             if isinstance(annotation, MaskAnnotation):
                 try:
@@ -4449,6 +4464,7 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
                 # Clean up empty lists to prevent memory leaks
                 if not self.image_annotations_dict[image_path]:
                     del self.image_annotations_dict[image_path]
+        bump_membership_epoch()
 
         # 4. Remove from main dict, scene, and emit signals (Optimized)
         

@@ -212,12 +212,11 @@ class PhantomHitIndex:
     image -- 4 ms per click at 15k annotations, on every click including the
     ones that land on empty space to deselect.
 
-    Built as a side effect of rendering the phantom layer, over exactly the
-    annotations that layer draws. That is deliberate: it inherits the phantom
-    layer's invalidation for free. Any mutation that would leave this index
-    stale -- a move, a delete, a label change -- already has to rebuild the
-    phantom layer or the canvas would be drawing the annotation in the wrong
-    place, which is a louder bug than a missed click.
+    Built over the current image's whole annotation list, selected ones
+    included -- the caller filters those out itself, and an index that mirrored
+    the phantom layer's contents instead left every annotation that happened to
+    be selected during a full rebuild unclickable afterwards. Invalidated by
+    the geometry and membership epochs; see get_phantom_hit_index.
     """
 
     CELL_PX = 512.0
@@ -680,12 +679,12 @@ class BaseCanvas(QGraphicsView):
         # value, so Qt stacks them by insertion order — which an incremental
         # rebuild would otherwise disturb. See _restack_phantom_group.
         self._phantom_group_order = []
-        # Spatial index over the same annotations, for click resolution. Built
-        # lazily on first click after each layer rebuild; None means fall back
-        # to a linear scan. See get_phantom_hit_index.
+        # Spatial index over the current image's annotations, for click
+        # resolution. Built lazily on the first click after any geometry or
+        # membership change; None means fall back to a linear scan. See
+        # get_phantom_hit_index.
         self._phantom_hit_index = None
-        self._phantom_hit_source = None
-        self._phantom_hit_epoch = None
+        self._phantom_hit_key = None
 
         # Placeholder label for empty canvas
         self._placeholder_label = QLabel(
@@ -1402,37 +1401,51 @@ class BaseCanvas(QGraphicsView):
         self.scene.setItemIndexMethod(QGraphicsScene.BspTreeIndex)
         self._phantom_group_order = list(self._readonly_annotation_items)
 
-        # Remember what this layer was built from, but do not index it yet:
-        # most rebuilds (inference results, a transparency change, toggling a
-        # label's visibility) are never followed by a click, and indexing 15k
-        # annotations costs 14 ms. The first hit-test pays for it instead.
-        self._phantom_hit_source = annotations
-        self._phantom_hit_index = None
-
         self.viewport().update()
 
-    def get_phantom_hit_index(self):
-        """The click-resolution index for the current phantom layer.
+    def get_hit_index_annotations(self):
+        """The annotations the click index should cover, or None for no index.
 
-        Built on first use after a rebuild and reused until some annotation's
-        geometry changes. Both halves of that matter: building costs 14 ms on a
-        15k-annotation image while a click saves 4 ms, so an index thrown away
-        on every selection change would cost more than it earns. Selection does
-        not move anything, so it does not invalidate; the geometry epoch does.
-
-        Returns None when the layer has not been built, in which case callers
-        fall back to scanning every annotation.
+        A hook: the base canvas owns no annotation model, so it never indexes.
+        AnnotationWindow overrides it with the current image's annotations.
         """
-        if self._phantom_hit_source is None:
+        return None
+
+    def get_phantom_hit_index(self):
+        """The click-resolution index for the current image's annotations.
+
+        Built on first use and reused until some annotation's geometry changes,
+        one is added or removed, or the image does. Both halves of that matter:
+        building costs 8 ms on a 10k-annotation image while a click saves
+        2.5 ms, so an index thrown away on every selection change would cost
+        more than it earns. Selection moves nothing and adds nothing, so it
+        does not invalidate.
+
+        Deliberately NOT tied to the phantom layer. It used to be built from
+        whatever that layer last drew, which meant it silently excluded
+        anything selected at the time of a full rebuild -- and the incremental
+        single-group rebuild that runs on deselect never put it back. Those
+        annotations stayed drawn but unclickable until some later full rebuild,
+        reachable only by rubber band. Indexing the model instead of the layer
+        also stops a transparency change or a visibility toggle from throwing
+        the index away for nothing; per-candidate visibility is the caller's
+        check, made against live state at query time.
+
+        Returns None when there is nothing to index, in which case callers fall
+        back to scanning every annotation.
+        """
+        annotations = self.get_hit_index_annotations()
+        if annotations is None:
             return None
         # Imported here, not at module scope: this module is imported by the
         # annotation classes, so a top-level import would close the cycle.
-        from coralnet_toolbox.Annotations.QtAnnotation import geometry_epoch
+        from coralnet_toolbox.Annotations.QtAnnotation import (geometry_epoch,
+                                                               membership_epoch)
 
-        epoch = geometry_epoch()
-        if self._phantom_hit_index is None or self._phantom_hit_epoch != epoch:
-            self._phantom_hit_index = PhantomHitIndex(self._phantom_hit_source)
-            self._phantom_hit_epoch = epoch
+        key = (geometry_epoch(), membership_epoch(), self.current_image_path)
+        if self._phantom_hit_index is None or self._phantom_hit_key != key:
+            self._phantom_hit_index = PhantomHitIndex(annotations)
+            self._phantom_hit_key = key
         return self._phantom_hit_index
 
     def _clear_readonly_annotations(self):
@@ -1445,9 +1458,6 @@ class BaseCanvas(QGraphicsView):
                 pass
         self._readonly_annotation_items = {}
         self._phantom_group_order = []
-        # Stale index is worse than none: it would silently misresolve clicks.
-        self._phantom_hit_index = None
-        self._phantom_hit_source = None
 
     def _make_phantom_item(self, annotations, color, transparency, is_selected):
         """Build the single scene item that draws one phantom colour group.
