@@ -59,7 +59,9 @@ import warnings
 
 import os
 import gc
+import hashlib
 from html import escape
+import json
 import shutil
 import datetime
 import statistics
@@ -69,7 +71,7 @@ import numpy as np
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QBrush, QColor, QFont
 from PyQt5.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog,
-                             QDialogButtonBox, QDoubleSpinBox, QFormLayout, QGroupBox,
+                             QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGroupBox,
                              QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPushButton,
                              QFrame, QProgressBar, QScrollArea, QSpinBox, QTabWidget,
                              QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
@@ -388,6 +390,15 @@ HISTORY_HEADERS = ["Round", "Train Images", "Background", "Annotations",
 # Per-image Active Learning review state, stored on the raster.
 REVIEW_PENDING = 'pending'
 REVIEW_REVIEWED = 'reviewed'
+
+# What counts as a plot worth keeping beside a saved model. Ultralytics writes
+# its curves and confusion matrices at the top level of a run directory.
+PLOT_SUFFIXES = ('.png', '.jpg', '.jpeg')
+
+# Where a chosen model is copied to when it would otherwise sit in the path of
+# this dialog's own housekeeping. Not a `round_*` directory, so neither the
+# per-round pruning nor the New Session sweep can see it.
+BASE_MODEL_SUBDIR = 'base'
 
 # Round directories live under the launch directory's .cache, beside the
 # Explorer's embedding cache and in-place training's scaffolding. They are
@@ -824,6 +835,9 @@ class Base(QDialog):
         group_box = QGroupBox("Model")
         layout = QFormLayout()
 
+        # One editable combo plus Browse, rather than the Train Model dialog's two
+        # tabs. Two fields where only one is visible is what let a stale path win
+        # over the dropdown there; one field cannot disagree with itself.
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
         self.model_combo.setToolTip(
@@ -831,8 +845,21 @@ class Base(QDialog):
             "models. A nano model is the default on purpose: rounds are only useful\n"
             "if they are cheap enough to run often. Reach for a larger one once the\n"
             "labels have settled.\n"
-            "The box is editable, so a path to your own weights can be typed in.")
-        layout.addRow("Model:", self.model_combo)
+            "The box is editable, and Browse fills it with a model of your own --\n"
+            "your file is only ever read, never trained over.")
+
+        self.browse_model_button = QPushButton("Browse...")
+        self.browse_model_button.setToolTip(
+            "Choose a trained model to start from: your own weights, or the best.pt\n"
+            "of an earlier session.\n"
+            "The file is checked for this task before it is accepted, and a round\n"
+            "only ever reads it -- training writes to its own round folder.")
+        self.browse_model_button.clicked.connect(self.browse_base_model)
+
+        model_row = QHBoxLayout()
+        model_row.addWidget(self.model_combo, 1)
+        model_row.addWidget(self.browse_model_button)
+        layout.addRow("Model:", model_row)
 
         self.warm_start_combo = bool_combo(
             True,
@@ -1567,6 +1594,18 @@ class Base(QDialog):
         self.new_session_button.clicked.connect(self.new_session)
         button_layout.addWidget(self.new_session_button)
 
+        # Beside New Session because they are the two ends of the same decision:
+        # rounds are written to a cache that prunes itself and that New Session
+        # offers to empty, so this is how anything leaves a session at all.
+        self.save_session_button = QPushButton("Save Session")
+        self.save_session_button.setToolTip(
+            "Copy the best model and its round's results to a folder you choose.\n"
+            "Rounds are kept in a cache that prunes older weights on its own, so\n"
+            "this is how a session's model becomes something you keep.")
+        self.save_session_button.clicked.connect(self.save_session)
+        self.save_session_button.setEnabled(False)
+        button_layout.addWidget(self.save_session_button)
+
         button_layout.addSpacing(16)
 
         self.ready_label = QLabel("❌ Not Ready")
@@ -2091,6 +2130,7 @@ class Base(QDialog):
             self.ready_label.setText("✅ Ready" if ready else f"❌ Not Ready - {reason}")
             self.train_button.setEnabled(ready and self.worker is None)
             self.new_session_button.setEnabled(self.worker is None)
+            self.save_session_button.setEnabled(self.saveable_round() is not None)
             self.maybe_auto_train()
 
         except Exception as e:
@@ -2508,6 +2548,9 @@ class Base(QDialog):
         run_name = f"round_{round_number:02d}_{datetime.datetime.now():%Y%m%d_%H%M%S}"
 
         model, warm_note = self.warm_start_source(list(dataset.names))
+        # Also covers a path typed straight into the combo, which never went
+        # past Browse and so was never protected.
+        model = self.protect_chosen_model(model)
 
         params = self.training_params(data_path, model, run_name)
         params['in_place_dataset'] = dataset
@@ -2516,6 +2559,10 @@ class Base(QDialog):
             'round': round_number,
             'dataset': dataset,
             'run_dir': os.path.join(params['project'], run_name),
+            # What this round started from, for the saved summary: a session of
+            # eight rounds is unreadable later without knowing which of them
+            # were cold and which continued the one before.
+            'base_model': model,
             # The model's class names are exactly these, in this order, so the
             # prediction pass needs them to map detections back onto labels.
             'labels': list(dataset.names),
@@ -2584,6 +2631,147 @@ class Base(QDialog):
                     "the label set grew.")
         return self.last_model_path, note
 
+    # ------------------------------------------------------------------
+    # Choosing a model to start from
+    # ------------------------------------------------------------------
+
+    def base_models_root(self):
+        """Where a chosen model is copied when it needs protecting."""
+        return os.path.join(self.runs_root(), BASE_MODEL_SUBDIR)
+
+    def browse_base_model(self):
+        """Pick a trained model for rounds to start from.
+
+        Checked here rather than at round start: finding out that a
+        segmentation model cannot drive a detection session belongs at the
+        moment of choosing, not five minutes into training.
+        """
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select a Model to Train From", "",
+            "Model weights (*.pt);;Model configs (*.yaml *.yml);;All files (*)")
+        if not path:
+            return
+
+        usable, reason = self.validate_base_model(path)
+        if not usable:
+            QMessageBox.warning(self, "Cannot Use That Model", reason)
+            return
+
+        self.model_combo.setEditText(self.protect_chosen_model(os.path.abspath(path)))
+        self.refresh_dataset(quiet=False)
+
+    def validate_base_model(self, path):
+        """Return (usable, reason) for a model file the user picked.
+
+        Two checks, both of which have cost somebody a round before:
+
+        * **It has to exist.** Ultralytics treats an unresolvable path as a hub
+          model rather than an error, and what follows is a segfault rather than
+          an exception -- which is why `deploy_model()` carries the same guard.
+        * **It has to be for this task.** A segmentation checkpoint in a
+          detection session trains, badly, and the failure looks like a bad
+          dataset rather than a bad model.
+        """
+        if not path or not os.path.isfile(path):
+            return False, f"There is no file at:\n{path}"
+
+        suffix = os.path.splitext(path)[1].lower()
+        if suffix not in ('.pt', '.yaml', '.yml'):
+            return False, ("A round trains from Ultralytics weights (.pt) or a model "
+                           f"config (.yaml).\n\n{os.path.basename(path)} is neither. "
+                           "An exported model (.onnx, .engine) cannot be trained from.")
+
+        try:
+            from ultralytics import YOLO
+            task = getattr(YOLO(path), 'task', None)
+        except Exception as e:
+            return False, f"Ultralytics could not load that model:\n\n{e}"
+
+        if task and task != self.task:
+            return False, (f"That model is for {TASK_LABELS.get(task, task)}, and this is a "
+                           f"{TASK_LABELS.get(self.task, self.task)} session.\n\n"
+                           "Open the Active Learning session for its task, or choose a "
+                           "different model.")
+
+        return True, ""
+
+    def inside_runs_root(self, path):
+        """Whether a path lies under the directory this session writes rounds to."""
+        try:
+            root = os.path.abspath(self.runs_root())
+            resolved = os.path.abspath(path)
+        except Exception:
+            return False
+        return os.path.normcase(resolved).startswith(os.path.normcase(root) + os.sep)
+
+    def protect_chosen_model(self, model):
+        """Return a path to `model` that this dialog's housekeeping cannot delete.
+
+        Nothing here ever writes to the model it trains from -- Ultralytics
+        reads the checkpoint once and writes only under the round's own run
+        directory. What *can* reach a chosen model is this dialog's two deletion
+        paths, and only when the file sits inside the runs root:
+
+        * `prune_round_weights()` removes the weights of rounds beyond the last
+          few, so pointing round 5 at round 1's best.pt would delete it mid-session.
+        * The New Session sweep offers every `round_*/weights` it does not own,
+          checked by default -- and an earlier session's best.pt is the single
+          most likely thing to pick.
+
+        So a model from inside the runs root is copied to `base/`, which is not
+        a `round_*` directory and therefore invisible to both. A model from
+        anywhere else is used where it lies: nothing in this dialog can touch
+        it, and copying it would cost tens of megabytes to protect against
+        nothing.
+
+        The copy is named for the original plus a hash of its contents, so
+        choosing the same file twice reuses the same copy.
+        """
+        if not model or model == self.last_model_path:
+            # The session's own best weights. Warm starting from them is the
+            # normal path, and copying them every round would be absurd.
+            return model
+        if not os.path.isfile(model):
+            # A bare name like "yolo11n.pt" that Ultralytics resolves itself.
+            return model
+        if not self.inside_runs_root(model):
+            return model
+
+        base_root = os.path.abspath(self.base_models_root())
+        if os.path.normcase(os.path.abspath(model)).startswith(os.path.normcase(base_root)):
+            return model  # already adopted
+
+        adopted = self.adopt_base_model(model)
+        return adopted or model
+
+    def adopt_base_model(self, model):
+        """Copy `model` into base/, returning the copy's path or None."""
+        try:
+            digest = self.file_digest(model)
+            stem, suffix = os.path.splitext(os.path.basename(model))
+            destination = os.path.join(self.base_models_root(), f"{stem}_{digest}{suffix}")
+
+            if os.path.isfile(destination):
+                return destination
+
+            os.makedirs(self.base_models_root(), exist_ok=True)
+            shutil.copy2(model, destination)
+            print(f"Active Learning: copied {model} to {destination} so the session's "
+                  f"own clean-up cannot remove the model it trains from.")
+            return destination
+        except Exception as e:
+            print(f"Warning: could not copy the chosen model out of the runs folder: {e}")
+            return None
+
+    @staticmethod
+    def file_digest(path, chunk=1 << 20):
+        """A short content hash, so the same file is only ever copied once."""
+        digest = hashlib.sha1()
+        with open(path, 'rb') as handle:
+            for block in iter(lambda: handle.read(chunk), b''):
+                digest.update(block)
+        return digest.hexdigest()[:8]
+
     def model_source_note(self, model):
         """One phrase naming what this round is about to train from.
 
@@ -2599,6 +2787,168 @@ class Base(QDialog):
             return f"Warm starting from round {previous}'s weights."
 
         return f"Training from {os.path.basename(str(model))}."
+
+    # ------------------------------------------------------------------
+    # Keeping a session
+    # ------------------------------------------------------------------
+
+    def saveable_round(self):
+        """The round a save would write, or None when there is nothing to keep.
+
+        The best round rather than the newest, for the same reason everything
+        else downstream uses it: a round that scored worse is recorded and set
+        aside, and saving it would hand the user the model the session itself
+        decided not to use. Its weights have to still be on disk -- pruning
+        keeps only the most recent few, though it never touches the best one.
+        """
+        entry = self.best_round or (self.round_history[-1] if self.round_history else None)
+        if not entry:
+            return None
+
+        weights = entry.get('weights')
+        if not weights or not os.path.isfile(weights):
+            return None
+
+        return entry
+
+    def session_stem(self, entry):
+        """The filename stem a saved round is written under.
+
+        The round's own run directory name -- `round_07_20260908_121045` -- with
+        the task in front of it. That name is generated when the round starts,
+        so a saved model points back at the exact run folder that produced it,
+        and the timestamp keeps two saves of the same round number apart.
+
+        `best.pt` alone is unidentifiable a month later, which is the whole
+        reason for a stem; the project's own filename was tried and is the wrong
+        thing to reach for, since a project can be renamed, copied, or never
+        saved at all, and none of that says anything about the session.
+        """
+        run_dir = entry.get('run_dir') if entry else None
+        run_name = os.path.basename(os.path.normpath(run_dir)) if run_dir else ''
+
+        if not run_name:
+            # A record with no run directory: fall back to naming the moment it
+            # was saved, which is still traceable and still unique.
+            stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+            run_name = f"round_{(entry or {}).get('round', 0):02d}_{stamp}"
+
+        return f"{self.task}_{run_name}"
+
+    def session_settings(self):
+        """The settings this session ran with, so a saved model can be repeated."""
+        return {
+            'model': self.model_combo.currentText(),
+            'warm_start': self.warm_start_combo.currentText() == "True",
+            'epochs': self.epochs_spinbox.value(),
+            'patience': self.patience_spinbox.value(),
+            'imgsz': self.imgsz_spinbox.value(),
+            'batch': self.batch_spinbox.value(),
+            'optimizer': self.optimizer_combo.currentText(),
+            'dropout': self.dropout_spinbox.value(),
+            'freeze_layers': self.freeze_layers_spinbox.value(),
+            'weighted': self.weighted_combo.currentText() == "True",
+            'single_cls': self.single_class_combo.currentText() == "True",
+            'mask_ratio': self.mask_ratio_spinbox.value(),
+            'workers': self.workers_spinbox.value(),
+            'image_budget': self.budget_spinbox.value(),
+            'auto_train': self.auto_train_combo.currentText() == "True",
+            'auto_train_per_label': self.auto_train_spinbox.value(),
+        }
+
+    def session_summary(self, entry):
+        """Everything about the session that is not the weights themselves."""
+        def thresholds():
+            reader = self.main_window
+            values = {}
+            for name, method in (('uncertainty', 'get_uncertainty_thresh'),
+                                 ('iou', 'get_iou_thresh'),
+                                 ('area', 'get_area_thresh')):
+                try:
+                    values[name] = getattr(reader, method)()
+                except Exception:
+                    values[name] = None
+            return values
+
+        return {
+            'saved': datetime.datetime.now().isoformat(timespec='seconds'),
+            'task': self.task,
+            'project': getattr(self.main_window, 'current_project_path', '') or '',
+            'best_round': entry.get('round'),
+            'labels': list(entry.get('labels') or []),
+            'metrics': {
+                'map50': entry.get('map50'),
+                'fitness': entry.get('fitness'),
+                'epoch': entry.get('epoch'),
+            },
+            'rounds': [{
+                'round': record.get('round'),
+                'base_model': record.get('base_model'),
+                'train_images': record.get('train_images'),
+                'background': record.get('background'),
+                'annotations': record.get('annotations'),
+                'map50': record.get('map50'),
+                'fitness': record.get('fitness'),
+                'epoch': record.get('epoch'),
+                'stopped': record.get('stopped'),
+                'labels': list(record.get('labels') or []),
+            } for record in self.round_history],
+            'settings': self.session_settings(),
+            'thresholds': thresholds(),
+        }
+
+    def save_session(self):
+        """Copy the best model and its round's results somewhere they are kept.
+
+        Rounds are written to a cache that prunes its own older weights and that
+        New Session offers to empty, so without this there is no way for a
+        session's model to outlive it except by knowing where to dig.
+        """
+        entry = self.saveable_round()
+        if entry is None:
+            QMessageBox.information(
+                self, "Save Session",
+                "There is no finished round with weights to save yet.")
+            return
+
+        directory = QFileDialog.getExistingDirectory(self, "Save Session To")
+        if not directory:
+            return
+
+        try:
+            self.write_session(directory, entry)
+        except Exception as e:
+            print(f"Error saving the session: {e}")
+            QMessageBox.critical(self, "Save Session", f"Could not save the session:\n\n{e}")
+            return
+
+        QMessageBox.information(self, "Save Session", "Session saved successfully.")
+
+    def write_session(self, directory, entry):
+        """Write the model, the round's artefacts and the summary into `directory`.
+
+        Everything is prefixed with the task and the round's own run name, so
+        several saved sessions can share a folder without colliding or becoming
+        anonymous -- see session_stem().
+        """
+        stem = self.session_stem(entry)
+
+        shutil.copy2(entry['weights'], os.path.join(directory, f"{stem}_best.pt"))
+
+        run_dir = entry.get('run_dir')
+        if run_dir and os.path.isdir(run_dir):
+            for name in sorted(os.listdir(run_dir)):
+                source = os.path.join(run_dir, name)
+                if not os.path.isfile(source):
+                    # weights/ is the round's own checkpoints; the best one is
+                    # already copied above under a name that says what it is.
+                    continue
+                if name == 'results.csv' or os.path.splitext(name)[1].lower() in PLOT_SUFFIXES:
+                    shutil.copy2(source, os.path.join(directory, f"{stem}_{name}"))
+
+        summary_path = os.path.join(directory, f"{stem}_session.json")
+        with open(summary_path, 'w') as handle:
+            json.dump(self.session_summary(entry), handle, indent=2)
 
     # ------------------------------------------------------------------
     # Starting over
@@ -3575,6 +3925,7 @@ class Base(QDialog):
             # 'weights' and the housekeeping still has to know which folders on
             # disk belong to this session.
             'run_dir': os.path.abspath(pending['run_dir']),
+            'base_model': pending.get('base_model'),
             'train_images': dataset.image_count('train'),
             'background': dataset.negative_count('train'),
             'annotations': dataset.annotation_count('train'),
