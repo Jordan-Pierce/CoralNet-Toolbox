@@ -531,7 +531,10 @@ class Base(QDialog):
     task = None
 
     def __init__(self, main_window, parent=None):
-        super().__init__(parent)
+        # Owned by the main window unless a parent was named. Ownership is what
+        # keeps this dialog above the application it belongs to -- and only
+        # that application. See the window flags below.
+        super().__init__(parent if parent is not None else main_window)
         self.main_window = main_window
         self.annotation_window = main_window.annotation_window
         self.image_window = main_window.image_window
@@ -544,12 +547,17 @@ class Base(QDialog):
         # Kept above the main window, and given the buttons to get out of the
         # way with. The review pass drives the canvas -- opening an image, moving
         # the view, selecting an annotation -- and any of that activates the main
-        # window, which on a single monitor puts this dialog behind it after
-        # every press. The batch-inference dialog carries the same hint for the
-        # same reason. Minimize is the escape hatch: on top is only tolerable if
-        # it can be dismissed without being closed.
+        # window, which on a single monitor would otherwise put this dialog
+        # behind it after every press.
+        #
+        # That was done with Qt.WindowStaysOnTopHint, which is the wrong tool:
+        # it pins a window above *every* application on the desktop, so a
+        # browser or an editor opened on the same monitor came up underneath a
+        # dialog belonging to a different program. Being owned by the main
+        # window achieves what was actually wanted -- above this application,
+        # and nothing else -- because an owned window is stacked against its
+        # owner rather than against the desktop.
         self.setWindowFlags(Qt.Window
-                            | Qt.WindowStaysOnTopHint
                             | Qt.WindowMinimizeButtonHint
                             | Qt.WindowMaximizeButtonHint
                             | Qt.WindowCloseButtonHint)
@@ -3181,9 +3189,23 @@ class Base(QDialog):
         button in here: the next press should land in the same place as the
         last one, without a trip through the taskbar. Minimized is left alone --
         that is the user saying they want the dialog out of the way.
+
+        Only while this application is the one being used. The dialog is owned
+        by the main window, so it cannot fall behind it and does not need
+        raising for that -- but activateWindow() would still pull focus out of
+        whatever else the user had switched to, which is the same rudeness as
+        floating above the desktop, just intermittent.
         """
         if not self.isVisible() or self.isMinimized():
             return
+
+        try:
+            active = QApplication.activeWindow()
+        except Exception:
+            active = None
+        if active is None:
+            return
+
         try:
             self.raise_()
             self.activateWindow()
