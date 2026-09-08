@@ -552,97 +552,16 @@ class Semantic(Base):
                     # Let the outer finally block handle cleanup
                 
                 # --- 4. Push undo action ---
-                auto_vectorize = (
-                    getattr(self, 'auto_vectorize_checkbox', None) is not None
-                    and self.auto_vectorize_checkbox.isChecked()
-                )
-
-                # Background prediction and vectorization are mutually exclusive.
-                if include_bg and auto_vectorize:
-                    auto_vectorize = False
-
                 actions_for_this_image = []
                 history_description = "Semantic prediction"
-                vector_annotations = []
-                vectors_added = False
 
-                if auto_vectorize:
+                # Batch inference runs the same call, so the two paths cannot
+                # drift in what vectorizing a semantic prediction means.
+                if self.should_auto_vectorize():
                     history_description = "Semantic prediction & vectorize"
-                    split_touching = (
-                        getattr(self, 'split_touching_checkbox', None) is not None
-                        and self.split_touching_checkbox.isChecked()
-                    )
-                    # Regions too small to become polygons are noise, and so are
-                    # the ridge pixels splitting leaves between neighbours.
-                    # Collect both so they can be dropped below rather than left
-                    # behind as stray mask specks and seams.
-                    rejected_indices = []
-                    split_stats = {}
-                    try:
-                        _vectorize_start = time.perf_counter()
-                        vector_annotations = mask_annotation.to_vector_annotations(
-                            transparency=self.main_window.get_transparency_value(),
-                            show_confidence=False,
-                            min_hole_area=500,
-                            rejected_indices_out=rejected_indices,
-                            split_touching=split_touching,
-                            split_stats_out=split_stats,
-                            # A VideoRaster's mask is shared across frames and
-                            # carries the video's path, so without this the new
-                            # polygons are filed under "clip.mp4" -- a key no
-                            # frame ever displays -- while the mask pixels they
-                            # came from are cleared. image_path here is already
-                            # the virtual frame path for a video frame.
-                            image_path=image_path,
-                        )
-                        self._report_vectorize_timing(
-                            len(vector_annotations),
-                            time.perf_counter() - _vectorize_start,
-                            split_stats=split_stats,
-                        )
-                    except Exception as e:
-                        print(f"Warning: Failed to vectorize semantic prediction for {image_path}: {e}")
-                        vector_annotations = []
-                        rejected_indices = []
-
-                    vector_annotations, area_dropped = self._filter_annotations_by_area(
-                        vector_annotations, raster
-                    )
-                    if area_dropped:
-                        # The bounds and the sizes they were applied to, not just
-                        # the count: a filter that drops everything looks identical
-                        # to a broken vectorizer without them, and the threshold is
-                        # in real-world units the polygons are not.
-                        print(f"Area filter dropped {len(area_dropped)} of "
-                              f"{len(area_dropped) + len(vector_annotations)} polygons "
-                              f"for {os.path.basename(str(image_path))} "
-                              f"{self._describe_area_filter(area_dropped + vector_annotations, raster)}")
-
-                    if vector_annotations:
-                        try:
-                            self.annotation_window.add_annotations(vector_annotations, record_action=False)
-                        except Exception as e:
-                            print(f"Warning: Failed to apply vector annotations for {image_path}: {e}")
-                            vector_annotations = []
-                        else:
-                            vectors_added = True
-
-                    # Clear the vectorized regions, the ones the area filter
-                    # rejected, and the sub-threshold specks in one pass. A region
-                    # excluded by size is residue just like a speck: leaving it
-                    # would strand mask pixels with no polygon to match. This
-                    # still runs when nothing vectorized, so a mask made entirely
-                    # of specks is emptied rather than left intact. If
-                    # add_annotations failed, the kept polygons stay in the mask
-                    # rather than being cleared with nothing to show for them.
-                    if vectors_added or area_dropped or rejected_indices:
-                        try:
-                            mask_annotation.clear_pixels_for_annotations(
-                                (vector_annotations if vectors_added else []) + area_dropped,
-                                extra_flat_indices=rejected_indices,
-                            )
-                        except Exception as e:
-                            print(f"Warning: Failed to clear semantic pixels for {image_path}: {e}")
+                vector_annotations, vectors_added = self.vectorize_mask_annotation(
+                    mask_annotation, raster, image_path,
+                )
 
                 _history_action = MaskEditAction.from_snapshot(
                     mask_annotation, _before_mask_snapshot, description=history_description
@@ -709,6 +628,124 @@ class Semantic(Base):
             QApplication.restoreOverrideCursor()
             gc.collect()
             empty_cache()
+
+    def should_auto_vectorize(self):
+        """Whether a finished prediction should be turned into polygons.
+
+        Background prediction and vectorizing are mutually exclusive -- a
+        background class covers the whole frame, so tracing it produces one
+        polygon the size of the image -- and the dialog already refuses to tick
+        both. Checked again here because the answer is read by batch inference
+        too, from a snapshot taken before the run rather than from the widgets.
+        """
+        vectorize = (getattr(self, 'auto_vectorize_checkbox', None) is not None
+                     and self.auto_vectorize_checkbox.isChecked())
+        include_background = (getattr(self, 'predict_background_checkbox', None) is not None
+                              and self.predict_background_checkbox.isChecked())
+        return bool(vectorize and not include_background)
+
+    def should_split_touching(self):
+        """Whether touching objects of a class are separated before tracing."""
+        return bool(getattr(self, 'split_touching_checkbox', None) is not None
+                    and self.split_touching_checkbox.isChecked())
+
+    def vectorize_mask_annotation(self, mask_annotation, raster, image_path,
+                                  auto_vectorize=None, split_touching=None):
+        """Turn a predicted mask into polygons, and clear the pixels they came from.
+
+        The whole of what "auto-vectorize" means, in one call: trace, optionally
+        separate touching objects first, apply the area threshold, file the
+        survivors as annotations, and empty the mask of everything that became a
+        polygon or was rejected on the way. Both the deploy dialog and batch
+        inference go through here, so neither can quietly acquire a different
+        idea of the operation.
+
+        ``auto_vectorize`` and ``split_touching`` default to the dialog's own
+        checkboxes. Batch inference passes the values it snapshotted before the
+        run instead, so a mid-run toggle cannot apply to half a batch.
+
+        Returns (annotations, added) -- the annotations that reached the project
+        and whether they were accepted. On a failed add the mask keeps the
+        pixels rather than being cleared with nothing to show for it.
+        """
+        if auto_vectorize is None:
+            auto_vectorize = self.should_auto_vectorize()
+        if not auto_vectorize:
+            return [], False
+        if split_touching is None:
+            split_touching = self.should_split_touching()
+
+        # Regions too small to become polygons are noise, and so are the ridge
+        # pixels splitting leaves between neighbours. Collect both so they can be
+        # dropped below rather than left behind as stray mask specks and seams.
+        rejected_indices = []
+        split_stats = {}
+        vector_annotations = []
+        vectors_added = False
+
+        try:
+            _vectorize_start = time.perf_counter()
+            vector_annotations = mask_annotation.to_vector_annotations(
+                transparency=self.main_window.get_transparency_value(),
+                show_confidence=False,
+                min_hole_area=500,
+                rejected_indices_out=rejected_indices,
+                split_touching=split_touching,
+                split_stats_out=split_stats,
+                # A VideoRaster's mask is shared across frames and carries the
+                # video's path, so without this the new polygons are filed under
+                # "clip.mp4" -- a key no frame ever displays -- while the mask
+                # pixels they came from are cleared. image_path here is already
+                # the virtual frame path for a video frame.
+                image_path=image_path,
+            )
+            self._report_vectorize_timing(
+                len(vector_annotations),
+                time.perf_counter() - _vectorize_start,
+                split_stats=split_stats,
+            )
+        except Exception as e:
+            print(f"Warning: Failed to vectorize semantic prediction for {image_path}: {e}")
+            vector_annotations = []
+            rejected_indices = []
+
+        vector_annotations, area_dropped = self._filter_annotations_by_area(
+            vector_annotations, raster
+        )
+        if area_dropped:
+            # The bounds and the sizes they were applied to, not just the count: a
+            # filter that drops everything looks identical to a broken vectorizer
+            # without them, and the threshold is in real-world units the polygons
+            # are not.
+            print(f"Area filter dropped {len(area_dropped)} of "
+                  f"{len(area_dropped) + len(vector_annotations)} polygons "
+                  f"for {os.path.basename(str(image_path))} "
+                  f"{self._describe_area_filter(area_dropped + vector_annotations, raster)}")
+
+        if vector_annotations:
+            try:
+                self.annotation_window.add_annotations(vector_annotations, record_action=False)
+            except Exception as e:
+                print(f"Warning: Failed to apply vector annotations for {image_path}: {e}")
+                vector_annotations = []
+            else:
+                vectors_added = True
+
+        # Clear the vectorized regions, the ones the area filter rejected, and the
+        # sub-threshold specks in one pass. A region excluded by size is residue
+        # just like a speck: leaving it would strand mask pixels with no polygon to
+        # match. This still runs when nothing vectorized, so a mask made entirely of
+        # specks is emptied rather than left intact.
+        if vectors_added or area_dropped or rejected_indices:
+            try:
+                mask_annotation.clear_pixels_for_annotations(
+                    (vector_annotations if vectors_added else []) + area_dropped,
+                    extra_flat_indices=rejected_indices,
+                )
+            except Exception as e:
+                print(f"Warning: Failed to clear semantic pixels for {image_path}: {e}")
+
+        return vector_annotations, vectors_added
 
     def _filter_annotations_by_area(self, annotations, raster):
         """Split vectorized polygons on the area threshold.
