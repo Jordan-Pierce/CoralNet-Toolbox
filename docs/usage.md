@@ -350,96 +350,56 @@ All dock windows (Annotation Window, Label Window, Image Window, Confidence Wind
     - Use the Feature Select Tool to click-to-query semantic similarity across images
     - Supports binary mode (single object) and multi-class mode (multiple classes)
 
-- **Active Learning**: Train on the annotations you have already confirmed, then let the
-  model propose more for you to review
-  - **Detect**: run rounds that train an object detector
-  - **Segment**: run rounds that train an instance segmentor
-    - **Training Parameters** are the same set the Train Model dialog offers, with the
-      same names and defaults, and the model list is the same too (including community
-      models). Workers is fixed at 0: in-place training cannot survive a DataLoader
-      worker process
-    - Each task keeps its own round history, for as long as the application is open;
-      sessions are deliberately not saved into the project file
-    - Nothing is exported: training reads the project directly, so no dataset is written to disk
-    - The session window stays open beside the canvas, so you can annotate and review
-      without closing it. It stays **on top**, because reviewing drives the canvas and
-      any of that would otherwise put it behind the main window after every press.
-      **Minimize** it to get it out of the way; reopening it from the menu brings it
-      back, minimized or closed
-    - While a session is open it reports to the **main window status bar**: the round's
-      state, the epoch it is on while training, how much is awaiting review, and how
-      many more confirmed annotations each label needs before the next round. The line
-      is re-posted whenever another message expires, so it comes back rather than
-      leaving the bar empty, and it keeps reporting while a round trains behind a
-      closed session window
-    - **Setup** tab: what to train on, with what, and what a round does when it finishes;
-      **Session** tab: what each round produced, in the order you act on it — the
-      callout saying what to do next, Review, Rounds
-    - The **Review** group leads with how much is awaiting review and where you are in
-      the queue, then the round's mAP50 and the change since the last comparable round,
-      then a progress bar while a round trains
-    - The Rounds table reports **mAP50** and **mAP50-95**, both read at the epoch
-      `best.pt` was saved from. Whether a round's model is adopted is decided on
-      mAP50-95 — Ultralytics' own fitness — because mAP50 saturates: a project whose
-      objects are easy to find sits at 0.99 while the model is still getting better
-      at placing them. **Change** tracks the same number
-    - Trains on **verified** annotations only; predictions always arrive unverified
-    - A round's model is deployed into the matching **Deploy Model** dialog without
-      asking about class mapping. There is no `class_mapping.json` and there never
-      will be: the model was trained on the project's own labels, so its class names
-      are their short codes and are matched straight back onto them
-    - An image you review and leave empty trains as a **background** image, which is how
-      deleting a wrong prediction teaches the model there is nothing there. Use
-      the Image Window's right-click **Active Learning... > Mark Empty** to say so, for
-      as many images at once as you have highlighted. An image that is simply
-      unannotated is never treated this way: it is left out of training rather than
-      trained as empty. **Clear Review State** undoes it
-    - The Training Data table shows verified counts per label, where they land across the
-      splits, and how many predictions are still **Awaiting** your review
-    - Splits are fixed at 80/20 train/val and derived from each image path, so an image
-      never moves between them from one round to the next (which also means Refresh
-      cannot change a split). There is no test split: nothing in a round would read it
-    - **Image Budget** controls how many un-reviewed images each round predicts on.
-      It maxes out at the number of images in the project. A round spends most of
-      the budget on images with nothing on them and
-      the rest on images you have already annotated — looking for new objects, and
-      checking itself where you are working. Within each group it prefers images no
-      round has predicted on yet, so the budget moves across the project
-    - A round **skips** the image open on the canvas, images already carrying
-      predictions you have not reviewed, and images you have confirmed as empty. A
-      round that produced nothing says which of those it skipped, since that is
-      usually the answer. **Re-run Predictions** does include the open image: you
-      asked for that pass, and it is normally the image you meant
-    - Predictions that overlap an annotation already on the image are dropped, so an
-      image you have finished annotating can legitimately come back with nothing
-    - **Previous** and **Next** walk the annotations still awaiting review, opening
-      each one's image and centring it — grouped by image, least confident first.
-      **Mark Verified** confirms a prediction; **Mark as Review** relabels it `Review`,
-      which takes it out of the queue without training on it, for anything you cannot
-      judge yet. Both move on to the next one waiting
-    - **Re-run Predictions**, in the button row at the bottom of the dialog beside
-      Train Round, predicts again over the same images at the current thresholds,
-      clearing the unreviewed predictions there first — the thresholds otherwise do
-      nothing until another round trains
-    - **Auto Train** starts the next round by itself once every included label has
-      gained **New Per Label** newly confirmed annotations (20 by default) since the
-      last round. If a round is already training, nothing is interrupted: the next one
-      starts when it finishes, on everything confirmed by then
-    - A round's model is only kept if it beat the best comparable round before it.
-      Warm start, prediction and Deploy all use that model, not the newest one
-    - **Stop** ends a running round after the current epoch, keeping what it trained
-    - Per-epoch losses appear in the Session tab while a round runs
-    - The **Change** column in Rounds is the one to read; it is blank when a round
-      trained on a different set of labels and is not comparable
-    - Weights from older rounds are deleted automatically; their metrics and plots stay
-    - After a round the Session tab says what it produced and what to do next, and the
-      Image Window is filtered to **Needs Review** for you
-    - The Image Window gains a **Needs Review** filter for images carrying
-      annotations nobody has confirmed yet, and a **Training Split** entry on the
-      right-click menu for pinning an image to train or validation
-    - The Setup tab warns when objects are too small for the image size, which is the
-      one case where the loop will not converge however much you annotate
-    - **Deploy Model** loads the round's weights into the matching Deploy dialog
+- **Active Learning**: train on what you have already confirmed, then let the model
+  propose the rest — annotate a little, train, review, repeat
+  - **Detect** / **Segment**: each task keeps its own session, for as long as the
+    application is open
+  - Choose the labels to include and a model, then press **Train Round**. Training reads
+    the project directly — no dataset is exported — and uses **verified annotations
+    only**, so a round never trains on its own guesses
+  - **Browse** to start from a model of your own, or from an earlier session's best.
+    Otherwise leave the default nano model: rounds are only useful if they are cheap
+    enough to run often
+  - After a round, predictions land on un-reviewed images and the Image Window is
+    filtered to **Needs Review**. Predictions always arrive unverified
+
+  - **Review in the Annotation Gallery. This is the fastest way to work through a
+    round, and it is worth setting up before your first one.** Open **Gallery**, press
+    **Apply Filter**, and sort by **Confidence**: the model's least certain predictions
+    group together at the top, which is exactly where your attention is worth most
+    - <kbd>Ctrl</kbd> + <kbd>Space</kbd> confirms everything selected in one press —
+      select a whole high-confidence bucket and accept it at once
+    - <kbd>Ctrl</kbd> + <kbd>Right-Click</kbd> jumps to an annotation on the canvas when
+      you need to see it in context; <kbd>Delete</kbd> removes a wrong one from there
+
+  - You can also review from the session window: **Previous** / **Next** walk what is
+    waiting, least confident first, opening each image and centring the annotation.
+    **Mark Verified** confirms it; **Mark as Review** parks anything you cannot judge yet
+  - An image you clear of predictions trains as a **background** image — deleting a wrong
+    box is how you teach the model there is nothing there. The Raster Window's right-click
+    **Active Learning... > Mark Empty** says the same for many images at once, and
+    **Clear Review State** undoes it. An image you simply never annotated is left out of
+    training rather than treated as empty
+  - **Image Budget**: how many un-reviewed images a round predicts on. Most of it goes to
+    images with nothing on them and the rest to images you have already worked on, so a
+    round looks for new objects and checks itself where you are annotating
+  - A round skips the image open on the canvas and images already carrying predictions
+    you have not reviewed; a round that finds nothing tells you which. **Re-run
+    Predictions** predicts again over the same images at the current thresholds, which is
+    the only way a threshold change takes effect before the next round
+  - **Auto Train** starts the next round on its own once every included label has gained
+    the given number of newly confirmed annotations
+  - A round's model is kept only if it beat the best round before it, so predictions and
+    **Deploy Model** always use the best model rather than the newest. The **Rounds**
+    table reports mAP50 and mAP50-95, and **Change** is the column to read: it is blank
+    when a round trained on different labels and is not comparable
+  - **Stop** ends a running round after the current epoch, keeping what it trained
+  - **New Session** forgets the rounds and starts over, and offers to clear out round
+    folders left on disk. **Save Session** copies the best model, its results and a
+    summary of the session to a folder you choose — rounds are kept in a cache that
+    prunes its own older weights, so this is how a model becomes something you keep
+  - The Setup tab warns when your objects are too small for the image size, which is the
+    one problem more annotating will not fix
 
 ### Machine Learning
 
