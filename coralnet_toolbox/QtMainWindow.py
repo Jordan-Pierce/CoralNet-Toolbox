@@ -1963,11 +1963,15 @@ class MainWindow(QMainWindow):
         if min_val > max_val:
             min_val = max_val
             self.area_threshold_min_slider.setValue(min_val)
-        self.area_thresh_min = area_slider_to_value(min_val, self.area_thresh_mode)
-        self.area_thresh_max = area_slider_to_value(max_val, self.area_thresh_mode)
+        # Hand the new pair to update_area_thresh rather than storing it here
+        # first: that method's guard compares the incoming values against the
+        # stored ones, so pre-assigning made it a no-op and areaChanged never
+        # reached the dialogs - their sliders kept filtering on the old bounds
+        # until some other change (a unit switch) emitted the signal for real.
+        self.update_area_thresh(area_slider_to_value(min_val, self.area_thresh_mode),
+                                area_slider_to_value(max_val, self.area_thresh_mode))
         self.update_area_threshold_label()
         self.push_area_threshold_status()
-        self.update_area_thresh(self.area_thresh_min, self.area_thresh_max)
 
     def update_area_threshold_label(self, *args):
         """Redraw the area range label for the raster currently on display.
