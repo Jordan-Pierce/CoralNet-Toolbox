@@ -978,6 +978,15 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
 
     def wheelEvent(self, event: QMouseEvent):
         """Handle mouse wheel events for zooming."""
+        # Zooming counts as taking the canvas, so take the keyboard with it.
+        # Tools driven by the keyboard -- SAM, See Anything and Feature Select
+        # all confirm with Space -- were silently dead after any interaction
+        # that left focus elsewhere, changing image from the ImageWindow being
+        # the common one: the view zoomed under the cursor while the keystrokes
+        # went to the image list, and only a click on the canvas fixed it.
+        if self.active_image and not self.hasFocus():
+            self.setFocus(Qt.MouseFocusReason)
+
         # Handle zooming with the mouse wheel (pass to active tool if Ctrl+wheel)
         if self.selected_tool and event.modifiers() & Qt.ControlModifier:
             self.tools[self.selected_tool].wheelEvent(event)

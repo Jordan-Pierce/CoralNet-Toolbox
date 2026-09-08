@@ -3,6 +3,7 @@ import warnings
 import os
 import uuid
 import yaml
+import random
 import rasterio
 import shutil
 import ujson as json
@@ -11,7 +12,7 @@ from PyQt5.QtCore import Qt, QPointF, QObject, QThread, pyqtSignal
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QVBoxLayout, QGroupBox,
                              QLabel, QLineEdit, QDialog, QPushButton, QDialogButtonBox,
                              QGridLayout, QScrollArea, QFrame, QCheckBox, QRadioButton,
-                             QToolButton)
+                             QToolButton, QSpinBox, QHBoxLayout)
 
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
@@ -341,7 +342,7 @@ class DatasetProcessor(QObject):
 
     def __init__(self, yaml_path, output_folder, task, import_as, rename_on_conflict=False,
                  excluded_classes=None, image_import_policy='annotated_only', copy_images=True,
-                 parent=None):
+                 sample_size=None, parent=None):
         super().__init__(parent)
         self.yaml_path = yaml_path
         # None when importing in place, where there is no destination at all.
@@ -352,6 +353,8 @@ class DatasetProcessor(QObject):
         self.rename_on_conflict = rename_on_conflict
         self.excluded_classes = excluded_classes if excluded_classes is not None else set()
         self.image_import_policy = image_import_policy
+        # None imports everything found; an int keeps that many images at random.
+        self.sample_size = sample_size
         self.is_running = True
         self.parsing_errors = []  # To collect errors instead of printing
         # Exact-duplicate label lines dropped while parsing, reported at the end.
@@ -410,14 +413,31 @@ class DatasetProcessor(QObject):
             self.finished.emit()
 
     def _find_source_files(self):
-        """Finds all source image and sidecar paths based on the import policy."""
+        """Finds all source image and sidecar paths based on the import policy.
+
+        A sample is drawn after discovery rather than during it, so the images
+        are picked from the set the import rule already accepted: asking for 50
+        images with 'only images with annotations' selected gives 50 annotated
+        images, not 50 images of which a few happen to have labels.
+
+        Each image keeps whatever sidecar it was paired with, so the annotations
+        follow their image automatically.
+        """
         sidecar_kind = 'masks' if self.task == 'semantic' else 'labels'
         # Only a copying import has an output folder to keep out of its own scan.
         exclude_dirs = [self.output_folder] if self.output_folder else []
-        return discover_dataset_files(self.yaml_path,
-                                      image_import_policy=self.image_import_policy,
-                                      exclude_dirs=exclude_dirs,
-                                      sidecar_kind=sidecar_kind)
+        source_map = discover_dataset_files(self.yaml_path,
+                                            image_import_policy=self.image_import_policy,
+                                            exclude_dirs=exclude_dirs,
+                                            sidecar_kind=sidecar_kind)
+
+        if self.sample_size and self.sample_size < len(source_map):
+            # Sorted first so the draw depends only on the seed and not on the
+            # order the filesystem happened to hand the directories back.
+            chosen = random.sample(sorted(source_map), self.sample_size)
+            source_map = {path: source_map[path] for path in chosen}
+
+        return source_map
 
     def _copy_files_with_progress(self, source_image_label_map):
         """Copies files and reports progress for each file.
@@ -610,6 +630,7 @@ class Base(QDialog):
         self.thread = None
         self.worker = None
         self.output_folder = None
+        self.sample_size = None
         self.class_checkboxes = []
 
         self.layout = QVBoxLayout(self)
@@ -721,6 +742,27 @@ class Base(QDialog):
         self.import_annotated_images_radio.setChecked(True)
         image_rule_layout.addWidget(self.import_annotated_images_radio)
         image_rule_layout.addWidget(self.import_all_images_radio)
+
+        # Sampling is applied on top of whichever rule is selected above, so the
+        # subset is drawn from the images that rule already accepted.
+        sample_row = QHBoxLayout()
+        self.sample_subset_checkbox = QCheckBox("Import a random subset of")
+        self.sample_subset_checkbox.setToolTip("Import a random selection of the images instead of all of them.\n"
+                                               "Each image brings its own annotations.\n"
+                                               "Useful for trying out a large dataset without copying every file.")
+        self.sample_size_spinbox = QSpinBox()
+        self.sample_size_spinbox.setRange(1, 1000000)
+        self.sample_size_spinbox.setValue(100)
+        self.sample_size_spinbox.setEnabled(False)
+        self.sample_size_spinbox.setToolTip("How many images to import.\n"
+                                            "If the dataset has fewer than this, all of them are imported.")
+        self.sample_subset_checkbox.toggled.connect(self.sample_size_spinbox.setEnabled)
+        sample_row.addWidget(self.sample_subset_checkbox)
+        sample_row.addWidget(self.sample_size_spinbox)
+        sample_row.addWidget(QLabel("images"))
+        sample_row.addStretch()
+        image_rule_layout.addLayout(sample_row)
+
         image_rule_box.setLayout(image_rule_layout)
         advanced_layout.addWidget(image_rule_box)
 
@@ -938,6 +980,8 @@ class Base(QDialog):
                     excluded_classes.add(cb.text())
                 
         image_import_policy = 'all' if self.import_all_images_radio.isChecked() else 'annotated_only'
+        # Kept on the dialog so the completion message can mention the subset.
+        self.sample_size = self.sample_size_spinbox.value() if self.sample_subset_checkbox.isChecked() else None
         # Semantic imports have no geometry to choose a representation for,
         # so those dialogs do not build the combo at all.
         if getattr(self, 'import_as_combo', None) is None:
@@ -959,7 +1003,8 @@ class Base(QDialog):
             rename_on_conflict=rename_files,
             excluded_classes=excluded_classes,
             image_import_policy=image_import_policy,
-            copy_images=copy_images
+            copy_images=copy_images,
+            sample_size=self.sample_size
         )
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
@@ -1059,6 +1104,8 @@ class Base(QDialog):
             self.annotation_window.load_annotations()
 
         summary_message = "Dataset has been successfully imported."
+        if self.sample_size:
+            summary_message += f"\n\nImported a random subset of {len(image_paths)} image(s)."
         if duplicates_removed:
             summary_message += (f"\n\nRemoved {duplicates_removed} exact duplicate annotation(s) "
                                 f"({len(newly_created_annotations)} kept).")
@@ -1174,6 +1221,8 @@ class Base(QDialog):
             self.annotation_window.load_mask_annotation()
 
         summary_message = f"Dataset has been successfully imported ({imported} mask(s))."
+        if self.sample_size:
+            summary_message += f"\n\nImported a random subset of {len(image_paths)} image(s)."
         if errors:
             QMessageBox.warning(self,
                                 "Import Complete with Warnings",

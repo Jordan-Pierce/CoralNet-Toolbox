@@ -284,10 +284,14 @@ class DeployPredictorDialog(QDialog):
 
             progress_bar.finish_progress()
             self.status_bar.setText(f"Model loaded: {self.model_path}")
-            QMessageBox.information(self.annotation_window, "Model Loaded", "Model loaded successfully")
+            QMessageBox.information(self, "Model Loaded", "Model loaded successfully")
+            # The dialog has done its job; leaving it up meant it reappeared
+            # behind the message box and had to be dismissed a second time.
+            # A failed load keeps it open instead, so the choice can be retried.
+            self.accept()
 
         except Exception as e:
-            QMessageBox.critical(self.annotation_window, "Error Loading Model", f"Error loading model: {e}")
+            QMessageBox.critical(self, "Error Loading Model", f"Error loading model: {e}")
             self.loaded_model = None
             self.model_path = None
 

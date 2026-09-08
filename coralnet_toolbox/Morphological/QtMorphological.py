@@ -69,7 +69,7 @@ class BakeUnbakeDialog(QDialog):
         info_label = QLabel(
             "Bake rasterizes vector annotations into the mask.\n"
             "Unbake vectorizes mask regions into vector annotations.\n\n"
-            "Highlight one or more image rows in the Image Window to apply to those "
+            "Highlight one or more image rows in the Raster Window to apply to those "
             "images; otherwise only the current image is used."
         )
         info_label.setWordWrap(True)
