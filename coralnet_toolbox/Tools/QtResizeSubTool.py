@@ -52,15 +52,20 @@ class ResizeSubTool(SubTool):
 
         self._orig_geom = self._capture_geometry(self.target_annotation)
 
-        # A drag emits annotationUpdated on every mouse-move. Left connected,
-        # each of those rebuilds the whole ConfidenceWindow -- scene cleared,
-        # five bar rows destroyed and recreated, five 500 ms animations
-        # restarted, the tooltip's built-in fields recomputed -- and calls back
-        # into on_annotation_updated for a second graphics rebuild. That is what
-        # made a resize stutter badly enough for the window manager to show a
-        # busy cursor. set_annotation_location and set_annotation_size already
-        # suspend those two slots for the same reason; resizing never did.
-        self._mute_annotation_updates(self.target_annotation)
+        # A drag emits annotationUpdated on every mouse-move, and the listeners
+        # are not cheap: ConfidenceWindow.display_cropped_image clears its
+        # scene, destroys and rebuilds five bar rows with a 500 ms animation
+        # apiece and recomputes a tooltip; MetaDataWindow.on_annotation_updated
+        # rebuilds its whole property grid, recomputing morphology, scaled area
+        # and perimeter, and z-volume; AnnotationWindow.on_annotation_updated
+        # rebuilds the graphics item a second time. At 60 frames a second the
+        # event loop cannot keep up and the window manager shows a busy cursor.
+        #
+        # Disconnecting known slots one at a time only fixes the listeners you
+        # happened to think of, so block the source instead: nothing is
+        # interested in the intermediate states of a drag, only in where it
+        # ends up. mouseReleaseEvent unblocks and emits exactly once.
+        self._suspend_annotation_signals(self.target_annotation)
 
         layer = self.live_layer()
         if layer is not None:
@@ -68,7 +73,9 @@ class ResizeSubTool(SubTool):
 
     def deactivate(self):
         super().deactivate()
-        self._unmute_annotation_updates()
+        # Unconditional: an aborted drag must not leave an annotation mute for
+        # the rest of the session.
+        self._resume_annotation_signals()
         layer = self.live_layer()
         if layer is not None:
             layer.set_active_handle(None)
@@ -82,7 +89,11 @@ class ResizeSubTool(SubTool):
         if not self.is_active or not self.target_annotation:
             return
 
-        if not self.annotation_window.is_annotation_moveable(self.target_annotation):
+        # use_status_bar, or the drag simply stops dead: an unverified
+        # annotation cannot be edited, and MoveSubTool has always said so while
+        # resizing said nothing at all.
+        if not self.annotation_window.is_annotation_moveable(self.target_annotation,
+                                                             use_status_bar=True):
             self.parent_tool.deactivate_subtool()
             return
 
@@ -95,6 +106,10 @@ class ResizeSubTool(SubTool):
         # annotation group that resize() just rebuilt.
         self.refresh_handle_positions()
 
+        # Live size readout: the annotation already knows its own bounding box
+        # and unit scale, so this is a status-bar string, not a measurement.
+        self.parent_tool.show_drag_size(self.target_annotation)
+
         # Force the scene to update immediately
         self.annotation_window.scene.update()
 
@@ -106,20 +121,23 @@ class ResizeSubTool(SubTool):
             if hasattr(annotation, 'normalize_coordinates'):
                 annotation.normalize_coordinates()
 
-            # An edited shape is a user assertion about it, so it is verified
-            # and its user confidence is re-pinned to its label. resize() used
-            # to do this on every frame; once, here, is what it always meant.
-            # Still muted, so this does not itself trigger a rebuild -- the one
-            # explicit refresh below is the single one the whole drag gets.
+            # Re-crop while still blocked; the crop is what every listener
+            # will want to read once they are woken up.
+            annotation.create_cropped_image(self.annotation_window.rasterio_image)
+
+            # Signals back on, then exactly one update for the whole drag.
+            # update_user_confidence emits annotationUpdated and
+            # verifiedChanged, which is what refreshes the ConfidenceWindow,
+            # the MetaData grid and the Explorer -- so it is deliberately the
+            # only thing here that emits. An edited shape is a user assertion
+            # about it, so it is verified and its user confidence re-pinned to
+            # its label; resize() used to do that on every frame, and once,
+            # here, is what it always meant.
+            self._resume_annotation_signals()
             try:
                 annotation.update_user_confidence(annotation.label)
             except Exception:
                 pass
-
-            annotation.create_cropped_image(self.annotation_window.rasterio_image)
-
-            self._unmute_annotation_updates()
-            self.parent_tool.main_window.confidence_window.display_cropped_image(annotation)
 
             new_geom = self._capture_geometry(annotation)
 
@@ -146,33 +164,25 @@ class ResizeSubTool(SubTool):
 
         self.parent_tool.deactivate_subtool()
 
-    # --- Signal muting ---
+    # --- Signal suspension ---
 
-    def _mute_annotation_updates(self, annotation):
-        """Suspend the two per-update slots for the duration of a drag."""
-        self._unmute_annotation_updates()
-        confidence_window = self.parent_tool.main_window.confidence_window
+    def _suspend_annotation_signals(self, annotation):
+        """Silence the annotation for the duration of a drag."""
+        self._resume_annotation_signals()
         try:
-            annotation.annotationUpdated.disconnect(confidence_window.display_cropped_image)
-            annotation.annotationUpdated.disconnect(self.annotation_window.on_annotation_updated)
+            annotation.blockSignals(True)
         except Exception:
-            # Not connected -- a multi-selection, or a bulk-selected annotation
-            # that never got the single-selection wiring. Nothing to suspend,
-            # and nothing to restore either.
-            self._muted_annotation = None
             return
         self._muted_annotation = annotation
 
-    def _unmute_annotation_updates(self):
-        """Restore whatever _mute_annotation_updates suspended."""
+    def _resume_annotation_signals(self):
+        """Undo _suspend_annotation_signals. Safe to call when nothing is blocked."""
         annotation = self._muted_annotation
         self._muted_annotation = None
         if annotation is None:
             return
-        confidence_window = self.parent_tool.main_window.confidence_window
         try:
-            annotation.annotationUpdated.connect(confidence_window.display_cropped_image)
-            annotation.annotationUpdated.connect(self.annotation_window.on_annotation_updated)
+            annotation.blockSignals(False)
         except Exception:
             pass
 

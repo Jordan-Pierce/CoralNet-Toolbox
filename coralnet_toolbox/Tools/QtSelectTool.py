@@ -1,8 +1,8 @@
 import warnings
 
 from PyQt5.QtCore import Qt, QPointF
-from PyQt5.QtGui import QMouseEvent, QKeyEvent
-from PyQt5.QtWidgets import QGraphicsItemGroup
+from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush
+from PyQt5.QtWidgets import QGraphicsItemGroup, QGraphicsPathItem
 
 from coralnet_toolbox.Tools.QtTool import Tool
 
@@ -56,6 +56,11 @@ class SelectTool(Tool):
         # --- Hover state for the always-on resize handles ---
         self._hovered_handle = None
 
+        # --- Hover preview: which annotation a click would land on ---
+        self._hover_annotation_id = None
+        self._hover_item = None
+        self._hover_probe_pos = None
+
         self._connect_signals()
 
     def _connect_signals(self):
@@ -104,6 +109,7 @@ class SelectTool(Tool):
     def deactivate(self):
         self.deactivate_subtool()
         self._hide_resize_handles()
+        self._clear_annotation_hover()
         self.annotation_window.viewport().setCursor(self.default_cursor)
         self._hovered_handle = None
         super().deactivate()
@@ -125,6 +131,10 @@ class SelectTool(Tool):
 
         position = self.annotation_window.mapToScene(event.pos())
         items = self.annotation_window.scene.items(position)
+
+        # The click is about to change the selection, so the hover outline is
+        # stale either way.
+        self._clear_annotation_hover()
 
         # --- DISPATCHER LOGIC: Decide which sub-tool to activate ---
         # PRIORITY 1: Start Resizing if a handle is under the cursor.
@@ -163,18 +173,145 @@ class SelectTool(Tool):
             self.active_subtool.mouseMoveEvent(event)
             return
 
-        # Idle hover: wake the handles nearest the cursor and show the resize
-        # cursor when one is actually in grab range. QGraphicsView keeps mouse
-        # tracking on its viewport, so this runs with no button held.
+        # Idle hover: wake the handles nearest the cursor, show the resize
+        # cursor when one is in grab range, and outline whichever annotation a
+        # click would land on. QGraphicsView keeps mouse tracking on its
+        # viewport, so this runs with no button held.
         self._update_handle_hover(event.pos())
+        self._update_annotation_hover(event.pos())
 
     def leave(self):
         """Drop hover state when the pointer leaves the canvas."""
         self._hovered_handle = None
         self.resize_subtool.set_cursor_scene_pos(None)
+        self._clear_annotation_hover()
         if self.active:
             self.annotation_window.viewport().setCursor(self.cursor)
         super().leave()
+
+    # --- Hover preview -----------------------------------------------------
+
+    # Re-resolving what is under the cursor means a scene query plus a
+    # geometric hit test, so it is not worth doing for sub-pixel jitter.
+    HOVER_PROBE_STEP_PX = 3.0
+
+    def _update_annotation_hover(self, view_pos):
+        """Outline the annotation a click would select.
+
+        Overlapping shapes made selection a guessing game: the only way to find
+        out what a click resolved to was to click and see. The hit test that
+        answers that question already exists and already runs on every click --
+        this just runs it on hover and draws the answer.
+        """
+        if not self.active or self.active_subtool:
+            self._clear_annotation_hover()
+            return
+
+        if not self.annotation_window.cursorInWindow(view_pos):
+            self._clear_annotation_hover()
+            return
+
+        # A handle beats the shape underneath it; the outline would only be
+        # noise while the user is aiming at a vertex.
+        if self._hovered_handle is not None:
+            self._clear_annotation_hover()
+            return
+
+        if self._hover_probe_pos is not None:
+            moved = (view_pos - self._hover_probe_pos).manhattanLength()
+            if moved < self.HOVER_PROBE_STEP_PX:
+                return
+        self._hover_probe_pos = view_pos
+
+        position = self.annotation_window.mapToScene(view_pos)
+        items = self.annotation_window.scene.items(position)
+        annotation = self._get_annotation_from_items(items, position)
+
+        # A selected annotation already draws its own dashed outline, tag and
+        # crosshair; a second outline on top of that says nothing.
+        if annotation is not None and annotation.is_selected:
+            annotation = None
+
+        if annotation is None:
+            self._clear_annotation_hover()
+            return
+
+        if annotation.id == self._hover_annotation_id and self._hover_item is not None:
+            return
+
+        self._clear_annotation_hover()
+        self._draw_annotation_hover(annotation)
+
+    def _draw_annotation_hover(self, annotation):
+        """Add the hover outline item for ``annotation``."""
+        try:
+            path = annotation.get_painter_path()
+        except Exception:
+            return
+        if path is None or path.isEmpty():
+            return
+
+        item = QGraphicsPathItem(path)
+        color = QColor(annotation.label.color).lighter(150)
+        pen = QPen(color, 2.5, Qt.DotLine)
+        pen.setCosmetic(True)
+        item.setPen(pen)
+        item.setBrush(QBrush(Qt.NoBrush))
+        # Above the annotation layers so it reads against a crowded image,
+        # below the resize handles (60) so it never covers one.
+        item.setZValue(50)
+        item.setAcceptedMouseButtons(Qt.NoButton)
+        item.setAcceptHoverEvents(False)
+
+        self.annotation_window.scene.addItem(item)
+        self._hover_item = item
+        self._hover_annotation_id = annotation.id
+
+    def _clear_annotation_hover(self):
+        """Remove the hover outline, if there is one."""
+        self._hover_annotation_id = None
+        item = self._hover_item
+        self._hover_item = None
+        if item is None:
+            return
+        try:
+            scene = item.scene()
+            if scene is not None:
+                scene.removeItem(item)
+        except RuntimeError:
+            pass  # scene teardown already destroyed it
+
+    # --- Live drag readout -------------------------------------------------
+
+    def show_drag_size(self, annotation):
+        """Report an annotation's live size while it is being resized."""
+        text = self._size_text(annotation)
+        if text:
+            self.show_status(text, 2000)
+
+    def show_drag_offset(self, delta):
+        """Report how far a move drag has travelled."""
+        self.show_status(f"Moved  {delta.x():+.0f}, {delta.y():+.0f} px", 2000)
+
+    @staticmethod
+    def _size_text(annotation):
+        """W x H for an annotation, in real units when a scale is set."""
+        try:
+            bbox = annotation.cropped_bbox
+            if not bbox:
+                return ""
+            width = abs(bbox[2] - bbox[0])
+            height = abs(bbox[3] - bbox[1])
+            text = f"{width:.0f} x {height:.0f} px"
+
+            scale_x = getattr(annotation, "scale_x", None)
+            scale_y = getattr(annotation, "scale_y", None)
+            units = getattr(annotation, "scale_units", None)
+            if scale_x and scale_y and units:
+                text += f"   ({width * scale_x:.3g} x {height * scale_y:.3g} {units})"
+            return text
+        except Exception:
+            return ""
 
     def _update_handle_hover(self, view_pos):
         """Feed the cursor position to the handle layer and pick a cursor shape."""
@@ -284,7 +421,18 @@ class SelectTool(Tool):
                 except Exception:
                     old_geom = None
 
-                annotation.update_polygon(delta=1 if delta > 0 else -1)
+                changed = annotation.update_polygon(delta=1 if delta > 0 else -1)
+                if changed is False and delta > 0:
+                    # Only densifying can be refused, and only by the vertex
+                    # cap; without a word here the wheel just stops working.
+                    from coralnet_toolbox.Annotations.QtPolygonAnnotation import (
+                        MAX_DENSIFY_VERTICES,
+                    )
+                    self.show_status(
+                        f"Cannot add more vertices: the limit is {MAX_DENSIFY_VERTICES} "
+                        f"per annotation. Scroll down to simplify first.",
+                        4000,
+                    )
 
                 # Capture new geometry and push action
                 try:
@@ -312,6 +460,19 @@ class SelectTool(Tool):
             self.annotation_window.set_annotation_size(delta=16 if delta > 0 else -16)
 
     # --- Helper and Action Methods ---
+
+    def show_status(self, message, msecs=5000):
+        """Put a message where the user will actually see it.
+
+        Several failure paths in this tool used print(), which in a windowed
+        application goes nowhere the user is looking -- so refusing to combine
+        annotations, for instance, was indistinguishable from the hotkey not
+        working.
+        """
+        try:
+            self.annotation_window.main_window.status_bar.showMessage(message, msecs)
+        except Exception:
+            pass
 
     def _on_selection_changed(self, *args):
         """Selection changed: handles follow it."""
@@ -362,10 +523,12 @@ class SelectTool(Tool):
         Returns the topmost annotation at the position, respecting Z-index ordering
         and label visibility.
         """
-        # Filter out the resize-handle layer. It has no shape() of its own, so
-        # scene.items() reports it for any point inside its bounding rect.
-        handle_layer = self.resize_subtool.handle_layer
-        valid_items = [item for item in items if item is not handle_layer]
+        # Filter out the tool's own chrome. The handle layer has no shape() of
+        # its own, so scene.items() reports it for any point inside its
+        # bounding rect; the hover outline would resolve to the annotation it
+        # is already drawn around.
+        chrome = (self.resize_subtool.handle_layer, self._hover_item)
+        valid_items = [item for item in items if item not in chrome]
         
         center_threshold = 10.0  # Distance threshold in pixels to consider a click "on center"
         center_candidates = []
@@ -463,6 +626,14 @@ class SelectTool(Tool):
 
         # Check if selection is locked to a specific label
         if locked_label and annotation.label.id != locked_label.id:
+            # Say so. Silently dropping the click is indistinguishable from the
+            # application having stopped responding to the mouse.
+            self.show_status(
+                f"Selection is locked to '{locked_label.short_label_code}' -- "
+                f"'{annotation.label.short_label_code}' cannot be selected. "
+                f"Unlock the label in the Label Window to select it.",
+                4000,
+            )
             return None  # Clicked annotation doesn't match locked label
 
         if annotation in self.selected_annotations:
@@ -511,12 +682,12 @@ class SelectTool(Tool):
         selected_annotations = self.annotation_window.selected_annotations.copy()
         
         if len(selected_annotations) <= 1:
-            print("Need at least 2 annotations to combine.")
+            self.show_status("Cannot combine: select at least 2 annotations.")
             return  # Need at least 2 annotations to combine
         
         # Check if any annotations have machine confidence
         if any(not annotation.verified for annotation in selected_annotations):
-            self.annotation_window.main_window.status_bar.showMessage(
+            self.show_status(
                 "Cannot combine: verify by selecting and pressing Ctrl+Space, "
                 "clicking a label in the ConfidenceWindow, or updating the label manually.",
                 5000,
@@ -525,7 +696,7 @@ class SelectTool(Tool):
 
         # Check that all selected annotations have the same label
         if not all(annotation.label.id == selected_annotations[0].label.id for annotation in selected_annotations):
-            self.annotation_window.main_window.status_bar.showMessage(
+            self.show_status(
                 "Cannot combine annotations with different labels. Select annotations with the same label.", 5000)
             return
         
@@ -537,7 +708,7 @@ class SelectTool(Tool):
         
         # Handle cases where we can't combine different types
         if has_rectangles and (has_patches or has_polygons or has_multi_polygons):
-            self.annotation_window.main_window.status_bar.showMessage(
+            self.show_status(
                 "Cannot combine: rectangle annotations can only be combined with other rectangles.", 5000)
             return
 
@@ -545,7 +716,7 @@ class SelectTool(Tool):
         if has_rectangles:
             first_type = type(selected_annotations[0])
             if not all(isinstance(annotation, first_type) for annotation in selected_annotations):
-                self.annotation_window.main_window.status_bar.showMessage(
+                self.show_status(
                     "Cannot combine: can only combine rectangles with other rectangles.", 5000)
                 return
         
@@ -569,11 +740,14 @@ class SelectTool(Tool):
             # Now combine all the polygons
             combined_annotation = PolygonAnnotation.combine(annotations_to_combine)
         else:
-            print("Failed to combine annotations. Unsupported annotation types.")
+            self.show_status("Cannot combine: unsupported annotation type.")
             return  # Unsupported annotation type
         
         if not combined_annotation:
-            print("Failed to combine annotations. Please check the selected annotations.")
+            self.show_status(
+                "Failed to combine annotations -- check that the selected shapes overlap "
+                "or are otherwise combinable."
+            )
             return  # Failed to combine annotations
         
         # Add the new combined annotation to the scene

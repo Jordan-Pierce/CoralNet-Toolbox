@@ -616,7 +616,7 @@ The Explorer automatically caches extracted features to accelerate re-loading th
   - <kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd>: Change size of the selected annotation
   - **Resize handles**: Appear automatically whenever a single annotation is selected; they stay subdued until the cursor comes near, then grow and light up. Drag one to reshape; the cursor shows which way it moves
   - <kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show *every* vertex at full strength (dense polygons normally thin their handles until you zoom in)
-  - <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Mouse Wheel</kbd>: Change the number of vertices for a polygon annotation
+  - <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Mouse Wheel</kbd>: Change the number of vertices for a polygon annotation (each tick up doubles the count, so it stops at 2000 vertices; scroll down to simplify first)
   - <kbd>Ctrl</kbd> + <kbd>Space</kbd>: Confirm prediction for selected annotation with top machine confidence
   - <kbd>Ctrl</kbd> + <kbd>X</kbd>: Cut a polygon annotation, explode a multi-polygon annotation, or subtract polygon annotations
      - **Cutting Rules**:

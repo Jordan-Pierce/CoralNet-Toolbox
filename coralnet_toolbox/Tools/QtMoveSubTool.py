@@ -74,6 +74,7 @@ class MoveSubTool(SubTool):
             self.parent_tool.resize_subtool.offset_handles(step.x(), step.y())
             self._last_pos = current_pos
             self._pending_center = self.orig_center + (current_pos - self.move_start_pos)
+            self.parent_tool.show_drag_offset(current_pos - self.move_start_pos)
         else:
             # Fallback: no live group (shouldn't happen for a selected annotation) —
             # use the legacy heavy per-move path so the move still works.

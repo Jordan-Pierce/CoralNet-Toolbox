@@ -20,6 +20,25 @@ from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAn
 
 from coralnet_toolbox.utilities import densify_polygon
 from coralnet_toolbox.utilities import simplify_polygon
+
+# Simplify/densify ladder for update_polygon(). BASE_TOLERANCE matches the
+# Annotation.tolerance default, so densifying all the way back returns the
+# annotation to the detail level it was created with.
+BASE_TOLERANCE = 0.1
+BASE_TOLERANCE_STEP = 0.05
+MAX_TOLERANCE = 2.0
+
+# Ceiling on the total vertex count (outer ring plus every hole) that densifying
+# is allowed to reach.
+#
+# densify_polygon inserts a midpoint between every pair of neighbours, so each
+# tick *doubles* the count. A mouse wheel emits ticks faster than anyone can
+# count them, and with nothing stopping it a four-point square reaches a million
+# vertices in eighteen notches -- long before that the application has stopped
+# responding. The cap is generous next to anything a person can usefully edge by
+# hand: a SAM-derived polygon lands in the low hundreds, and past a few hundred
+# on-screen vertices the handle layer is thinning them out anyway.
+MAX_DENSIFY_VERTICES = 2000
 from coralnet_toolbox.utilities import rasterio_to_cropped_image
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -541,21 +560,44 @@ class PolygonAnnotation(Annotation):
         # Call the parent class method to handle rebuilding the graphics group.
         super().update_graphics_item()
     
+    def vertex_count(self):
+        """Total vertices across the outer ring and every hole."""
+        return len(self.points) + sum(len(hole) for hole in (self.holes or []))
+
     def update_polygon(self, delta):
         """
         Simplify or densify the polygon and its holes based on wheel movement.
+
+        Returns True when the geometry changed, False when the request was
+        refused (densifying past MAX_DENSIFY_VERTICES), and False for a zero
+        delta. Callers use the refusal to tell the user why nothing happened.
         """
         # Determine which function to use based on the delta
         if delta < 0:
             # Simplify: increase tolerance (less detail)
-            self.tolerance = min(self.tolerance + 0.05, 2.0)
+            self.tolerance = min(self.tolerance + BASE_TOLERANCE_STEP, MAX_TOLERANCE)
             process_function = lambda pts: simplify_polygon(pts, self.tolerance)
         elif delta > 0:
-            # Densify: decrease segment length (more detail)
+            # Densify: decrease segment length (more detail).
+            #
+            # Walk the tolerance back down by the same step. It used to only
+            # ever climb, capped at MAX_TOLERANCE, so scrolling well down and
+            # then back up left it latched at the top -- and the next single
+            # tick down, which the user expects to shave a little detail, ran
+            # at maximum tolerance and flattened the shape in one move. The
+            # ladder is now symmetric: n ticks down then n ticks up returns the
+            # tolerance to where it started.
+            # Refuse before doing the work, not after: densify doubles the
+            # vertex count, so the check is simply whether twice the current
+            # count still fits.
+            if self.vertex_count() * 2 > MAX_DENSIFY_VERTICES:
+                return False
+
+            self.tolerance = max(self.tolerance - BASE_TOLERANCE_STEP, BASE_TOLERANCE)
             process_function = densify_polygon
         else:
             # No change
-            return
+            return False
 
         # --- Process the Outer Boundary ---
         xy_points = [(p.x(), p.y()) for p in self.points]
@@ -582,6 +624,7 @@ class PolygonAnnotation(Annotation):
         self.set_cropped_bbox()
         self.update_graphics_item()
         self.annotationUpdated.emit(self)
+        return True
 
     def update_location(self, new_center_xy: QPointF):
         """
