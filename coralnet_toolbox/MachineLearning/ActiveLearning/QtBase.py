@@ -1468,6 +1468,35 @@ class Base(QDialog):
 
         return frame
 
+    def rerun_images(self, budget):
+        """The images a Re-run should cover, at the budget now on the Setup tab.
+
+        Starts from the last round's images, since re-running is mostly about
+        seeing them again at a moved threshold, and then spends whatever budget
+        is left over on fresh candidates. A lowered budget trims from the end,
+        which is the least valuable end: acquisition returns its picks best
+        first.
+
+        include_current: the user pressed this button, so the image they are
+        looking at is the one they most likely meant. The automatic pass after a
+        round leaves it alone; this one should not.
+        """
+        image_paths = list(self.last_predicted_images)[:max(0, budget)]
+        if len(image_paths) >= budget:
+            # Still sets last_skipped when acquisition runs below, so the
+            # outcome line can explain an empty result. Nothing was skipped on
+            # this path -- the budget was filled from the last round.
+            self.last_skipped = {}
+            return image_paths
+
+        already = set(image_paths)
+        for image_path in self.candidate_images(budget, include_current=True):
+            if image_path not in already:
+                image_paths.append(image_path)
+                if len(image_paths) >= budget:
+                    break
+        return image_paths
+
     def rerun_predictions(self):
         """Predict again over the last round's images at the current thresholds.
 
@@ -1475,6 +1504,14 @@ class Base(QDialog):
         moving them after a round has run changes nothing that is already on
         screen. This is the button that makes them mean something without paying
         for another round of training.
+
+        The Image Budget is read here too, so raising it reaches further on the
+        very next press rather than only after another round has trained. That
+        is what the panel already tells the user to do when a round found
+        nothing -- "raise the Image Budget and press Re-run Predictions" -- and
+        before this the second half of that sentence did nothing, because the
+        last round's image list was replayed verbatim however large the budget
+        had grown.
         """
         if self.worker is not None:
             QMessageBox.information(self, "Round Running",
@@ -1485,13 +1522,7 @@ class Base(QDialog):
                                     "No round has produced a model to predict with.")
             return
 
-        image_paths = list(self.last_predicted_images)
-        if not image_paths:
-            # include_current: the user pressed this button, so the image they
-            # are looking at is the one they most likely meant. The automatic
-            # pass after a round leaves it alone; this one should not.
-            image_paths = self.candidate_images(self.budget_spinbox.value(),
-                                                include_current=True)
+        image_paths = self.rerun_images(self.budget_spinbox.value())
         if not image_paths:
             self.show_status("Active Learning: no images to predict on.")
             return
