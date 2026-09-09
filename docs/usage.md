@@ -614,8 +614,9 @@ The Explorer automatically caches extracted features to accelerate re-loading th
   - <kbd>Ctrl</kbd> + <kbd>Delete</kbd> / <kbd>Backspace</kbd>: Remove selected annotation(s)
   - <kbd>Ctrl</kbd> + <kbd>Drag</kbd>: Create rectangle selection to select multiple annotations
   - <kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd>: Change size of the selected annotation
-  - <kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show resize handles for the selected annotation
-  - <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Mouse Wheel</kbd>: Change the number of vertices for a polygon annotation
+  - **Resize handles**: Appear automatically whenever a single annotation is selected; they stay subdued until the cursor comes near, then grow and light up. Drag one to reshape; the cursor shows which way it moves
+  - <kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show *every* vertex at full strength (dense polygons normally thin their handles until you zoom in)
+  - <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Mouse Wheel</kbd>: Change the number of vertices for a polygon annotation (each tick up doubles the count, so it stops at 2000 vertices; scroll down to simplify first)
   - <kbd>Ctrl</kbd> + <kbd>Space</kbd>: Confirm prediction for selected annotation with top machine confidence
   - <kbd>Ctrl</kbd> + <kbd>X</kbd>: Cut a polygon annotation, explode a multi-polygon annotation, or subtract polygon annotations
      - **Cutting Rules**:
@@ -981,7 +982,7 @@ Multi-select filters and search bars to control which images are displayed:
 - <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Mouse Wheel</kbd>: Change polygon vertex count
 - <kbd>Ctrl</kbd> + <kbd>X</kbd>: Cut a polygon annotation, explode a multi-polygon, or subtract polygons
 - <kbd>Ctrl</kbd> + <kbd>C</kbd>: Combine multiple selected annotations (if same type and label)
-- <kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show resize handles for selected annotations
+- <kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show every vertex handle at full strength (handles themselves appear on selection)
 - <kbd>Ctrl</kbd> + <kbd>R</kbd>: Bake or unbake annotations (opens dialog to choose between baking vectors into mask or unbaking mask into vectors; Select tool must be active)
 - <kbd>Backspace</kbd> / <kbd>Delete</kbd>: Cancel current drawing (rectangle, polygon, work area, cutting line)
 

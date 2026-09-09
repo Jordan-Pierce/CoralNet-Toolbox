@@ -1636,7 +1636,9 @@ class Base(QDialog):
         # offers to empty, so this is how anything leaves a session at all.
         self.save_session_button = QPushButton("Save Session")
         self.save_session_button.setToolTip(
-            "Copy the best model and its round's results to a folder you choose.\n"
+            "Copy the best model and its round's results into a folder you choose.\n"
+            "Each save gets its own timestamped subfolder, so the same destination\n"
+            "can collect every session without them running together.\n"
             "Rounds are kept in a cache that prunes older weights on its own, so\n"
             "this is how a session's model becomes something you keep.")
         self.save_session_button.clicked.connect(self.save_session)
@@ -2862,17 +2864,21 @@ class Base(QDialog):
         return entry
 
     def session_stem(self, entry):
-        """The filename stem a saved round is written under.
+        """The name of the run a saved round came out of.
 
         The round's own run directory name -- `round_07_20260908_121045` -- with
         the task in front of it. That name is generated when the round starts,
-        so a saved model points back at the exact run folder that produced it,
-        and the timestamp keeps two saves of the same round number apart.
+        so it points back at the exact run folder that produced the model, and
+        the timestamp keeps two runs of the same round number apart.
 
-        `best.pt` alone is unidentifiable a month later, which is the whole
-        reason for a stem; the project's own filename was tried and is the wrong
-        thing to reach for, since a project can be renamed, copied, or never
-        saved at all, and none of that says anything about the session.
+        This used to prefix every saved filename, because `best.pt` alone is
+        unidentifiable a month later. Now that each save gets a folder of its
+        own the folder carries the identity and the filenames can be plain, so
+        this is recorded in session.json as `run_name` instead -- the link back
+        to the run is worth keeping either way. The project's own filename was
+        tried and is the wrong thing to reach for, since a project can be
+        renamed, copied, or never saved at all, and none of that says anything
+        about the session.
         """
         run_dir = entry.get('run_dir') if entry else None
         run_name = os.path.basename(os.path.normpath(run_dir)) if run_dir else ''
@@ -2923,6 +2929,10 @@ class Base(QDialog):
         return {
             'saved': datetime.datetime.now().isoformat(timespec='seconds'),
             'task': self.task,
+            # Which run folder produced these weights. The saved filenames used
+            # to carry this and no longer need to; losing it altogether would
+            # make a saved model untraceable back to the round that trained it.
+            'run_name': self.session_stem(entry),
             'project': getattr(self.main_window, 'current_project_path', '') or '',
             'best_round': entry.get('round'),
             'labels': list(entry.get('labels') or []),
@@ -2959,6 +2969,9 @@ class Base(QDialog):
         Rounds are written to a cache that prunes its own older weights and that
         New Session offers to empty, so without this there is no way for a
         session's model to outlive it except by knowing where to dig.
+
+        The user picks where saves live, not what one save is called: each save
+        makes its own timestamped folder underneath. See write_session().
         """
         entry = self.saveable_round()
         if entry is None:
@@ -2967,29 +2980,73 @@ class Base(QDialog):
                 "There is no finished round with weights to save yet.")
             return
 
-        directory = QFileDialog.getExistingDirectory(self, "Save Session To")
+        directory = QFileDialog.getExistingDirectory(
+            self, "Choose a folder to save this session into")
         if not directory:
             return
 
         try:
-            self.write_session(directory, entry)
+            target = self.write_session(directory, entry)
         except Exception as e:
             print(f"Error saving the session: {e}")
             QMessageBox.critical(self, "Save Session", f"Could not save the session:\n\n{e}")
             return
 
-        QMessageBox.information(self, "Save Session", "Session saved successfully.")
+        QMessageBox.information(
+            self, "Save Session",
+            f"Session saved to:\n\n{target}")
+
+    def session_folder_name(self, entry):
+        """The name of the folder one save writes into.
+
+        Stamped with the moment of saving and named for the task and round it
+        holds, so a destination folder collecting many saves sorts
+        chronologically and every entry says what it is without being opened.
+
+        The round's own run name carries a timestamp too -- the moment the round
+        *started* -- but two timestamps in one folder name is noise, so that one
+        goes into session.json as `run_name`.
+        """
+        stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        return f"{stamp}_{self.task}_round_{(entry or {}).get('round', 0):02d}"
+
+    @staticmethod
+    def unique_directory(parent, name):
+        """`parent/name`, suffixed if something is already there.
+
+        Two saves inside the same second are unlikely rather than impossible,
+        and quietly writing the second one into the first one's folder would
+        interleave two models' artefacts under identical filenames.
+        """
+        candidate = os.path.join(parent, name)
+        if not os.path.exists(candidate):
+            return candidate
+        for index in range(2, 1000):
+            candidate = os.path.join(parent, f"{name}_{index}")
+            if not os.path.exists(candidate):
+                return candidate
+        raise OSError(f"No unused name left for '{name}' in {parent}")
 
     def write_session(self, directory, entry):
-        """Write the model, the round's artefacts and the summary into `directory`.
+        """Create a timestamped folder under `directory` and fill it.
 
-        Everything is prefixed with the task and the round's own run name, so
-        several saved sessions can share a folder without colliding or becoming
-        anonymous -- see session_stem().
+        Everything one save produces goes into a folder of its own: the model,
+        the round's results.csv and its plots, and the summary.
+
+        This used to write straight into the chosen directory with every
+        filename prefixed by the task and run name. That kept saves from
+        colliding, but it left the user to reassemble a session by reading
+        prefixes off a flat list -- and after a few saves the folder was a wall
+        of near-identical long names. A folder per save does the same job of
+        keeping them apart, gets the grouping for free, and lets the filenames
+        inside be plain.
+
+        Returns the folder it created.
         """
-        stem = self.session_stem(entry)
+        target = self.unique_directory(directory, self.session_folder_name(entry))
+        os.makedirs(target)
 
-        shutil.copy2(entry['weights'], os.path.join(directory, f"{stem}_best.pt"))
+        shutil.copy2(entry['weights'], os.path.join(target, "best.pt"))
 
         run_dir = entry.get('run_dir')
         if run_dir and os.path.isdir(run_dir):
@@ -2997,14 +3054,15 @@ class Base(QDialog):
                 source = os.path.join(run_dir, name)
                 if not os.path.isfile(source):
                     # weights/ is the round's own checkpoints; the best one is
-                    # already copied above under a name that says what it is.
+                    # already copied above.
                     continue
                 if name == 'results.csv' or os.path.splitext(name)[1].lower() in PLOT_SUFFIXES:
-                    shutil.copy2(source, os.path.join(directory, f"{stem}_{name}"))
+                    shutil.copy2(source, os.path.join(target, name))
 
-        summary_path = os.path.join(directory, f"{stem}_session.json")
-        with open(summary_path, 'w') as handle:
+        with open(os.path.join(target, "session.json"), 'w') as handle:
             json.dump(self.session_summary(entry), handle, indent=2)
+
+        return target
 
     # ------------------------------------------------------------------
     # Starting over

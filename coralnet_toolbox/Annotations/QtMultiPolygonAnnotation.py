@@ -301,6 +301,9 @@ class MultiPolygonAnnotation(Annotation):
 
         # Create a new group to hold all polygon items
         self.graphics_item_group = QGraphicsItemGroup()
+        # Matches create_graphics_item: a rebuilt group is a fresh item and
+        # would otherwise fall back to the default Z of 0.
+        self.graphics_item_group.setZValue(20)
         self.center_graphics_item = None
         self.bounding_box_graphics_item = None
         self.polygon_graphics_item = None
@@ -375,6 +378,43 @@ class MultiPolygonAnnotation(Annotation):
     def update_annotation_size(self, delta: float):
         """Show a warning that MultiPolygonAnnotations should be cut before resizing."""
         pass  # No operation; this is a placeholder for future functionality
+
+    def resize(self, handle: str, new_pos: QPointF):
+        """Move one vertex of one constituent polygon.
+
+        Handles are named "mpoint_{polygon}_{ring}_{vertex}" so the sub-polygon
+        index survives the round trip; the tail is exactly a PolygonAnnotation
+        handle name and is handed straight to that polygon.
+
+        The vertex maths is delegated to PolygonAnnotation.apply_vertex rather
+        than to its resize(), because the sub-polygons are not scene items in
+        their own right -- only this annotation's group is -- so letting each
+        one rebuild its own graphics and emit its own signals would be wasted
+        work at best and a duplicate ConfidenceWindow rebuild at worst.
+        """
+        if not handle.startswith("mpoint_"):
+            return
+
+        try:
+            _, poly_index_str, ring_str, vertex_str = handle.split("_")
+            poly_index = int(poly_index_str)
+        except (ValueError, IndexError):
+            return
+
+        if not (0 <= poly_index < len(self.polygons)):
+            return
+
+        if not self.polygons[poly_index].apply_vertex(f"point_{ring_str}_{vertex_str}", new_pos):
+            return
+
+        # The sub-polygon's own derived geometry feeds this annotation's.
+        self.polygons[poly_index].set_centroid()
+        self.polygons[poly_index].set_cropped_bbox()
+
+        self.set_centroid()
+        self.set_cropped_bbox()
+        self.update_graphics_item()
+        self.annotationUpdated.emit(self)
 
     def cut(self, cutting_points: list = None):
         """Break apart the MultiPolygonAnnotation into individual PolygonAnnotations."""

@@ -444,10 +444,16 @@ class RectangleAnnotation(Annotation):
         self.annotationUpdated.emit(self)
 
     def resize(self, handle: str, new_pos: QPointF):
-        """Resize the annotation based on the handle and new position."""
-        # Clear the machine confidence
-        self.update_user_confidence(self.label)
+        """Resize the annotation based on the handle and new position.
 
+        Called once per mouse-move of a drag. It used to open with
+        update_user_confidence(self.label), which rebuilt the graphics item and
+        emitted annotationUpdated + verifiedChanged before this method did its
+        own rebuild and emit -- so every frame cost two graphics rebuilds and
+        two signal fan-outs, one of which tore down and rebuilt the whole
+        ConfidenceWindow. Verification belongs to the finished edit, so
+        ResizeSubTool applies it once on mouse release instead.
+        """
         # Resize the annotation
         if handle == "left":
             self.top_left.setX(new_pos.x())

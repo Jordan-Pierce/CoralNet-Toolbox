@@ -1736,7 +1736,20 @@ class MainWindow(QMainWindow):
         self.version_label = QLabel(f"v{self.version}")
         self.version_label.setToolTip(f"CoralNet-Toolbox version {self.version}")
         self.version_label.setStyleSheet("color: #666; margin-right: 4px;")
+
+        # --------------------------------------------------
+        # Selection readout, pinned left of the version label
+        # --------------------------------------------------
+        # Selecting more than one annotation clears the Label Window highlight
+        # and the ConfidenceWindow display, and put nothing in their place --
+        # so the only way to know how much was caught by a rubber band was to
+        # count it on screen. A permanent widget rather than showMessage(), so
+        # transient tool messages can come and go without erasing it.
+        self.selection_label = QLabel("")
+        self.selection_label.setStyleSheet("color: #666; margin-right: 12px;")
+        self.status_bar.addPermanentWidget(self.selection_label)
         self.status_bar.addPermanentWidget(self.version_label)
+        self.annotation_window.annotationSelectionChanged.connect(self.update_selection_status)
 
         # --------------------------------------------------
         # Check for updates on opening
@@ -1749,6 +1762,33 @@ class MainWindow(QMainWindow):
         # Process events
         QApplication.processEvents()
         
+    def update_selection_status(self, annotation_ids):
+        """Summarise the current selection in the status bar."""
+        try:
+            ids = list(annotation_ids or [])
+            if not ids:
+                self.selection_label.setText("")
+                self.selection_label.setToolTip("")
+                return
+
+            annotations_dict = self.annotation_window.annotations_dict
+            annotations = [annotations_dict[i] for i in ids if i in annotations_dict]
+            labels = {a.label.short_label_code for a in annotations if a.label}
+
+            if len(ids) == 1 and annotations:
+                annotation = annotations[0]
+                shape = type(annotation).__name__.replace("Annotation", "")
+                text = f"1 selected · {annotation.label.short_label_code} · {shape}"
+            else:
+                plural = "label" if len(labels) == 1 else "labels"
+                text = f"{len(ids)} selected · {len(labels)} {plural}"
+
+            self.selection_label.setText(text)
+            self.selection_label.setToolTip(", ".join(sorted(labels)) if labels else "")
+        except Exception:
+            # A status readout must never be the reason a selection fails.
+            pass
+
     @property
     def status_bar(self):
         """
