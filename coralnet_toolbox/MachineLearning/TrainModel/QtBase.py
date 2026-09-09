@@ -30,7 +30,7 @@ from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedInstanceDat
 from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedClassificationDataset
 from coralnet_toolbox.MachineLearning.EvaluateModel.QtBase import EvaluateModelWorker
 
-from coralnet_toolbox.Icons import get_icon, get_window_icon
+from coralnet_toolbox.Icons import get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -255,7 +255,6 @@ class TrainModelWorker(QThread):
             self.model_path = self.params.pop('model', None)
             # Private marker; must not reach model.train()
             self.in_place_dataset = self.params.pop('in_place_dataset', None)
-            # Get the weighted flag
             self.weighted = self.set_weighted_dataset()
             if self.in_place_dataset is not None:
                 # Swaps in the dataset class that reads from the project. Done
@@ -421,7 +420,7 @@ class TrainModelWorker(QThread):
             # results.csv row rather than half of one.
             self.model.add_callback('on_train_epoch_end', self._stop_if_requested)
 
-            # Train the model
+            # Train the model.
             self.model.train(**self.params, device=self.device)
 
             # Post-run cleanup
