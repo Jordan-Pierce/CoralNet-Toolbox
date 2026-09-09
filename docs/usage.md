@@ -383,8 +383,10 @@ All dock windows (Annotation Window, Labels Window, Rasters Window, Confidence W
     round looks for new objects and checks itself where you are annotating
   - A round skips the image open on the canvas and images already carrying predictions
     you have not reviewed; a round that finds nothing tells you which. **Re-run
-    Predictions** predicts again over the same images at the current thresholds, which is
-    the only way a threshold change takes effect before the next round
+    Predictions** predicts again at the current thresholds without training, which is the
+    only way a threshold change takes effect before the next round. It reads the **Image
+    Budget** as it stands, so raising the budget first reaches images the last round did
+    not, and lowering it trims the least promising of its picks
   - **Auto Train** starts the next round on its own once every included label has gained
     the given number of newly confirmed annotations
   - A round's model is kept only if it beat the best round before it, so predictions and

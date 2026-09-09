@@ -29,8 +29,10 @@ from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedInstanceDataset
 from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedClassificationDataset
 from coralnet_toolbox.MachineLearning.EvaluateModel.QtBase import EvaluateModelWorker
+from coralnet_toolbox.MachineLearning.PUDetection import (
+    PUDetectionTrainer, pu_close_mosaic, pu_supported_name, supports_pu)
 
-from coralnet_toolbox.Icons import get_icon, get_window_icon
+from coralnet_toolbox.Icons import get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -219,6 +221,10 @@ class TrainModelWorker(QThread):
         self.model = None
         self.model_path = None
         self.weighted = False
+        # Positive-unlabeled training. Popped from params in pre_run like
+        # `weighted` is -- Ultralytics rejects keys it does not know, so it must
+        # never reach model.train().
+        self.pus = False
         self.temp_data_yaml = None
         # Set when training reads straight from the project instead of a
         # dataset on disk; owns the patched dataset class and its scaffolding.
@@ -256,6 +262,7 @@ class TrainModelWorker(QThread):
             # Private marker; must not reach model.train()
             self.in_place_dataset = self.params.pop('in_place_dataset', None)
             # Get the weighted flag
+            self.pus = bool(self.params.pop('pus', False))
             self.weighted = self.set_weighted_dataset()
             if self.in_place_dataset is not None:
                 # Swaps in the dataset class that reads from the project. Done
@@ -266,6 +273,8 @@ class TrainModelWorker(QThread):
             self.model = YOLO(self.model_path)
             # Set the task in the model itself
             self.model.task = self.params['task']
+            # Positive-unlabeled training, once the model exists to be asked.
+            self.setup_pu_training()
             # Freeze layers, freeze encoder
             freeze_layers = self.params.pop('freeze_layers', None)
 
@@ -371,6 +380,38 @@ class TrainModelWorker(QThread):
         self.temp_data_yaml = temp_path
         return temp_path
 
+    def setup_pu_training(self):
+        """Check the model can run PU, and clear mosaic out of the PU epochs.
+
+        Raising rather than quietly training without PU: the switch is the whole
+        reason the run was configured this way, and a round that silently did
+        something else is worse than one that says why it will not start. Both
+        dialogs already surface a setup error.
+
+        `close_mosaic` is forced because it is not a preference here -- the EMA
+        teacher scores 4-image collages badly, and its regions are exactly what
+        the ignore band acts on. An explicit close_mosaic (a custom parameter,
+        or an imported args.yaml) is left alone.
+        """
+        if not self.pus:
+            return
+
+        if self.params.get('task') != 'detect':
+            raise ValueError("Positive-Unlabeled training is detection-only "
+                             f"(task is '{self.params.get('task')}').")
+
+        supported, reason = supports_pu(self.model)
+        if not supported:
+            raise ValueError(f"Positive-Unlabeled training cannot run on "
+                             f"{os.path.basename(str(self.model_path))}: {reason}")
+
+        if 'close_mosaic' not in self.params:
+            epochs = int(self.params.get('epochs', 100))
+            self.params['close_mosaic'] = pu_close_mosaic(epochs)
+            print(f"PU: mosaic disabled from epoch "
+                  f"{epochs - self.params['close_mosaic'] + 1} on, so the teacher "
+                  f"never scores a collage.")
+
     def set_weighted_dataset(self):
         """
         Determine whether to use a weighted dataset based on the UI parameters.
@@ -421,8 +462,11 @@ class TrainModelWorker(QThread):
             # results.csv row rather than half of one.
             self.model.add_callback('on_train_epoch_end', self._stop_if_requested)
 
-            # Train the model
-            self.model.train(**self.params, device=self.device)
+            # Train the model. `trainer` is Ultralytics' own hook for a custom
+            # trainer, so a PU run differs from a normal one by this argument and
+            # nothing else -- same dataset class, callbacks, saving and validation.
+            self.model.train(**self.params, device=self.device,
+                             trainer=PUDetectionTrainer if self.pus else None)
 
             # Post-run cleanup
             self.post_run()
@@ -825,6 +869,32 @@ class Base(QDialog):
         self.weighted_combo.setToolTip("If True, use weighted sampling to balance imbalanced datasets.\nGives more weight to underrepresented classes during training.\nRecommended: True if your dataset has class imbalance.")
         form_layout.addRow("Weighted Sampling:", self.weighted_combo)
 
+        # Positive-Unlabeled. Detection only -- the ignore band masks anchors of
+        # the v8 detection loss, which is not what the other tasks train through.
+        # Absent rather than disabled elsewhere: a row that can never be used is
+        # a question the user has to answer and then discover did not matter.
+        self.pus_combo = None
+        if self.task == 'detect':
+            self.pus_combo = create_bool_combo()
+            # Off unless asked for: it changes what training optimises, and it
+            # is the only parameter here that a user could enable without
+            # knowing their data is partly annotated.
+            self.pus_combo.setCurrentText("False")
+            # Kept on the dialog so update_pus_availability can put it back
+            # after a disabled model has replaced it with its reason.
+            self.pus_tooltip = "Positive-Unlabeled training: train as though unboxed regions might still\nhold real objects, rather than as guaranteed background.\n\nUse it when your images are only partly annotated -- you boxed what you\ncame for and left other real objects unlabeled. A second copy of the\nmodel, averaged slowly over training, marks regions it is fairly sure\nabout; where you drew nothing, those are dropped from the loss instead\nof being taught as background. Nothing is ever added to your labels.\n\nCosts a forward pass per batch and a second copy of the model in memory,\nand it turns mosaic off for the epochs it is active.\n\nMeasured to help on medium and larger models at large image sizes; at\nnano it came out level with or slightly behind normal training.\nDetection only, and not available for RT-DETR, YOLOv10 or YOLO26."
+            self.pus_combo.setToolTip(self.pus_tooltip)
+            self.pus_label = QLabel("Positive-Unlabeled:")
+            form_layout.addRow(self.pus_label, self.pus_combo)
+            # The chosen model decides whether this can be offered at all,
+            # and it can change after this runs. Both tabs are watched, plus
+            # the tab bar itself, because which tab is in front is what picks
+            # the model -- see selected_model().
+            self.model_combo.currentTextChanged.connect(self.update_pus_availability)
+            self.model_edit.textChanged.connect(self.update_pus_availability)
+            self.model_tabs.currentChanged.connect(self.update_pus_availability)
+            self.update_pus_availability()
+
         # Freeze Layers
         self.freeze_layers_spinbox = QDoubleSpinBox()
         self.freeze_layers_spinbox.setMinimum(0.0)
@@ -908,6 +978,35 @@ class Base(QDialog):
         form_layout.addRow(self.remove_param_button)
 
         self.right_layout.addWidget(group_box, 1)
+
+    def update_pus_availability(self, *args):
+        """Grey the PU control out for a model that cannot run it.
+
+        Off *and* disabled, not merely disabled: a stale "True" left sitting
+        behind a greyed-out box would send `pus` on the next run of a model that
+        had nothing to do with the choice.
+
+        This is the name check, which only recognises the families in the
+        dropdown. A browsed .pt stays enabled -- its filename proves nothing,
+        and refusing PU for an earlier run's best.pt would rule out the most
+        ordinary case there is. The model itself is checked for real once it has
+        been built, in TrainModelWorker.setup_pu_training.
+        """
+        if getattr(self, 'pus_combo', None) is None:
+            return
+
+        model, _ = self.selected_model()
+        supported, reason = pu_supported_name(model)
+
+        self.pus_combo.setEnabled(supported)
+        self.pus_label.setEnabled(supported)
+        if supported:
+            self.pus_combo.setToolTip(self.pus_tooltip)
+        else:
+            self.pus_combo.setCurrentText("False")
+            self.pus_combo.setToolTip(
+                "Not available for {}.{}{}".format(
+                    os.path.basename(str(model)), chr(10), reason))
 
     def _create_cache_combo(self):
         """Create the Ultralytics cache mode combo box."""
@@ -1275,6 +1374,8 @@ class Base(QDialog):
                 'optimizer': self.optimizer_combo,
                 'mask_ratio': self.mask_ratio_spinbox
             }
+            if self.pus_combo is not None:
+                param_mapping['pus'] = self.pus_combo
 
             # Update UI controls with imported values
             for param_name, value in params_to_load.items():
@@ -1297,7 +1398,7 @@ class Base(QDialog):
                     elif isinstance(widget, QComboBox):
                         if param_name == 'cache':
                             self._set_cache_combo_value(converted_value)
-                        elif param_name in ['save', 'weighted', 'val', 'verbose']:
+                        elif param_name in ['save', 'weighted', 'val', 'verbose', 'pus']:
                             widget.setCurrentText("True" if converted_value else "False")
                         elif str(converted_value) in [widget.itemText(i) for i in range(widget.count())]:
                             widget.setCurrentText(str(converted_value))
@@ -1353,6 +1454,8 @@ class Base(QDialog):
             export_data['verbose'] = self.verbose_combo.currentText() == "True"
             export_data['optimizer'] = self.optimizer_combo.currentText()
             export_data['mask_ratio'] = self.mask_ratio_spinbox.value()
+            if self.pus_combo is not None:
+                export_data['pus'] = self.pus_combo.currentText() == "True"
 
             # Custom parameters
             for param_info in self.custom_params:
@@ -1445,6 +1548,9 @@ class Base(QDialog):
             'exist_ok': True,
             'plots': True,
         }
+        # Detection only, so the key is absent rather than False elsewhere.
+        if self.pus_combo is not None and self.pus_combo.isEnabled():
+            params['pus'] = self.pus_combo.currentText() == "True"
         # Default project folder
         project = 'Data/Training'
         params['project'] = params['project'] if params['project'] else project
