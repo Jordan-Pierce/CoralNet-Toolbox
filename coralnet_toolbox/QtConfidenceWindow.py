@@ -57,8 +57,18 @@ class ConfidenceBar(QFrame):
         """Handle resize to recalculate target fill width and start animation."""
         super().resizeEvent(event)
         # Calculate the target fill width based on the current widget width and confidence
-        self.target_fill_width = int(self.width() * (self.confidence / 100))
-        
+        new_target = int(self.width() * (self.confidence / 100))
+
+        # Qt delivers several resize events while a layout settles, and this
+        # used to restart a 500 ms animation from zero on every one of them --
+        # so a bar could be re-animating long after it had finished, and a dock
+        # drag turned into a wall of restarts. Only an actual change in target
+        # is worth re-animating.
+        if new_target == self.target_fill_width and self.animation is not None:
+            return
+
+        self.target_fill_width = new_target
+
         # Stop any existing animation
         if self.animation is not None:
             self.animation.stop()

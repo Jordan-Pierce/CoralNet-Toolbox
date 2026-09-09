@@ -1601,7 +1601,10 @@ class BaseCanvas(QGraphicsView):
                 pen = QPen(original_color, 1)
                 pen.setCosmetic(True)
                 item.setPen(pen)
-                item.setZValue(5)
+                # 10, matching the group items built above: restoring this
+                # to 5 used to demote an un-highlighted annotation below
+                # its own peers.
+                item.setZValue(10)
                 break
     
     # ==================== Z-Channel Visualization ====================

@@ -699,42 +699,68 @@ class PolygonAnnotation(Annotation):
         self.update_graphics_item()
         self.annotationUpdated.emit(self)
 
-    def resize(self, handle: str, new_pos: QPointF):
-        """
-        Resize the annotation by moving a specific handle (vertex) to a new position.
-        The handle format is updated to support holes: 'point_{poly_index}_{vertex_index}'.
-        """
-        self.update_user_confidence(self.label)
+    def apply_vertex(self, handle: str, new_pos: QPointF) -> bool:
+        """Move one vertex, touching nothing else.
 
+        Split out of resize() so MultiPolygonAnnotation can reuse the vertex
+        maths without also triggering this polygon's own graphics rebuild and
+        signal emission -- the sub-polygons of a multi-polygon are not in the
+        scene in their own right.
+
+        Returns True when a vertex actually moved.
+        """
         if not handle.startswith("point_"):
-            return
+            return False
 
         try:
-            # Parse the new handle format: "point_outer_5" or "point_0_2"
+            # Parse the handle format: "point_outer_5" or "point_0_2"
             _, poly_index_str, vertex_index_str = handle.split("_")
             vertex_index = int(vertex_index_str)
 
             # --- Modify the correct list of points ---
             if poly_index_str == "outer":
                 # Handle resizing the outer boundary
-                if 0 <= vertex_index < len(self.points):
-                    new_points = self.points.copy()
-                    new_points[vertex_index] = new_pos
-                    # Update points directly without precision reduction
-                    self.points = new_points
+                if not (0 <= vertex_index < len(self.points)):
+                    return False
+                new_points = self.points.copy()
+                new_points[vertex_index] = new_pos
+                # Update points directly without precision reduction
+                self.points = new_points
             else:
                 # Handle resizing one of the holes
                 poly_index = int(poly_index_str)
-                if 0 <= poly_index < len(self.holes):
-                    if 0 <= vertex_index < len(self.holes[poly_index]):
-                        # Create a copy, modify it, and update the list of holes
-                        new_hole = self.holes[poly_index].copy()
-                        new_hole[vertex_index] = new_pos
-                        self.holes[poly_index] = new_hole
-                        # Holes are already updated, no precision reduction needed
+                if not (0 <= poly_index < len(self.holes)):
+                    return False
+                if not (0 <= vertex_index < len(self.holes[poly_index])):
+                    return False
+                # Create a copy, modify it, and update the list of holes
+                new_hole = self.holes[poly_index].copy()
+                new_hole[vertex_index] = new_pos
+                self.holes[poly_index] = new_hole
+                # Holes are already updated, no precision reduction needed
 
         except (ValueError, IndexError):
             # Fail gracefully if the handle format is invalid
+            return False
+
+        return True
+
+    def resize(self, handle: str, new_pos: QPointF):
+        """
+        Resize the annotation by moving a specific handle (vertex) to a new position.
+        The handle format is updated to support holes: 'point_{poly_index}_{vertex_index}'.
+
+        This runs once per mouse-move of a drag, so it does the minimum: mutate
+        the vertex, recompute derived geometry, rebuild the item, emit once.
+        It used to open with update_user_confidence(self.label), which rebuilt
+        the graphics item and fanned out annotationUpdated *and* verifiedChanged
+        before this method did its own rebuild and emit -- two full rebuilds and
+        two signal fan-outs per frame, one of which tore down and rebuilt the
+        entire ConfidenceWindow. Marking the annotation verified is a property
+        of the completed edit, not of each frame, so ResizeSubTool now does it
+        once on mouse release.
+        """
+        if not self.apply_vertex(handle, new_pos):
             return
 
         # --- Recalculate properties and refresh the graphics ---

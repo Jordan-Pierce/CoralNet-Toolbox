@@ -53,17 +53,26 @@ class SelectTool(Tool):
         # --- State for the currently active sub-tool ---
         self.active_subtool: SubTool | None = None
 
-        # --- State for transient UI (like resize handles) ---
-        self.resize_handles_visible = False
-        self.selection_locked = False
+        # --- Hover state for the always-on resize handles ---
+        self._hovered_handle = None
 
         self._connect_signals()
 
     def _connect_signals(self):
-        """Connect signals to hide resize handles when selection changes."""
-        self.annotation_window.annotationSelected.connect(self._hide_resize_handles)
-        self.annotation_window.annotationSizeChanged.connect(self._hide_resize_handles)
-        self.annotation_window.annotationDeleted.connect(self._hide_resize_handles)
+        """Keep the resize handles in step with the selection and the view.
+
+        Handles used to exist only while Ctrl+Shift was held, so every one of
+        these signals was wired to tear them down. Now that a single selected
+        annotation always carries its handles, the same signals have to rebuild
+        them instead -- the selection is the thing that decides whether handles
+        exist at all.
+        """
+        self.annotation_window.annotationSelectionChanged.connect(self._on_selection_changed)
+        self.annotation_window.annotationSizeChanged.connect(self._refresh_resize_handles)
+        self.annotation_window.annotationDeleted.connect(self._refresh_resize_handles)
+        # Handle radii are derived from zoom at paint time; this only keeps the
+        # layer's cached scale (and therefore its bounding rect) honest.
+        self.annotation_window.viewChanged.connect(self._on_view_changed)
 
     # --- SubTool Management ---
 
@@ -86,38 +95,22 @@ class SelectTool(Tool):
     def activate(self):
         super().activate()
         self.deactivate_subtool()
-        self._hide_resize_handles()
         self.annotation_window.viewport().setCursor(self.cursor)
-        self.selection_locked = False
+        self._hovered_handle = None
+        # Picking the tool back up with something already selected should show
+        # its handles immediately, not wait for the next click.
+        self._refresh_resize_handles()
 
     def deactivate(self):
         self.deactivate_subtool()
         self._hide_resize_handles()
         self.annotation_window.viewport().setCursor(self.default_cursor)
-        self.selection_locked = False
+        self._hovered_handle = None
         super().deactivate()
 
     # --- Event Handlers (Dispatcher Logic) ---
 
     def mousePressEvent(self, event: QMouseEvent):
-        if self.selection_locked:
-            # If selection is locked, only allow interaction with resize handles.
-            # Check if a handle was clicked to start a resize operation.
-            position = self.annotation_window.mapToScene(event.pos())
-            items = self.annotation_window.scene.items(position)
-            if self.resize_handles_visible:
-                for item in items:
-                    if item in self.resize_subtool.resize_handles_items:
-                        handle_name = item.data(1)
-                        if handle_name and len(self.selected_annotations) == 1:
-                            self.set_active_subtool(
-                                self.resize_subtool, event,
-                                annotation=self.selected_annotations[0],
-                                handle_name=handle_name
-                            )
-                            return  # Exit after starting resize
-            return  # Otherwise, ignore the click entirely
-        
         # Ignore right mouse button events (used for panning)
         if event.button() == Qt.RightButton:
             return
@@ -134,18 +127,21 @@ class SelectTool(Tool):
         items = self.annotation_window.scene.items(position)
 
         # --- DISPATCHER LOGIC: Decide which sub-tool to activate ---
-        # PRIORITY 1: Start Resizing if a visible handle is clicked.
-        if self.resize_handles_visible:
-            for item in items:
-                if item in self.resize_subtool.resize_handles_items:
-                    handle_name = item.data(1)
-                    if handle_name and len(self.selected_annotations) == 1:
-                        self.set_active_subtool(
-                            self.resize_subtool, event,
-                            annotation=self.selected_annotations[0],
-                            handle_name=handle_name
-                        )
-                        return
+        # PRIORITY 1: Start Resizing if a handle is under the cursor.
+        # The layer answers this itself, from the same decimated point list it
+        # draws, so a vertex that is too dense to be drawn is also not
+        # grabbable. Grab range is deliberately tight (see GRAB_RADIUS_PX):
+        # handles are always visible now, and a click near a vertex must still
+        # mean "move the annotation" unless it is genuinely on the handle.
+        if len(self.selected_annotations) == 1:
+            handle_name = self.resize_subtool.handle_at(position)
+            if handle_name:
+                self.set_active_subtool(
+                    self.resize_subtool, event,
+                    annotation=self.selected_annotations[0],
+                    handle_name=handle_name
+                )
+                return
 
         # PRIORITY 2: Start Selection if Ctrl is pressed on an empty area.
         annotation_under_cursor = self._get_annotation_from_items(items, position)
@@ -165,6 +161,46 @@ class SelectTool(Tool):
     def mouseMoveEvent(self, event: QMouseEvent):
         if self.active_subtool:
             self.active_subtool.mouseMoveEvent(event)
+            return
+
+        # Idle hover: wake the handles nearest the cursor and show the resize
+        # cursor when one is actually in grab range. QGraphicsView keeps mouse
+        # tracking on its viewport, so this runs with no button held.
+        self._update_handle_hover(event.pos())
+
+    def leave(self):
+        """Drop hover state when the pointer leaves the canvas."""
+        self._hovered_handle = None
+        self.resize_subtool.set_cursor_scene_pos(None)
+        if self.active:
+            self.annotation_window.viewport().setCursor(self.cursor)
+        super().leave()
+
+    def _update_handle_hover(self, view_pos):
+        """Feed the cursor position to the handle layer and pick a cursor shape."""
+        if self.resize_subtool.handle_layer is None:
+            if self._hovered_handle is not None:
+                self._hovered_handle = None
+                self.annotation_window.viewport().setCursor(self.cursor)
+            return
+
+        if not self.annotation_window.cursorInWindow(view_pos):
+            self.resize_subtool.set_cursor_scene_pos(None)
+            if self._hovered_handle is not None:
+                self._hovered_handle = None
+                self.annotation_window.viewport().setCursor(self.cursor)
+            return
+
+        position = self.annotation_window.mapToScene(view_pos)
+        self.resize_subtool.set_cursor_scene_pos(position)
+
+        handle_name = self.resize_subtool.handle_at(position)
+        if handle_name == self._hovered_handle:
+            return
+        self._hovered_handle = handle_name
+
+        shape = self.resize_subtool.handle_layer.cursor_for(handle_name)
+        self.annotation_window.viewport().setCursor(shape if shape is not None else self.cursor)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
         if self.active_subtool:
@@ -179,9 +215,11 @@ class SelectTool(Tool):
         # --- Hotkeys for starting tools/actions ---
         modifiers = event.modifiers()
         if modifiers & Qt.ControlModifier:
-            # Ctrl+Shift: Show resize handles for single selected annotation
-            if modifiers & Qt.ShiftModifier and len(self.selected_annotations) == 1:
-                self._show_resize_handles()
+            # Ctrl+Shift no longer summons the handles -- selecting an
+            # annotation does that. It now means "show me everything": every
+            # vertex, undecimated and unfaded, for surgery on a dense polygon.
+            if self._is_ctrl_shift_down(event):
+                self.resize_subtool.set_show_all(True)
             
             # --- Ctrl+X Hotkey Overload ---
             if event.key() == Qt.Key_X:
@@ -200,14 +238,32 @@ class SelectTool(Tool):
             elif event.key() == Qt.Key_Space:
                 self.update_with_top_machine_confidence()
 
+    @staticmethod
+    def _is_ctrl_shift_down(event: QKeyEvent) -> bool:
+        """True when Ctrl and Shift are both held, given this key press.
+
+        Qt reports a modifier key press with the modifier state as it was
+        *before* that key applied, so pressing Shift while Ctrl is held arrives
+        as Key_Shift carrying only ControlModifier. Testing modifiers() alone
+        therefore misses the moment the combination completes and only notices
+        on the next auto-repeat -- which is why holding Ctrl+Shift used to feel
+        like it needed a beat before anything happened. Folding the event's own
+        key into the test catches it on the press itself.
+        """
+        modifiers = event.modifiers()
+        ctrl = bool(modifiers & Qt.ControlModifier) or event.key() == Qt.Key_Control
+        shift = bool(modifiers & Qt.ShiftModifier) or event.key() == Qt.Key_Shift
+        return ctrl and shift
+
     def keyReleaseEvent(self, event: QKeyEvent):
         if self.active_subtool:
             self.active_subtool.keyReleaseEvent(event)
             return
 
-        # Hide resize handles if either Ctrl or Shift is released
+        # Drop the show-all override once either Ctrl or Shift is released.
+        # The handles themselves stay: they belong to the selection now.
         if not (event.modifiers() & Qt.ShiftModifier and event.modifiers() & Qt.ControlModifier):
-            self._hide_resize_handles()
+            self.resize_subtool.set_show_all(False)
 
     def wheelEvent(self, event: QMouseEvent):
         """Handle zoom using the mouse wheel or update polygon with Ctrl+Shift+wheel."""
@@ -251,22 +307,38 @@ class SelectTool(Tool):
                         self.annotation_window.annotationGeometryEdited.emit(annotation.id, {'old_geom': old_geom, 'new_geom': new_geom})
                     except Exception:
                         pass
-                if self.resize_handles_visible:
-                    self._show_resize_handles()
+                self.resize_subtool.refresh_handle_positions()
         elif modifiers & Qt.ControlModifier:
             self.annotation_window.set_annotation_size(delta=16 if delta > 0 else -16)
 
     # --- Helper and Action Methods ---
 
-    def _show_resize_handles(self):
-        if len(self.selected_annotations) == 1:
-            self.resize_handles_visible = True
-            self.resize_subtool.display_resize_handles(self.selected_annotations[0])
+    def _on_selection_changed(self, *args):
+        """Selection changed: handles follow it."""
+        self._refresh_resize_handles()
 
-    def _hide_resize_handles(self):
-        if self.resize_handles_visible:
-            self.resize_handles_visible = False
-            self.resize_subtool.remove_resize_handles()
+    def _on_view_changed(self, *args):
+        """Zoom or pan changed: keep the layer's cached scale current."""
+        self.resize_subtool.sync_view_scale()
+
+    def _refresh_resize_handles(self, *args):
+        """Show handles for a lone selected annotation, hide them otherwise.
+
+        Handles are a property of the selection, not of a held modifier, so this
+        is the single place that decides whether they exist. Resizing is only
+        meaningful for one annotation at a time, so a multi-selection has none.
+        """
+        if not self.active:
+            self._hide_resize_handles()
+            return
+        if len(self.selected_annotations) != 1:
+            self._hide_resize_handles()
+            return
+        self.resize_subtool.display_resize_handles(self.selected_annotations[0])
+
+    def _hide_resize_handles(self, *args):
+        self._hovered_handle = None
+        self.resize_subtool.remove_resize_handles()
             
     def _get_annotation_from_item(self, item):
         """Gets an annotation from a QGraphicsItem or its parent group."""
@@ -290,8 +362,10 @@ class SelectTool(Tool):
         Returns the topmost annotation at the position, respecting Z-index ordering
         and label visibility.
         """
-        # Filter out resize handles
-        valid_items = [item for item in items if item not in self.resize_subtool.resize_handles_items]
+        # Filter out the resize-handle layer. It has no shape() of its own, so
+        # scene.items() reports it for any point inside its bounding rect.
+        handle_layer = self.resize_subtool.handle_layer
+        valid_items = [item for item in items if item is not handle_layer]
         
         center_threshold = 10.0  # Distance threshold in pixels to consider a click "on center"
         center_candidates = []
