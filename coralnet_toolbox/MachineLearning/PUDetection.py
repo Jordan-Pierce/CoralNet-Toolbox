@@ -49,6 +49,7 @@ References:
 import os
 import re
 import math
+import shutil
 from copy import deepcopy
 
 import torch
@@ -70,6 +71,13 @@ EMA_DECAY = 0.999       # slow teacher; the point is stability, not tracking
 DEDUP_IOU = 0.30        # an ignore box this close to a GT box is redundant
 MAX_TEACHER_DET = 300   # NMS cap per image, so the band is bounded in dense frames
 WARMUP_FRACTION = 0.12  # GT-only epochs before the teacher is worth listening to
+
+# The extra checkpoint a PU run leaves beside best.pt: the epoch that recalled
+# best, rather than the epoch that scored best. Ultralytics selects best.pt on
+# fitness, which for detection is mAP50-95 alone -- precision and recall are
+# both weighted zero -- and mAP is exactly the number PU is expected to spend.
+# Without this the run can train past its own best model and never save it.
+RECALL_CHECKPOINT = 'recall_best.pt'
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -434,8 +442,10 @@ class PUDetectionTrainer(DetectionTrainer):
         with open(self.pu_diag_csv, "w") as f:
             f.write("epoch,pu_enabled,ignore_conf,ignore_count\n")
 
+        self._pu_best_recall = None
         self.add_callback("on_train_epoch_start", self._pu_epoch_start)
         self.add_callback("on_train_batch_end", self._pu_update_teacher)
+        self.add_callback("on_fit_epoch_end", self._pu_track_recall)
         self.add_callback("on_train_end", self._pu_finalize)
 
         if RANK in (-1, 0):
@@ -457,6 +467,71 @@ class PUDetectionTrainer(DetectionTrainer):
             if v.dtype.is_floating_point:
                 v *= d
                 v += (1 - d) * msd[k].detach().to(v.dtype)
+
+    @staticmethod
+    def epoch_recall(metrics):
+        """Validation recall out of an Ultralytics metrics dict, or None.
+
+        Prefers the mask figure when there is one, matching how the rest of the
+        toolbox reports a segmentation run, and falls back to any key that names
+        recall so a future column rename degrades to "no recall" rather than to
+        a wrong number.
+        """
+        for key in ('metrics/recall(M)', 'metrics/recall(B)'):
+            if key in metrics:
+                try:
+                    return float(metrics[key])
+                except (TypeError, ValueError):
+                    return None
+        for key, value in metrics.items():
+            if 'recall' in key.lower():
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    return None
+        return None
+
+    def _pu_track_recall(self, *args, **kwargs):
+        """Keep a copy of the epoch that recalled best, as recall_best.pt.
+
+        ``best.pt`` is selected by Ultralytics on fitness, which for detection is
+        mAP50-95 alone. Under PU that is the number being deliberately spent: a
+        model that starts finding objects nobody labelled scores those finds as
+        false positives, so it can go on improving at the job it was given while
+        its fitness falls, and the epoch worth keeping is never written.
+
+        This runs as ``on_fit_epoch_end``, which fires after Ultralytics has both
+        appended the epoch's row to results.csv and written ``last.pt`` -- so
+        ``last.pt`` is exactly this epoch's model, and copying it is cheaper and
+        far safer than re-serialising a checkpoint by hand. Whoever reads the run
+        afterwards can find the same epoch by taking the best recall in
+        results.csv; both use a strict improvement, so both settle a tie on the
+        earlier epoch.
+
+        Best-effort throughout: a failure here must not end a run that is
+        otherwise fine, because ``best.pt`` is still there to fall back on.
+        """
+        if RANK not in (-1, 0):
+            return
+        try:
+            recall = self.epoch_recall(getattr(self, 'metrics', None) or {})
+            if recall is None or (self._pu_best_recall is not None
+                                  and recall <= self._pu_best_recall):
+                return
+
+            wdir = str(getattr(self, 'wdir', '') or
+                       os.path.join(str(self.save_dir), 'weights'))
+            last = os.path.join(wdir, 'last.pt')
+            if not os.path.isfile(last):
+                # save=False, or an epoch Ultralytics chose not to write.
+                return
+
+            shutil.copyfile(last, os.path.join(wdir, RECALL_CHECKPOINT))
+            self._pu_best_recall = recall
+            LOGGER.info(f"PU: epoch {self.epoch + 1} is the best recall so far "
+                        f"({recall:.4f}); saved {RECALL_CHECKPOINT}.")
+        except Exception as e:
+            LOGGER.warning(f"PU: could not update {RECALL_CHECKPOINT} (non-fatal): {e}")
 
     def _pu_log_diagnostics(self, epoch, crit):
         if RANK not in (-1, 0):

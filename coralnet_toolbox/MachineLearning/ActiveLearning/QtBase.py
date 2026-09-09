@@ -85,7 +85,6 @@ from coralnet_toolbox.Features.FeatureMapCodec import load_feature_vector
 from coralnet_toolbox.MachineLearning import InPlaceTraining
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 from coralnet_toolbox.MachineLearning.TrainModel.QtBase import TrainModelWorker
-from coralnet_toolbox.MachineLearning.PUDetection import pu_supported_name
 from coralnet_toolbox.MachineLearning.TrainModel.QtDetect import STANDARD_MODELS as DETECT_MODELS
 from coralnet_toolbox.MachineLearning.TrainModel.QtSegment import STANDARD_MODELS as SEGMENT_MODELS
 
@@ -142,10 +141,6 @@ TRAINING_DEFAULTS = {
     # through WeightedInMemoryDataset, which is what the MRO composition test
     # covers, so this costs nothing here.
     'weighted': True,
-    # Off by default, unlike weighted sampling: it changes what training
-    # optimises, costs a teacher forward pass per batch, and the measured edge
-    # needs a bigger model than a round wants to run. Offered, not assumed.
-    'pus': False,
     'val': True,
     'verbose': True,
     'exist_ok': True,
@@ -221,10 +216,11 @@ STAT_TILES = (
      "Validation mAP50 from the most recent round that produced one, so a round"
      "\nthat failed or was stopped early leaves the last real score standing."),
     ('delta', "Change",
-     "Change in mAP50-95 against the previous comparable round, which is what"
-     "\ndecides whether a round's model is adopted. mAP50 is not: it saturates,"
-     "\nand a project whose objects are easy to find sits at 0.99 from round two"
-     "\nonwards while the model is still getting better at placing them."
+     "Change against the previous comparable round in whatever that round was"
+     "\njudged by, which is what decides whether its model is adopted."
+     "\nOrdinarily mAP50-95. mAP50 is not: it saturates, and a project whose"
+     "\nobjects are easy to find sits at 0.99 from round two onwards while the"
+     "\nmodel is still getting better at placing them."
      "\nBlank when the label set changed: that is a different measurement,"
      "\nnot a worse round."),
     ('awaiting', "Awaiting",
@@ -387,11 +383,15 @@ STATE_TOOLTIP = {
 # Columns of the Rounds table. The delta is the column the user actually reads:
 # an absolute mAP means little on its own, and "is this still improving?" is
 # the question that decides whether to run another round.
-(HIST_ROUND, HIST_IMAGES, HIST_BACKGROUND,
- HIST_ANNOTATIONS, HIST_MAP, HIST_FITNESS, HIST_DELTA) = range(7)
+(HIST_ROUND, HIST_IMAGES, HIST_BACKGROUND, HIST_ANNOTATIONS,
+ HIST_PRECISION, HIST_RECALL, HIST_MAP, HIST_FITNESS, HIST_DELTA) = range(9)
 
+# All four, not the two mAPs alone: precision and recall are read off the same
+# epoch as the mAPs, so a round that traded one for the other is visible rather
+# than reading as an unexplained drop. Segmentation shows the mask figures under
+# the same headings; see read_metrics.
 HISTORY_HEADERS = ["Round", "Train Images", "Background", "Annotations",
-                   "mAP50", "mAP50-95", "Change"]
+                   "Precision", "Recall", "mAP50", "mAP50-95", "Change"]
 
 # Per-image Active Learning review state, stored on the raster.
 REVIEW_PENDING = 'pending'
@@ -974,23 +974,6 @@ class Base(QDialog):
             "On by default here: an Active Learning project is uneven almost by\n"
             "definition early on, when one label has been drawn far more than the rest.")
         layout.addRow("Weighted Sampling:", self.weighted_combo)
-
-        # Detection only: the ignore band masks anchors of the detection loss,
-        # which is not what a segmentation round trains through. Absent rather
-        # than disabled for segment, so it is not a question with no answer.
-        self.pus_combo = None
-        if self.task == 'detect':
-            # Kept so update_pus_availability can restore it after a model
-            # that cannot run PU has replaced it with the reason.
-            self.pus_tooltip = "Positive-Unlabeled training: treat regions you have not boxed as unknown\nrather than as guaranteed background.\n\nThis is the normal state of an Active Learning project -- you confirm what\nthe round put in front of you and leave the rest of the frame alone, so\nreal objects sit unlabeled in images that count as fully reviewed. A slow\naverage of the model marks regions it is fairly confident about, and where\nyou drew nothing those are dropped from the loss instead of teaching the\nmodel that nothing is there. Your labels are never added to.\n\nCosts a forward pass per batch and a second copy of the model in memory,\nand turns mosaic off for the epochs it is active.\n\nTwo things to know before turning it on. The measured benefit needs a\nmedium or larger model at a large image size; at nano, which is the\ndefault here, it came out level with or slightly behind normal training.\nAnd it usually lowers mAP while raising recall, because finding an\nunlabeled object scores as a false positive -- so the Rounds table will\nlook worse even where the model got better."
-            self.pus_combo = bool_combo(TRAINING_DEFAULTS['pus'], self.pus_tooltip)
-            self.pus_label = QLabel("Positive-Unlabeled:")
-            layout.addRow(self.pus_label, self.pus_combo)
-            # create_model_group() has already run, so the combo exists to
-            # watch. Browse writes into it too, so this covers both ways the
-            # model can change.
-            self.model_combo.currentTextChanged.connect(self.update_pus_availability)
-            self.update_pus_availability()
 
         self.freeze_layers_spinbox = QDoubleSpinBox()
         self.freeze_layers_spinbox.setRange(0.0, 1.0)
@@ -2278,36 +2261,6 @@ class Base(QDialog):
             f"{len(negatives)} background {plural} ({train} train / {val} val): you "
             f"reviewed these and left nothing on them, so they train as empty.")
 
-    def update_pus_availability(self, *args):
-        """Grey Positive-Unlabeled out for a model that cannot run it.
-
-        Off as well as disabled, so a stale "True" cannot survive behind a
-        greyed-out box and reach a round that never asked for it.
-
-        Only the names in the dropdown are recognised. A path typed or browsed
-        in stays enabled, because a filename proves nothing and an earlier
-        session's best.pt is the most ordinary thing to continue from. Warm
-        start substitutes such a checkpoint on its own anyway, so the real check
-        has to happen against the built model -- it does, in
-        TrainModelWorker.setup_pu_training, which fails the round with the
-        reason rather than training something other than what was asked for.
-        """
-        if getattr(self, 'pus_combo', None) is None:
-            return
-
-        model = self.model_combo.currentText()
-        supported, reason = pu_supported_name(model)
-
-        self.pus_combo.setEnabled(supported)
-        self.pus_label.setEnabled(supported)
-        if supported:
-            self.pus_combo.setToolTip(self.pus_tooltip)
-        else:
-            self.pus_combo.setCurrentText("False")
-            self.pus_combo.setToolTip(
-                "Not available for {}.{}{}".format(
-                    os.path.basename(str(model)), chr(10), reason))
-
     def update_budget_range(self):
         """Cap the Image Budget at the number of images the project holds.
 
@@ -2663,10 +2616,6 @@ class Base(QDialog):
             # The model's class names are exactly these, in this order, so the
             # prediction pass needs them to map detections back onto labels.
             'labels': list(dataset.names),
-            # Recorded on the round, not read back off the widget later: the
-            # user can toggle it mid-session and the comparison below has to
-            # know how each round was actually trained.
-            'pus': bool(params.get('pus')),
             'stopped': False,
         }
 
@@ -2949,8 +2898,6 @@ class Base(QDialog):
             'dropout': self.dropout_spinbox.value(),
             'freeze_layers': self.freeze_layers_spinbox.value(),
             'weighted': self.weighted_combo.currentText() == "True",
-            'pus': bool(self.pus_combo and self.pus_combo.isEnabled()
-                        and self.pus_combo.currentText() == "True"),
             'single_cls': self.single_class_combo.currentText() == "True",
             'mask_ratio': self.mask_ratio_spinbox.value(),
             'workers': self.workers_spinbox.value(),
@@ -2980,7 +2927,10 @@ class Base(QDialog):
             'best_round': entry.get('round'),
             'labels': list(entry.get('labels') or []),
             'metrics': {
+                'precision': entry.get('precision'),
+                'recall': entry.get('recall'),
                 'map50': entry.get('map50'),
+                'map5095': entry.get('map5095'),
                 'fitness': entry.get('fitness'),
                 'epoch': entry.get('epoch'),
             },
@@ -2990,7 +2940,10 @@ class Base(QDialog):
                 'train_images': record.get('train_images'),
                 'background': record.get('background'),
                 'annotations': record.get('annotations'),
+                'precision': record.get('precision'),
+                'recall': record.get('recall'),
                 'map50': record.get('map50'),
+                'map5095': record.get('map5095'),
                 'fitness': record.get('fitness'),
                 'epoch': record.get('epoch'),
                 'stopped': record.get('stopped'),
@@ -3314,8 +3267,6 @@ class Base(QDialog):
             'val': self.val_combo.currentText() == "True",
             'verbose': self.verbose_combo.currentText() == "True",
         }
-        if self.pus_combo is not None and self.pus_combo.isEnabled():
-            params['pus'] = self.pus_combo.currentText() == "True"
         return params
 
     def on_training_error(self, message):
@@ -3368,9 +3319,7 @@ class Base(QDialog):
         weights = None
         improved = False
         if pending:
-            weights = os.path.join(pending['run_dir'], 'weights', 'best.pt')
-            if not os.path.isfile(weights):
-                weights = None
+            weights = self.round_checkpoint(pending['run_dir'])
 
             self.record_round(pending, weights)
             improved = self.round_improved()
@@ -3386,6 +3335,8 @@ class Base(QDialog):
             'round': pending['round'] if pending else len(self.round_history),
             'map50': self.round_history[-1]['map50'] if self.round_history else None,
             'fitness': self.round_history[-1]['fitness'] if self.round_history else None,
+            'recall': self.round_history[-1].get('recall') if self.round_history else None,
+            'precision': self.round_history[-1].get('precision') if self.round_history else None,
             'weights': weights,
             'predictions': 0,
             'predicted_on': 0,
@@ -3421,20 +3372,11 @@ class Base(QDialog):
     def round_improved(self):
         """Whether the round just recorded beat the best comparable one before it.
 
-        Comparable means the same label set **and** the same training mode: a
-        round that added a class is a different measurement, not a worse one, so
-        it is always adopted. So is a round with no metric at all -- validation
-        turned off, or results.csv unreadable -- because refusing to adopt on
-        missing evidence would leave a session that can never adopt anything.
-
-        Positive-Unlabeled rounds count as a different mode for the same reason,
-        and it matters more than it looks. PU trades mAP for recall on purpose:
-        a model that starts finding objects nobody boxed is scored down for it,
-        because those finds land against val labels that do not contain them. So
-        the first PU round almost always reports a lower mAP than the plain
-        rounds before it, and comparing the two would leave the session
-        permanently refusing to adopt a PU round and quietly predicting with the
-        old model. PU rounds are ranked against PU rounds.
+        Comparable means the same label set: a round that added a class is a
+        different measurement, not a worse one, so it is always adopted. So is
+        a round with no metric at all -- validation turned off, or results.csv
+        unreadable -- because refusing to adopt on missing evidence would leave
+        a session that can never adopt anything.
         """
         if len(self.round_history) < 2:
             return True
@@ -3444,13 +3386,14 @@ class Base(QDialog):
         if metric is None:
             return True
 
-        comparable = [Base.round_score(entry) for entry in self.round_history[:-1]
+        comparable = [entry for entry in self.round_history[:-1]
                       if Base.round_score(entry) is not None
-                      and entry.get('labels') == latest.get('labels')
-                      and bool(entry.get('pus')) == bool(latest.get('pus'))]
+                      and entry.get('labels') == latest.get('labels')]
         if not comparable:
             return True
-        return metric > max(comparable)
+
+        best = max(comparable, key=Base.round_score)
+        return metric > Base.round_score(best)
 
     def record_outcome(self, **fields):
         """Fold what a post-round pass produced into this round's summary."""
@@ -4044,12 +3987,14 @@ class Base(QDialog):
             'train_images': dataset.image_count('train'),
             'background': dataset.negative_count('train'),
             'annotations': dataset.annotation_count('train'),
+            'precision': metrics.get('precision'),
+            'recall': metrics.get('recall'),
             'map50': metrics.get('map50'),
+            'map5095': metrics.get('map5095'),
             'fitness': metrics.get('fitness'),
             'epoch': metrics.get('epoch'),
             'weights': weights,
             'labels': pending['labels'],
-            'pus': bool(pending.get('pus')),
             'stopped': bool(pending.get('stopped')),
         })
 
@@ -4065,16 +4010,26 @@ class Base(QDialog):
             row = self.history_table.rowCount()
             self.history_table.insertRow(row)
 
-            metric = entry.get('map50')
-            fitness = entry.get('fitness')
             score = self.round_score(entry)
+
+            def cell(key):
+                value = entry.get(key)
+                return f"{value:.3f}" if value is not None else "-"
+
             values = {
                 HIST_ROUND: entry.get('round', row + 1),
                 HIST_IMAGES: entry.get('train_images', 0),
                 HIST_BACKGROUND: entry.get('background', 0),
                 HIST_ANNOTATIONS: entry.get('annotations', 0),
-                HIST_MAP: f"{metric:.3f}" if metric is not None else "-",
-                HIST_FITNESS: f"{fitness:.3f}" if fitness is not None else "-",
+                HIST_PRECISION: cell('precision'),
+                HIST_RECALL: cell('recall'),
+                HIST_MAP: cell('map50'),
+                # mAP50-95 and fitness are the same number for detection. For
+                # segmentation fitness adds box and mask, so the column shows
+                # the mask figure it shares a heading with and the session goes
+                # on scoring with the sum.
+                HIST_FITNESS: cell('map5095') if entry.get('map5095') is not None
+                              else cell('fitness'),
                 # Against the score the round was judged by, not against mAP50:
                 # a Change column that moves while the adopted model does not
                 # would be answering a different question from the one the
@@ -4119,8 +4074,8 @@ class Base(QDialog):
         """The change against the last comparable round.
 
         Comparable means the same label set. A round that added a class is not
-        a worse round because its mAP fell -- it is a different measurement, and
-        reporting a drop there would be actively misleading.
+        a worse round because its mAP fell -- it is a different measurement,
+        and reporting a drop there would be actively misleading.
         """
         if metric is None or previous is None:
             return "-"
@@ -4157,12 +4112,12 @@ class Base(QDialog):
     def read_metrics(run_dir):
         """Read the round's scores out of results.csv, or None when unavailable.
 
-        Returns {'map50', 'fitness', 'epoch'}, all of which describe **the same
-        epoch**: the one with the best fitness, which is the epoch ``best.pt``
-        was saved from. Reading the last row instead -- which is what this used
-        to do -- reports a different model from the one the round goes on to
-        deploy and warm start from, and with early stopping they are routinely
-        several epochs apart.
+        Returns {'precision', 'recall', 'map50', 'map5095', 'fitness', 'epoch'},
+        all of which describe **the same epoch**: the one with the best fitness,
+        which is the epoch ``best.pt`` was saved from. Reading the last row
+        instead -- which is what this used to do -- reports a different model
+        from the one the round goes on to deploy and warm start from, and with
+        early stopping they are routinely several epochs apart.
 
         Fitness is Ultralytics' own, recomputed here because the trainer pops it
         out of the metrics dict before writing the csv. In 8.4.82 that is
@@ -4170,10 +4125,13 @@ class Base(QDialog):
         ``[P, R, mAP50, mAP50-95]``) and the sum of the box and mask figures for
         segmentation, which is why every ``mAP50-95`` column present is added.
 
-        It is the right criterion for "did this round improve the model?" and
-        mAP50 is not: mAP50 saturates -- a project whose objects are easy to find
-        sits at 0.99 from round two onwards -- while mAP50-95 keeps moving,
+        It is the right criterion for "did this round improve the model?":
+        mAP50 is not, since it saturates -- a project whose objects are easy to
+        find sits at 0.99 from round two onwards -- while mAP50-95 keeps moving,
         because it also measures how well the boxes are placed.
+
+        Precision and recall are read for the same epoch too, because fitness
+        weights both at zero and they would otherwise be invisible anywhere else.
         """
         results_path = os.path.join(run_dir, 'results.csv')
         if not os.path.isfile(results_path):
@@ -4185,10 +4143,28 @@ class Base(QDialog):
                 return None
 
             header = [column.strip() for column in lines[0].split(',')]
-            map50_columns = [i for i, name in enumerate(header)
-                             if 'mAP50' in name and '95' not in name]
             fitness_columns = [i for i, name in enumerate(header) if 'mAP50-95' in name]
-            if not map50_columns and not fitness_columns:
+
+            # Segmentation logs box (B) and mask (M) of everything. The mask
+            # figures are what a segmentation round is actually judged on by
+            # eye, so those are the ones reported under the shared headings --
+            # one table shape for both tasks. Fitness still adds box and mask
+            # together, because that is what Ultralytics' own
+            # SegmentMetrics.fitness does and therefore how best.pt was picked.
+            suffix = '(M)' if any('(M)' in name for name in header) else '(B)'
+            reported = {}
+            for key, column in (('precision', 'precision'), ('recall', 'recall'),
+                                ('map50', 'mAP50'), ('map5095', 'mAP50-95')):
+                matches = [i for i, name in enumerate(header)
+                           if column + suffix in name]
+                if not matches:
+                    # A csv predating the (B)/(M) suffixes, or one written by a
+                    # validator that logged the bare name.
+                    matches = [i for i, name in enumerate(header)
+                               if name.endswith(column) or ('/' + column) in name]
+                reported[key] = matches[0] if matches else None
+
+            if reported['map50'] is None and not fitness_columns:
                 return None
 
             best = None
@@ -4196,6 +4172,8 @@ class Base(QDialog):
                 cells = line.split(',')
 
                 def value(index):
+                    if index is None:
+                        return None
                     try:
                         return float(cells[index])
                     except (IndexError, ValueError):
@@ -4204,26 +4182,30 @@ class Base(QDialog):
                 fitness_parts = [value(i) for i in fitness_columns]
                 fitness = (sum(part for part in fitness_parts if part is not None)
                            if any(part is not None for part in fitness_parts) else None)
-                map50_parts = [value(i) for i in map50_columns]
-                map50 = next((part for part in map50_parts if part is not None), None)
-                if fitness is None and map50 is None:
+                row = {key: value(index) for key, index in reported.items()}
+                if fitness is None and row['map50'] is None:
                     continue
 
-                # Ranked by fitness when there is one, so the row chosen is the
-                # row best.pt came from. mAP50 only stands in when validation
-                # produced no mAP50-95 column at all.
-                rank = fitness if fitness is not None else map50
-                epoch = value(0)
+                # Ranked by whatever chose best.pt, so the numbers reported
+                # always describe a model that exists: fitness, with mAP50
+                # standing in only when validation produced no mAP50-95 column
+                # at all.
+                rank = fitness if fitness is not None else row['map50']
                 if best is None or rank > best['rank']:
-                    best = {'rank': rank, 'map50': map50,
-                            'fitness': fitness, 'epoch': epoch}
+                    best = dict(row, rank=rank, fitness=fitness, epoch=value(0))
 
             if best is None:
                 return None
-            return {'map50': best['map50'], 'fitness': best['fitness'],
-                    'epoch': best['epoch']}
+            best.pop('rank')
+            return best
         except Exception:
             return None
+
+    @staticmethod
+    def round_checkpoint(run_dir):
+        """The weights a round deploys: best.pt, or None if training left none."""
+        best = os.path.join(run_dir, 'weights', 'best.pt')
+        return best if os.path.isfile(best) else None
 
     @staticmethod
     def read_metric(run_dir):
@@ -4233,7 +4215,7 @@ class Base(QDialog):
 
     @staticmethod
     def round_score(entry):
-        """What a round is judged by: its fitness, or its mAP50 if it has none.
+        """What a round is judged by: fitness, falling back to mAP50.
 
         One accessor rather than a key read in five places, because the fallback
         has to be the same everywhere: a round scored one way and compared
