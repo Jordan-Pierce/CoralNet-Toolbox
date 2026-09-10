@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 80 80">
+<path fill="#000000" fill-rule="evenodd" d="M6 12 H74 V68 H6 Z M12 18 V62 H68 V18 Z"/>
+<circle cx="53" cy="31" r="6" fill="#000000"/>
+<path fill="#000000" d="M12 62 L31 37 L44 52 L52 43 L68 62 Z"/>
+</svg>
