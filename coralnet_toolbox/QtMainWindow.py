@@ -1117,6 +1117,8 @@ class MainWindow(QMainWindow):
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         self.toolbar.addWidget(spacer)
+
+        self.toolbar.addSeparator()
         
         # --------------------------------------------------
         # Create collapsible Parameters section
