@@ -216,10 +216,11 @@ STAT_TILES = (
      "Validation mAP50 from the most recent round that produced one, so a round"
      "\nthat failed or was stopped early leaves the last real score standing."),
     ('delta', "Change",
-     "Change in mAP50-95 against the previous comparable round, which is what"
-     "\ndecides whether a round's model is adopted. mAP50 is not: it saturates,"
-     "\nand a project whose objects are easy to find sits at 0.99 from round two"
-     "\nonwards while the model is still getting better at placing them."
+     "Change against the previous comparable round in whatever that round was"
+     "\njudged by, which is what decides whether its model is adopted."
+     "\nOrdinarily mAP50-95. mAP50 is not: it saturates, and a project whose"
+     "\nobjects are easy to find sits at 0.99 from round two onwards while the"
+     "\nmodel is still getting better at placing them."
      "\nBlank when the label set changed: that is a different measurement,"
      "\nnot a worse round."),
     ('awaiting', "Awaiting",
@@ -337,9 +338,10 @@ PRIMARY_BUTTON_STYLE = (
 BLANK_STAT = "--"
 
 # How many newly confirmed annotations of every included label it takes before
-# the next round starts on its own. Twenty is enough to move a class's weights
-# and small enough to reach in one sitting.
-AUTO_TRAIN_PER_LABEL = 20
+# the next round starts on its own, when it is switched on. A hundred: enough
+# new evidence per class that a round is worth the minutes it costs, rather
+# than retraining on a handful of corrections that cannot move the weights far.
+AUTO_TRAIN_PER_LABEL = 100
 
 # A round is in exactly one of these, and the headline is the only thing in the
 # panel that carries colour -- so the state is readable before anything is read.
@@ -381,11 +383,15 @@ STATE_TOOLTIP = {
 # Columns of the Rounds table. The delta is the column the user actually reads:
 # an absolute mAP means little on its own, and "is this still improving?" is
 # the question that decides whether to run another round.
-(HIST_ROUND, HIST_IMAGES, HIST_BACKGROUND,
- HIST_ANNOTATIONS, HIST_MAP, HIST_FITNESS, HIST_DELTA) = range(7)
+(HIST_ROUND, HIST_IMAGES, HIST_BACKGROUND, HIST_ANNOTATIONS,
+ HIST_PRECISION, HIST_RECALL, HIST_MAP, HIST_FITNESS, HIST_DELTA) = range(9)
 
+# All four, not the two mAPs alone: precision and recall are read off the same
+# epoch as the mAPs, so a round that traded one for the other is visible rather
+# than reading as an unexplained drop. Segmentation shows the mask figures under
+# the same headings; see read_metrics.
 HISTORY_HEADERS = ["Round", "Train Images", "Background", "Annotations",
-                   "mAP50", "mAP50-95", "Change"]
+                   "Precision", "Recall", "mAP50", "mAP50-95", "Change"]
 
 # Per-image Active Learning review state, stored on the raster.
 REVIEW_PENDING = 'pending'
@@ -1098,7 +1104,7 @@ class Base(QDialog):
         layout.addRow("Image Budget:", self.budget_spinbox)
 
         self.auto_train_combo = bool_combo(
-            True,
+            False,
             "Start the next round on its own once every included label has gained\n"
             "the number of newly confirmed annotations below.\n"
             "If a round is already training when that happens, nothing is\n"
@@ -1112,7 +1118,7 @@ class Base(QDialog):
         self.auto_train_spinbox.setToolTip(
             "How many newly confirmed annotations each included label needs before\n"
             "the next round starts by itself. Counted from the last round, so\n"
-            "confirming twenty more of every label starts another one.\n"
+            "confirming a hundred more of every label starts another one.\n"
             "A rare label can hold this up; the Training Data panel says which, and\n"
             "Train Round is always available regardless.")
         layout.addRow("New Per Label:", self.auto_train_spinbox)
@@ -1468,6 +1474,35 @@ class Base(QDialog):
 
         return frame
 
+    def rerun_images(self, budget):
+        """The images a Re-run should cover, at the budget now on the Setup tab.
+
+        Starts from the last round's images, since re-running is mostly about
+        seeing them again at a moved threshold, and then spends whatever budget
+        is left over on fresh candidates. A lowered budget trims from the end,
+        which is the least valuable end: acquisition returns its picks best
+        first.
+
+        include_current: the user pressed this button, so the image they are
+        looking at is the one they most likely meant. The automatic pass after a
+        round leaves it alone; this one should not.
+        """
+        image_paths = list(self.last_predicted_images)[:max(0, budget)]
+        if len(image_paths) >= budget:
+            # Still sets last_skipped when acquisition runs below, so the
+            # outcome line can explain an empty result. Nothing was skipped on
+            # this path -- the budget was filled from the last round.
+            self.last_skipped = {}
+            return image_paths
+
+        already = set(image_paths)
+        for image_path in self.candidate_images(budget, include_current=True):
+            if image_path not in already:
+                image_paths.append(image_path)
+                if len(image_paths) >= budget:
+                    break
+        return image_paths
+
     def rerun_predictions(self):
         """Predict again over the last round's images at the current thresholds.
 
@@ -1475,6 +1510,14 @@ class Base(QDialog):
         moving them after a round has run changes nothing that is already on
         screen. This is the button that makes them mean something without paying
         for another round of training.
+
+        The Image Budget is read here too, so raising it reaches further on the
+        very next press rather than only after another round has trained. That
+        is what the panel already tells the user to do when a round found
+        nothing -- "raise the Image Budget and press Re-run Predictions" -- and
+        before this the second half of that sentence did nothing, because the
+        last round's image list was replayed verbatim however large the budget
+        had grown.
         """
         if self.worker is not None:
             QMessageBox.information(self, "Round Running",
@@ -1485,13 +1528,7 @@ class Base(QDialog):
                                     "No round has produced a model to predict with.")
             return
 
-        image_paths = list(self.last_predicted_images)
-        if not image_paths:
-            # include_current: the user pressed this button, so the image they
-            # are looking at is the one they most likely meant. The automatic
-            # pass after a round leaves it alone; this one should not.
-            image_paths = self.candidate_images(self.budget_spinbox.value(),
-                                                include_current=True)
+        image_paths = self.rerun_images(self.budget_spinbox.value())
         if not image_paths:
             self.show_status("Active Learning: no images to predict on.")
             return
@@ -1599,7 +1636,9 @@ class Base(QDialog):
         # offers to empty, so this is how anything leaves a session at all.
         self.save_session_button = QPushButton("Save Session")
         self.save_session_button.setToolTip(
-            "Copy the best model and its round's results to a folder you choose.\n"
+            "Copy the best model and its round's results into a folder you choose.\n"
+            "Each save gets its own timestamped subfolder, so the same destination\n"
+            "can collect every session without them running together.\n"
             "Rounds are kept in a cache that prunes older weights on its own, so\n"
             "this is how a session's model becomes something you keep.")
         self.save_session_button.clicked.connect(self.save_session)
@@ -2825,17 +2864,21 @@ class Base(QDialog):
         return entry
 
     def session_stem(self, entry):
-        """The filename stem a saved round is written under.
+        """The name of the run a saved round came out of.
 
         The round's own run directory name -- `round_07_20260908_121045` -- with
         the task in front of it. That name is generated when the round starts,
-        so a saved model points back at the exact run folder that produced it,
-        and the timestamp keeps two saves of the same round number apart.
+        so it points back at the exact run folder that produced the model, and
+        the timestamp keeps two runs of the same round number apart.
 
-        `best.pt` alone is unidentifiable a month later, which is the whole
-        reason for a stem; the project's own filename was tried and is the wrong
-        thing to reach for, since a project can be renamed, copied, or never
-        saved at all, and none of that says anything about the session.
+        This used to prefix every saved filename, because `best.pt` alone is
+        unidentifiable a month later. Now that each save gets a folder of its
+        own the folder carries the identity and the filenames can be plain, so
+        this is recorded in session.json as `run_name` instead -- the link back
+        to the run is worth keeping either way. The project's own filename was
+        tried and is the wrong thing to reach for, since a project can be
+        renamed, copied, or never saved at all, and none of that says anything
+        about the session.
         """
         run_dir = entry.get('run_dir') if entry else None
         run_name = os.path.basename(os.path.normpath(run_dir)) if run_dir else ''
@@ -2886,11 +2929,18 @@ class Base(QDialog):
         return {
             'saved': datetime.datetime.now().isoformat(timespec='seconds'),
             'task': self.task,
+            # Which run folder produced these weights. The saved filenames used
+            # to carry this and no longer need to; losing it altogether would
+            # make a saved model untraceable back to the round that trained it.
+            'run_name': self.session_stem(entry),
             'project': getattr(self.main_window, 'current_project_path', '') or '',
             'best_round': entry.get('round'),
             'labels': list(entry.get('labels') or []),
             'metrics': {
+                'precision': entry.get('precision'),
+                'recall': entry.get('recall'),
                 'map50': entry.get('map50'),
+                'map5095': entry.get('map5095'),
                 'fitness': entry.get('fitness'),
                 'epoch': entry.get('epoch'),
             },
@@ -2900,7 +2950,10 @@ class Base(QDialog):
                 'train_images': record.get('train_images'),
                 'background': record.get('background'),
                 'annotations': record.get('annotations'),
+                'precision': record.get('precision'),
+                'recall': record.get('recall'),
                 'map50': record.get('map50'),
+                'map5095': record.get('map5095'),
                 'fitness': record.get('fitness'),
                 'epoch': record.get('epoch'),
                 'stopped': record.get('stopped'),
@@ -2916,6 +2969,9 @@ class Base(QDialog):
         Rounds are written to a cache that prunes its own older weights and that
         New Session offers to empty, so without this there is no way for a
         session's model to outlive it except by knowing where to dig.
+
+        The user picks where saves live, not what one save is called: each save
+        makes its own timestamped folder underneath. See write_session().
         """
         entry = self.saveable_round()
         if entry is None:
@@ -2924,29 +2980,73 @@ class Base(QDialog):
                 "There is no finished round with weights to save yet.")
             return
 
-        directory = QFileDialog.getExistingDirectory(self, "Save Session To")
+        directory = QFileDialog.getExistingDirectory(
+            self, "Choose a folder to save this session into")
         if not directory:
             return
 
         try:
-            self.write_session(directory, entry)
+            target = self.write_session(directory, entry)
         except Exception as e:
             print(f"Error saving the session: {e}")
             QMessageBox.critical(self, "Save Session", f"Could not save the session:\n\n{e}")
             return
 
-        QMessageBox.information(self, "Save Session", "Session saved successfully.")
+        QMessageBox.information(
+            self, "Save Session",
+            f"Session saved to:\n\n{target}")
+
+    def session_folder_name(self, entry):
+        """The name of the folder one save writes into.
+
+        Stamped with the moment of saving and named for the task and round it
+        holds, so a destination folder collecting many saves sorts
+        chronologically and every entry says what it is without being opened.
+
+        The round's own run name carries a timestamp too -- the moment the round
+        *started* -- but two timestamps in one folder name is noise, so that one
+        goes into session.json as `run_name`.
+        """
+        stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        return f"{stamp}_{self.task}_round_{(entry or {}).get('round', 0):02d}"
+
+    @staticmethod
+    def unique_directory(parent, name):
+        """`parent/name`, suffixed if something is already there.
+
+        Two saves inside the same second are unlikely rather than impossible,
+        and quietly writing the second one into the first one's folder would
+        interleave two models' artefacts under identical filenames.
+        """
+        candidate = os.path.join(parent, name)
+        if not os.path.exists(candidate):
+            return candidate
+        for index in range(2, 1000):
+            candidate = os.path.join(parent, f"{name}_{index}")
+            if not os.path.exists(candidate):
+                return candidate
+        raise OSError(f"No unused name left for '{name}' in {parent}")
 
     def write_session(self, directory, entry):
-        """Write the model, the round's artefacts and the summary into `directory`.
+        """Create a timestamped folder under `directory` and fill it.
 
-        Everything is prefixed with the task and the round's own run name, so
-        several saved sessions can share a folder without colliding or becoming
-        anonymous -- see session_stem().
+        Everything one save produces goes into a folder of its own: the model,
+        the round's results.csv and its plots, and the summary.
+
+        This used to write straight into the chosen directory with every
+        filename prefixed by the task and run name. That kept saves from
+        colliding, but it left the user to reassemble a session by reading
+        prefixes off a flat list -- and after a few saves the folder was a wall
+        of near-identical long names. A folder per save does the same job of
+        keeping them apart, gets the grouping for free, and lets the filenames
+        inside be plain.
+
+        Returns the folder it created.
         """
-        stem = self.session_stem(entry)
+        target = self.unique_directory(directory, self.session_folder_name(entry))
+        os.makedirs(target)
 
-        shutil.copy2(entry['weights'], os.path.join(directory, f"{stem}_best.pt"))
+        shutil.copy2(entry['weights'], os.path.join(target, "best.pt"))
 
         run_dir = entry.get('run_dir')
         if run_dir and os.path.isdir(run_dir):
@@ -2954,14 +3054,15 @@ class Base(QDialog):
                 source = os.path.join(run_dir, name)
                 if not os.path.isfile(source):
                     # weights/ is the round's own checkpoints; the best one is
-                    # already copied above under a name that says what it is.
+                    # already copied above.
                     continue
                 if name == 'results.csv' or os.path.splitext(name)[1].lower() in PLOT_SUFFIXES:
-                    shutil.copy2(source, os.path.join(directory, f"{stem}_{name}"))
+                    shutil.copy2(source, os.path.join(target, name))
 
-        summary_path = os.path.join(directory, f"{stem}_session.json")
-        with open(summary_path, 'w') as handle:
+        with open(os.path.join(target, "session.json"), 'w') as handle:
             json.dump(self.session_summary(entry), handle, indent=2)
+
+        return target
 
     # ------------------------------------------------------------------
     # Starting over
@@ -3276,9 +3377,7 @@ class Base(QDialog):
         weights = None
         improved = False
         if pending:
-            weights = os.path.join(pending['run_dir'], 'weights', 'best.pt')
-            if not os.path.isfile(weights):
-                weights = None
+            weights = self.round_checkpoint(pending['run_dir'])
 
             self.record_round(pending, weights)
             improved = self.round_improved()
@@ -3294,6 +3393,8 @@ class Base(QDialog):
             'round': pending['round'] if pending else len(self.round_history),
             'map50': self.round_history[-1]['map50'] if self.round_history else None,
             'fitness': self.round_history[-1]['fitness'] if self.round_history else None,
+            'recall': self.round_history[-1].get('recall') if self.round_history else None,
+            'precision': self.round_history[-1].get('precision') if self.round_history else None,
             'weights': weights,
             'predictions': 0,
             'predicted_on': 0,
@@ -3330,10 +3431,10 @@ class Base(QDialog):
         """Whether the round just recorded beat the best comparable one before it.
 
         Comparable means the same label set: a round that added a class is a
-        different measurement, not a worse one, so it is always adopted. So is a
-        round with no metric at all -- validation turned off, or results.csv
-        unreadable -- because refusing to adopt on missing evidence would leave a
-        session that can never adopt anything.
+        different measurement, not a worse one, so it is always adopted. So is
+        a round with no metric at all -- validation turned off, or results.csv
+        unreadable -- because refusing to adopt on missing evidence would leave
+        a session that can never adopt anything.
         """
         if len(self.round_history) < 2:
             return True
@@ -3343,12 +3444,14 @@ class Base(QDialog):
         if metric is None:
             return True
 
-        comparable = [Base.round_score(entry) for entry in self.round_history[:-1]
+        comparable = [entry for entry in self.round_history[:-1]
                       if Base.round_score(entry) is not None
                       and entry.get('labels') == latest.get('labels')]
         if not comparable:
             return True
-        return metric > max(comparable)
+
+        best = max(comparable, key=Base.round_score)
+        return metric > Base.round_score(best)
 
     def record_outcome(self, **fields):
         """Fold what a post-round pass produced into this round's summary."""
@@ -3942,7 +4045,10 @@ class Base(QDialog):
             'train_images': dataset.image_count('train'),
             'background': dataset.negative_count('train'),
             'annotations': dataset.annotation_count('train'),
+            'precision': metrics.get('precision'),
+            'recall': metrics.get('recall'),
             'map50': metrics.get('map50'),
+            'map5095': metrics.get('map5095'),
             'fitness': metrics.get('fitness'),
             'epoch': metrics.get('epoch'),
             'weights': weights,
@@ -3962,16 +4068,26 @@ class Base(QDialog):
             row = self.history_table.rowCount()
             self.history_table.insertRow(row)
 
-            metric = entry.get('map50')
-            fitness = entry.get('fitness')
             score = self.round_score(entry)
+
+            def cell(key):
+                value = entry.get(key)
+                return f"{value:.3f}" if value is not None else "-"
+
             values = {
                 HIST_ROUND: entry.get('round', row + 1),
                 HIST_IMAGES: entry.get('train_images', 0),
                 HIST_BACKGROUND: entry.get('background', 0),
                 HIST_ANNOTATIONS: entry.get('annotations', 0),
-                HIST_MAP: f"{metric:.3f}" if metric is not None else "-",
-                HIST_FITNESS: f"{fitness:.3f}" if fitness is not None else "-",
+                HIST_PRECISION: cell('precision'),
+                HIST_RECALL: cell('recall'),
+                HIST_MAP: cell('map50'),
+                # mAP50-95 and fitness are the same number for detection. For
+                # segmentation fitness adds box and mask, so the column shows
+                # the mask figure it shares a heading with and the session goes
+                # on scoring with the sum.
+                HIST_FITNESS: cell('map5095') if entry.get('map5095') is not None
+                              else cell('fitness'),
                 # Against the score the round was judged by, not against mAP50:
                 # a Change column that moves while the adopted model does not
                 # would be answering a different question from the one the
@@ -4016,8 +4132,8 @@ class Base(QDialog):
         """The change against the last comparable round.
 
         Comparable means the same label set. A round that added a class is not
-        a worse round because its mAP fell -- it is a different measurement, and
-        reporting a drop there would be actively misleading.
+        a worse round because its mAP fell -- it is a different measurement,
+        and reporting a drop there would be actively misleading.
         """
         if metric is None or previous is None:
             return "-"
@@ -4054,12 +4170,12 @@ class Base(QDialog):
     def read_metrics(run_dir):
         """Read the round's scores out of results.csv, or None when unavailable.
 
-        Returns {'map50', 'fitness', 'epoch'}, all of which describe **the same
-        epoch**: the one with the best fitness, which is the epoch ``best.pt``
-        was saved from. Reading the last row instead -- which is what this used
-        to do -- reports a different model from the one the round goes on to
-        deploy and warm start from, and with early stopping they are routinely
-        several epochs apart.
+        Returns {'precision', 'recall', 'map50', 'map5095', 'fitness', 'epoch'},
+        all of which describe **the same epoch**: the one with the best fitness,
+        which is the epoch ``best.pt`` was saved from. Reading the last row
+        instead -- which is what this used to do -- reports a different model
+        from the one the round goes on to deploy and warm start from, and with
+        early stopping they are routinely several epochs apart.
 
         Fitness is Ultralytics' own, recomputed here because the trainer pops it
         out of the metrics dict before writing the csv. In 8.4.82 that is
@@ -4067,10 +4183,13 @@ class Base(QDialog):
         ``[P, R, mAP50, mAP50-95]``) and the sum of the box and mask figures for
         segmentation, which is why every ``mAP50-95`` column present is added.
 
-        It is the right criterion for "did this round improve the model?" and
-        mAP50 is not: mAP50 saturates -- a project whose objects are easy to find
-        sits at 0.99 from round two onwards -- while mAP50-95 keeps moving,
+        It is the right criterion for "did this round improve the model?":
+        mAP50 is not, since it saturates -- a project whose objects are easy to
+        find sits at 0.99 from round two onwards -- while mAP50-95 keeps moving,
         because it also measures how well the boxes are placed.
+
+        Precision and recall are read for the same epoch too, because fitness
+        weights both at zero and they would otherwise be invisible anywhere else.
         """
         results_path = os.path.join(run_dir, 'results.csv')
         if not os.path.isfile(results_path):
@@ -4082,10 +4201,28 @@ class Base(QDialog):
                 return None
 
             header = [column.strip() for column in lines[0].split(',')]
-            map50_columns = [i for i, name in enumerate(header)
-                             if 'mAP50' in name and '95' not in name]
             fitness_columns = [i for i, name in enumerate(header) if 'mAP50-95' in name]
-            if not map50_columns and not fitness_columns:
+
+            # Segmentation logs box (B) and mask (M) of everything. The mask
+            # figures are what a segmentation round is actually judged on by
+            # eye, so those are the ones reported under the shared headings --
+            # one table shape for both tasks. Fitness still adds box and mask
+            # together, because that is what Ultralytics' own
+            # SegmentMetrics.fitness does and therefore how best.pt was picked.
+            suffix = '(M)' if any('(M)' in name for name in header) else '(B)'
+            reported = {}
+            for key, column in (('precision', 'precision'), ('recall', 'recall'),
+                                ('map50', 'mAP50'), ('map5095', 'mAP50-95')):
+                matches = [i for i, name in enumerate(header)
+                           if column + suffix in name]
+                if not matches:
+                    # A csv predating the (B)/(M) suffixes, or one written by a
+                    # validator that logged the bare name.
+                    matches = [i for i, name in enumerate(header)
+                               if name.endswith(column) or ('/' + column) in name]
+                reported[key] = matches[0] if matches else None
+
+            if reported['map50'] is None and not fitness_columns:
                 return None
 
             best = None
@@ -4093,6 +4230,8 @@ class Base(QDialog):
                 cells = line.split(',')
 
                 def value(index):
+                    if index is None:
+                        return None
                     try:
                         return float(cells[index])
                     except (IndexError, ValueError):
@@ -4101,26 +4240,30 @@ class Base(QDialog):
                 fitness_parts = [value(i) for i in fitness_columns]
                 fitness = (sum(part for part in fitness_parts if part is not None)
                            if any(part is not None for part in fitness_parts) else None)
-                map50_parts = [value(i) for i in map50_columns]
-                map50 = next((part for part in map50_parts if part is not None), None)
-                if fitness is None and map50 is None:
+                row = {key: value(index) for key, index in reported.items()}
+                if fitness is None and row['map50'] is None:
                     continue
 
-                # Ranked by fitness when there is one, so the row chosen is the
-                # row best.pt came from. mAP50 only stands in when validation
-                # produced no mAP50-95 column at all.
-                rank = fitness if fitness is not None else map50
-                epoch = value(0)
+                # Ranked by whatever chose best.pt, so the numbers reported
+                # always describe a model that exists: fitness, with mAP50
+                # standing in only when validation produced no mAP50-95 column
+                # at all.
+                rank = fitness if fitness is not None else row['map50']
                 if best is None or rank > best['rank']:
-                    best = {'rank': rank, 'map50': map50,
-                            'fitness': fitness, 'epoch': epoch}
+                    best = dict(row, rank=rank, fitness=fitness, epoch=value(0))
 
             if best is None:
                 return None
-            return {'map50': best['map50'], 'fitness': best['fitness'],
-                    'epoch': best['epoch']}
+            best.pop('rank')
+            return best
         except Exception:
             return None
+
+    @staticmethod
+    def round_checkpoint(run_dir):
+        """The weights a round deploys: best.pt, or None if training left none."""
+        best = os.path.join(run_dir, 'weights', 'best.pt')
+        return best if os.path.isfile(best) else None
 
     @staticmethod
     def read_metric(run_dir):
@@ -4130,7 +4273,7 @@ class Base(QDialog):
 
     @staticmethod
     def round_score(entry):
-        """What a round is judged by: its fitness, or its mAP50 if it has none.
+        """What a round is judged by: fitness, falling back to mAP50.
 
         One accessor rather than a key read in five places, because the fallback
         has to be the same everywhere: a round scored one way and compared

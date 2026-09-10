@@ -42,7 +42,7 @@ Z-Channels overlay depth or elevation data on top of images for spatial analysis
 - Supports GeoTIFF, PNG, and other raster formats that can be loaded with rasterio
 
 **Importing Z-Channel Data**
-- <kbd>Right-Click</kbd> on highlighted images in Image Window
+- <kbd>Right-Click</kbd> on highlighted images in Rasters Window
 - **Import Z-Channel**: Select depth / elevation file(s) to attach to image(s)
   - Files are automatically resized to match image dimensions if needed
   - Unit of measurement can be specified (meters, feet, centimeters, etc.)
@@ -67,7 +67,7 @@ Z-Channels overlay depth or elevation data on top of images for spatial analysis
 - **Nodata Handling**: Automatically detects and masks NULL / missing values in Z data
 
 **Removing Z-Channel Data**
-- <kbd>Right-Click</kbd> on highlighted images in Image Window
+- <kbd>Right-Click</kbd> on highlighted images in Rasters Window
 - **Remove Z-Channel**: Clear depth / elevation data from selected image(s)
   - Annotation and other data remain intact
 
@@ -96,8 +96,8 @@ The main window consists of several dockable components:
 - **Tool Bar**: Contains tools for selection and annotation
 - **Status Bar**: Displays the image size, cursor position, view extent, annotation transparency, and thresholds
 - **Annotation Window**: Displays the image, Z-channel, and annotations with interactive annotation tools
-- **Label Window**: Lists and manages labels with operations for editing, merging, and organizing
-- **Image Window**: Displays imported images with filtering and batch operations
+- **Labels Window**: Lists and manages labels with operations for editing, merging, and organizing
+- **Rasters Window**: Displays imported images with filtering and batch operations
 - **Confidence Window**: Displays cropped images and confidence charts for annotation predictions
 - **Metadata Window**: Displays and edits structured metadata for the selected annotation(s)
 - **Performance Window**: Real-time hardware monitor showing CPU, Memory, and GPU usage with historical sparkline graphs
@@ -105,7 +105,7 @@ The main window consists of several dockable components:
 
 ### Advanced Docking System
 
-All dock windows (Annotation Window, Label Window, Image Window, Confidence Window, Metadata Window, Explorer, Performance, Timer) use an advanced docking system that allows complete layout customization:
+All dock windows (Annotation Window, Labels Window, Rasters Window, Confidence Window, Metadata Window, Explorer, Performance, Timer) use an advanced docking system that allows complete layout customization:
 
 **Moving & Rearranging Docks**
 - **Grab & Drag**: Click and drag the dock title bar to move the window
@@ -360,7 +360,7 @@ All dock windows (Annotation Window, Label Window, Image Window, Confidence Wind
   - **Browse** to start from a model of your own, or from an earlier session's best.
     Otherwise leave the default nano model: rounds are only useful if they are cheap
     enough to run often
-  - After a round, predictions land on un-reviewed images and the Image Window is
+  - After a round, predictions land on un-reviewed images and the Rasters Window is
     filtered to **Needs Review**. Predictions always arrive unverified
 
   - **Review in the Annotation Gallery. This is the fastest way to work through a
@@ -383,8 +383,10 @@ All dock windows (Annotation Window, Label Window, Image Window, Confidence Wind
     round looks for new objects and checks itself where you are annotating
   - A round skips the image open on the canvas and images already carrying predictions
     you have not reviewed; a round that finds nothing tells you which. **Re-run
-    Predictions** predicts again over the same images at the current thresholds, which is
-    the only way a threshold change takes effect before the next round
+    Predictions** predicts again at the current thresholds without training, which is the
+    only way a threshold change takes effect before the next round. It reads the **Image
+    Budget** as it stands, so raising the budget first reaches images the last round did
+    not, and lowering it trims the least promising of its picks
   - **Auto Train** starts the next round on its own once every included label has gained
     the given number of newly confirmed annotations
   - A round's model is kept only if it beat the best round before it, so predictions and
@@ -477,7 +479,7 @@ All dock windows (Annotation Window, Label Window, Image Window, Confidence Wind
 
 The Explorer is a dual-window system for browsing and analyzing annotations using embeddings (high-dimensional feature vectors). It enables exploration of annotations through two linked views: a gallery viewer and an embedding visualization, with real-time synchronization and feature caching.
 
-#### Annotation Gallery Viewer (Annotation Viewer Window)
+#### Annotation Gallery Window
 
 The gallery displays annotation crops as a scrollable grid of thumbnail images. It includes:
 
@@ -612,8 +614,9 @@ The Explorer automatically caches extracted features to accelerate re-loading th
   - <kbd>Ctrl</kbd> + <kbd>Delete</kbd> / <kbd>Backspace</kbd>: Remove selected annotation(s)
   - <kbd>Ctrl</kbd> + <kbd>Drag</kbd>: Create rectangle selection to select multiple annotations
   - <kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd>: Change size of the selected annotation
-  - <kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show resize handles for the selected annotation
-  - <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Mouse Wheel</kbd>: Change the number of vertices for a polygon annotation
+  - **Resize handles**: Appear automatically whenever a single annotation is selected; they stay subdued until the cursor comes near, then grow and light up. Drag one to reshape; the cursor shows which way it moves
+  - <kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show *every* vertex at full strength (dense polygons normally thin their handles until you zoom in)
+  - <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Mouse Wheel</kbd>: Change the number of vertices for a polygon annotation (each tick up doubles the count, so it stops at 2000 vertices; scroll down to simplify first)
   - <kbd>Ctrl</kbd> + <kbd>Space</kbd>: Confirm prediction for selected annotation with top machine confidence
   - <kbd>Ctrl</kbd> + <kbd>X</kbd>: Cut a polygon annotation, explode a multi-polygon annotation, or subtract polygon annotations
      - **Cutting Rules**:
@@ -786,7 +789,7 @@ When a video is loaded, additional playback controls appear:
   - Useful for marking important frames for review or processing
 - **Frame Counter**: Displays current frame number and total frame count
 
-## Label Window
+## Labels Window
 - **Move Label**: <kbd>Right-Click</kbd> and drag to reorder labels in the window
 - **Label Visibility**: Each label has a checkbox to show / hide annotations of that label
   - Hidden labels retain their data and can be shown again at any time
@@ -890,7 +893,7 @@ The schema (the field definitions) travels separately from the values:
   - **Filters**: Restrict the export by Images, Labels, and Annotation Types
   - Identity columns (annotation id, image name, label codes, color) are always included
 
-## Image Window
+## Rasters Window
 - **Select Image**: <kbd>Double-Click</kbd> on a row to load the image in the annotation window
 - **Highlight Image**: <kbd>Single-Click</kbd> on a row to highlight it
   - <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Select multiple, non-adjacent rows
@@ -979,7 +982,7 @@ Multi-select filters and search bars to control which images are displayed:
 - <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Mouse Wheel</kbd>: Change polygon vertex count
 - <kbd>Ctrl</kbd> + <kbd>X</kbd>: Cut a polygon annotation, explode a multi-polygon, or subtract polygons
 - <kbd>Ctrl</kbd> + <kbd>C</kbd>: Combine multiple selected annotations (if same type and label)
-- <kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show resize handles for selected annotations
+- <kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show every vertex handle at full strength (handles themselves appear on selection)
 - <kbd>Ctrl</kbd> + <kbd>R</kbd>: Bake or unbake annotations (opens dialog to choose between baking vectors into mask or unbaking mask into vectors; Select tool must be active)
 - <kbd>Backspace</kbd> / <kbd>Delete</kbd>: Cancel current drawing (rectangle, polygon, work area, cutting line)
 
@@ -1034,13 +1037,13 @@ After a model is loaded, use these shortcuts to run inference:
 - <kbd>Left-Click</kbd>: Select annotation, add point, start / end shape
 - <kbd>Left-Click</kbd> + <kbd>Drag</kbd>: Move selected annotation, draw shape
 - <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add / remove from selection, add positive point / prototype
-- <kbd>Shift</kbd> + <kbd>Left-Click</kbd>: Select range of items (Image Window)
+- <kbd>Shift</kbd> + <kbd>Left-Click</kbd>: Select range of items (Rasters Window)
 - <kbd>Ctrl</kbd> + <kbd>Drag</kbd>: Box-select multiple annotations
 - <kbd>Right-Click</kbd> + <kbd>Drag</kbd>: Pan the image viewer
-- <kbd>Right-Click</kbd>: Open context menu (Image Window)
+- <kbd>Right-Click</kbd>: Open context menu (Rasters Window)
 - <kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Center Annotation Window on selected annotation
 - <kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Add negative point / prototype
-- <kbd>Double-Click</kbd>: Load image (Image Window)
+- <kbd>Double-Click</kbd>: Load image (Rasters Window)
 - <kbd>Mouse Wheel</kbd>: Zoom in / out, adjust patch / brush size (with Ctrl)
 
 ### Annotation Window Navigation

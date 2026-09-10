@@ -201,7 +201,8 @@ class FloatingTagItem(QGraphicsSimpleTextItem):
         # THE MAGIC FLAG: Keeps the tag readable at any zoom level
         self.setFlag(QGraphicsItem.ItemIgnoresTransformations)
 
-        # Force it to render on top of everything else
+        # Sorts the tag above its siblings inside the annotation's group.
+        # The group as a whole is placed by create_graphics_item.
         self.setZValue(20)
 
     def _should_suppress(self):
@@ -1141,6 +1142,12 @@ class Annotation(QObject):
             self.bounding_box_graphics_item = None
             
         self.graphics_item_group = QGraphicsItemGroup()
+        # 20, against the phantom layer's 10. Without this the group sat at
+        # the default Z of 0, i.e. *below* the layer that draws every
+        # unselected annotation -- so a selection could vanish behind whatever
+        # overlapped it, and the resize handles (also 0) kept their place above
+        # the outline only by winning an insertion-order tie.
+        self.graphics_item_group.setZValue(20)
 
         if self.graphics_item:
             color = QColor(self.label.color)

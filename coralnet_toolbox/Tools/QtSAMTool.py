@@ -712,26 +712,35 @@ class SAMTool(Tool):
                             final_annotation.update_machine_confidence(
                                 self.temp_annotation.machine_confidence
                             )
-                        
+
+                        # SAM-created annotations are user-placed (the user chose the
+                        # prompts), so treat them as verified while keeping the SAM
+                        # confidence score for reference.
+                        final_annotation.update_verified(True)
+
                         # Create the graphics item for the final annotation
                         final_annotation.create_graphics_item(self.annotation_window.scene)
                         # Add the annotation to the scene
                         self.annotation_window.add_annotation_from_tool(final_annotation)
-                        
+
                         # Clear all temporary graphics and prompts
                         self.clear_prompt_graphics()
                 else:
                     # If no temp annotation, create one from current prompts without hover point
                     final_annotation = self.create_annotation(True)
-                    
+
                     # For Mask output type, create_annotation returns None after updating the raster mask
                     if final_annotation is None:
                         # Mask was updated successfully, just clear prompts
                         self.clear_prompt_graphics()
 
                     elif final_annotation:
+                        # SAM-created annotations are user-placed, so mark verified
+                        # while keeping the SAM confidence score for reference.
+                        final_annotation.update_verified(True)
+
                         self.annotation_window.add_annotation_from_tool(final_annotation)
-                        self.clear_prompt_graphics() 
+                        self.clear_prompt_graphics()
             # If no active prompts, cancel the working area
             else:
                 self.cancel_working_area()

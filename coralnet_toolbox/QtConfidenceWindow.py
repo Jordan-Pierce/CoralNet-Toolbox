@@ -1,3 +1,4 @@
+import time
 import warnings
 
 from PyQt5.QtGui import QPixmap, QColor, QPainter, QCursor
@@ -25,7 +26,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 class ConfidenceBar(QFrame):
     barClicked = pyqtSignal(object)  # Define a signal that takes an object (label)
 
-    def __init__(self, confidence_window, label, confidence, parent=None):
+    def __init__(self, confidence_window, label, confidence, parent=None, animate=True):
         """Initialize the ConfidenceBar widget."""
         super().__init__(parent)
         self.confidence_window = confidence_window
@@ -37,6 +38,10 @@ class ConfidenceBar(QFrame):
 
         self._fill_width = 0
         self.target_fill_width = 0  # Will be set in resizeEvent
+
+        # Cleared when this window is being rebuilt faster than the animation
+        # could finish anyway -- see ConfidenceWindow.create_bar_chart.
+        self.animate = animate
 
         # Animation will be created and started in the first resizeEvent
         self.animation = None
@@ -57,8 +62,18 @@ class ConfidenceBar(QFrame):
         """Handle resize to recalculate target fill width and start animation."""
         super().resizeEvent(event)
         # Calculate the target fill width based on the current widget width and confidence
-        self.target_fill_width = int(self.width() * (self.confidence / 100))
-        
+        new_target = int(self.width() * (self.confidence / 100))
+
+        # Qt delivers several resize events while a layout settles, and this
+        # used to restart a 500 ms animation from zero on every one of them --
+        # so a bar could be re-animating long after it had finished, and a dock
+        # drag turned into a wall of restarts. Only an actual change in target
+        # is worth re-animating.
+        if new_target == self.target_fill_width and self.animation is not None:
+            return
+
+        self.target_fill_width = new_target
+
         # Stop any existing animation
         if self.animation is not None:
             self.animation.stop()
@@ -68,6 +83,16 @@ class ConfidenceBar(QFrame):
 
     def start_animation(self):
         """Start the fill animation."""
+        if not self.animate:
+            # Snap straight to the answer. Half a second of easing is charming
+            # once and a liability when the window is being rebuilt on every
+            # keypress of a held-down cycle shortcut.
+            if self.animation is not None:
+                self.animation.stop()
+            self._fill_width = self.target_fill_width
+            self.update()
+            return
+
         if self.target_fill_width <= 0:
             # Stop any existing animation
             if self.animation is not None:
@@ -144,6 +169,10 @@ class ConfidenceBar(QFrame):
 
 
 class ConfidenceWindow(QWidget):
+    # Rebuilds closer together than this skip the bar fill animation; see
+    # create_bar_chart.
+    ANIMATION_DEBOUNCE_S = 0.5
+
     def __init__(self, main_window, parent=None):
         """Initialize the ConfidenceWindow widget."""
         super().__init__(parent)
@@ -176,6 +205,7 @@ class ConfidenceWindow(QWidget):
         self.machine_confidence = None
         self.chart_dict = None
         self.confidence_bar_labels = []
+        self._last_chart_build = 0.0
         
         # Get and store the icons
         self.user_icon = get_icon("user.svg")
@@ -508,6 +538,15 @@ class ConfidenceWindow(QWidget):
 
     def create_bar_chart(self):
         """Create and populate the confidence bar chart."""
+        # AnnotationWindow.cycle_annotations already skips its view animation
+        # when the user is stepping through annotations faster than
+        # ANIMATION_DEBOUNCE_S; this window never got the memo, so holding
+        # Ctrl+Left/Right left five bars permanently mid-animation. Same rule,
+        # applied here.
+        now = time.monotonic()
+        animate = (now - self._last_chart_build) >= self.ANIMATION_DEBOUNCE_S
+        self._last_chart_build = now
+
         self.clear_layout(self.bar_chart_layout)
         self.confidence_bar_labels = []
 
@@ -530,7 +569,7 @@ class ConfidenceWindow(QWidget):
         # Use actual confidence values for both bar fill and display
         for idx, (label, confidence) in enumerate(zip(labels, confidences)):
             # Use the actual confidence for both display and bar fill
-            self.add_bar_to_layout(label, confidence, confidence, idx + 1)
+            self.add_bar_to_layout(label, confidence, confidence, idx + 1, animate=animate)
             self.confidence_bar_labels.append(label)
 
     def get_chart_data(self):
@@ -541,7 +580,7 @@ class ConfidenceWindow(QWidget):
             [conf_value * 100 for conf_value in self.chart_dict.values()][:5]
         )
 
-    def add_bar_to_layout(self, label, display_confidence, bar_confidence, top_k):
+    def add_bar_to_layout(self, label, display_confidence, bar_confidence, top_k, animate=True):
         """Create and add a composite widget for the confidence bar to the layout."""
         container_widget = QWidget()
         row_layout = QHBoxLayout(container_widget)
@@ -565,7 +604,7 @@ class ConfidenceWindow(QWidget):
         class_label.setToolTip(label.short_label_code)
 
         # Progress Bar
-        bar_widget = ConfidenceBar(self, label, bar_confidence)
+        bar_widget = ConfidenceBar(self, label, bar_confidence, animate=animate)
         bar_widget.barClicked.connect(self.handle_bar_click)
 
         # Percentage
@@ -613,13 +652,30 @@ class ConfidenceWindow(QWidget):
 
         # Update the search bars
         self.main_window.image_window.update_search_bars()
-        
-        # Update everything else (essentially)
-        # This next line will set self.annotation to None via clear_display()
-        self.main_window.annotation_window.unselect_annotation(annotation_to_update)
-        
-        # Reselect the annotation using our saved local reference
-        self.main_window.annotation_window.select_annotation(annotation_to_update)
+
+        # Refresh in place rather than unselecting and reselecting.
+        #
+        # That round trip existed only to force a redraw, and it was expensive
+        # out of all proportion to a label change: unselect_annotation tears
+        # down the annotation's Qt items, clears this window (dropping
+        # self.annotation), and rebuilds its colour group in the phantom layer;
+        # select_annotation then rebuilds all of it, re-crops the image, and
+        # rebuilds this chart. The visible result was a flicker on every bar
+        # click. The annotation never actually stopped being selected, so say so.
+        annotation_window = self.main_window.annotation_window
+        annotation_window.selected_label = label
+        # Keeps the Label Window's highlight in step, which is the one thing
+        # reselecting used to be doing that a redraw does not.
+        annotation_window.labelSelected.emit(label.id)
+        # The annotation's colour group key changed with its label, so the
+        # phantom layer needs the same patch a deselect would have given it.
+        try:
+            annotation_window.refresh_phantom_annotations(only_annotation=annotation_to_update)
+        except Exception:
+            pass
+        annotation_window.viewport().update()
+
+        self.refresh_display()
 
     def clear_layout(self, layout):
         """Remove all widgets from the specified layout."""

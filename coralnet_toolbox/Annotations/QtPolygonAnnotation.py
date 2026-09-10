@@ -20,6 +20,25 @@ from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAn
 
 from coralnet_toolbox.utilities import densify_polygon
 from coralnet_toolbox.utilities import simplify_polygon
+
+# Simplify/densify ladder for update_polygon(). BASE_TOLERANCE matches the
+# Annotation.tolerance default, so densifying all the way back returns the
+# annotation to the detail level it was created with.
+BASE_TOLERANCE = 0.1
+BASE_TOLERANCE_STEP = 0.05
+MAX_TOLERANCE = 2.0
+
+# Ceiling on the total vertex count (outer ring plus every hole) that densifying
+# is allowed to reach.
+#
+# densify_polygon inserts a midpoint between every pair of neighbours, so each
+# tick *doubles* the count. A mouse wheel emits ticks faster than anyone can
+# count them, and with nothing stopping it a four-point square reaches a million
+# vertices in eighteen notches -- long before that the application has stopped
+# responding. The cap is generous next to anything a person can usefully edge by
+# hand: a SAM-derived polygon lands in the low hundreds, and past a few hundred
+# on-screen vertices the handle layer is thinning them out anyway.
+MAX_DENSIFY_VERTICES = 2000
 from coralnet_toolbox.utilities import rasterio_to_cropped_image
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -541,21 +560,44 @@ class PolygonAnnotation(Annotation):
         # Call the parent class method to handle rebuilding the graphics group.
         super().update_graphics_item()
     
+    def vertex_count(self):
+        """Total vertices across the outer ring and every hole."""
+        return len(self.points) + sum(len(hole) for hole in (self.holes or []))
+
     def update_polygon(self, delta):
         """
         Simplify or densify the polygon and its holes based on wheel movement.
+
+        Returns True when the geometry changed, False when the request was
+        refused (densifying past MAX_DENSIFY_VERTICES), and False for a zero
+        delta. Callers use the refusal to tell the user why nothing happened.
         """
         # Determine which function to use based on the delta
         if delta < 0:
             # Simplify: increase tolerance (less detail)
-            self.tolerance = min(self.tolerance + 0.05, 2.0)
+            self.tolerance = min(self.tolerance + BASE_TOLERANCE_STEP, MAX_TOLERANCE)
             process_function = lambda pts: simplify_polygon(pts, self.tolerance)
         elif delta > 0:
-            # Densify: decrease segment length (more detail)
+            # Densify: decrease segment length (more detail).
+            #
+            # Walk the tolerance back down by the same step. It used to only
+            # ever climb, capped at MAX_TOLERANCE, so scrolling well down and
+            # then back up left it latched at the top -- and the next single
+            # tick down, which the user expects to shave a little detail, ran
+            # at maximum tolerance and flattened the shape in one move. The
+            # ladder is now symmetric: n ticks down then n ticks up returns the
+            # tolerance to where it started.
+            # Refuse before doing the work, not after: densify doubles the
+            # vertex count, so the check is simply whether twice the current
+            # count still fits.
+            if self.vertex_count() * 2 > MAX_DENSIFY_VERTICES:
+                return False
+
+            self.tolerance = max(self.tolerance - BASE_TOLERANCE_STEP, BASE_TOLERANCE)
             process_function = densify_polygon
         else:
             # No change
-            return
+            return False
 
         # --- Process the Outer Boundary ---
         xy_points = [(p.x(), p.y()) for p in self.points]
@@ -582,6 +624,7 @@ class PolygonAnnotation(Annotation):
         self.set_cropped_bbox()
         self.update_graphics_item()
         self.annotationUpdated.emit(self)
+        return True
 
     def update_location(self, new_center_xy: QPointF):
         """
@@ -699,42 +742,68 @@ class PolygonAnnotation(Annotation):
         self.update_graphics_item()
         self.annotationUpdated.emit(self)
 
-    def resize(self, handle: str, new_pos: QPointF):
-        """
-        Resize the annotation by moving a specific handle (vertex) to a new position.
-        The handle format is updated to support holes: 'point_{poly_index}_{vertex_index}'.
-        """
-        self.update_user_confidence(self.label)
+    def apply_vertex(self, handle: str, new_pos: QPointF) -> bool:
+        """Move one vertex, touching nothing else.
 
+        Split out of resize() so MultiPolygonAnnotation can reuse the vertex
+        maths without also triggering this polygon's own graphics rebuild and
+        signal emission -- the sub-polygons of a multi-polygon are not in the
+        scene in their own right.
+
+        Returns True when a vertex actually moved.
+        """
         if not handle.startswith("point_"):
-            return
+            return False
 
         try:
-            # Parse the new handle format: "point_outer_5" or "point_0_2"
+            # Parse the handle format: "point_outer_5" or "point_0_2"
             _, poly_index_str, vertex_index_str = handle.split("_")
             vertex_index = int(vertex_index_str)
 
             # --- Modify the correct list of points ---
             if poly_index_str == "outer":
                 # Handle resizing the outer boundary
-                if 0 <= vertex_index < len(self.points):
-                    new_points = self.points.copy()
-                    new_points[vertex_index] = new_pos
-                    # Update points directly without precision reduction
-                    self.points = new_points
+                if not (0 <= vertex_index < len(self.points)):
+                    return False
+                new_points = self.points.copy()
+                new_points[vertex_index] = new_pos
+                # Update points directly without precision reduction
+                self.points = new_points
             else:
                 # Handle resizing one of the holes
                 poly_index = int(poly_index_str)
-                if 0 <= poly_index < len(self.holes):
-                    if 0 <= vertex_index < len(self.holes[poly_index]):
-                        # Create a copy, modify it, and update the list of holes
-                        new_hole = self.holes[poly_index].copy()
-                        new_hole[vertex_index] = new_pos
-                        self.holes[poly_index] = new_hole
-                        # Holes are already updated, no precision reduction needed
+                if not (0 <= poly_index < len(self.holes)):
+                    return False
+                if not (0 <= vertex_index < len(self.holes[poly_index])):
+                    return False
+                # Create a copy, modify it, and update the list of holes
+                new_hole = self.holes[poly_index].copy()
+                new_hole[vertex_index] = new_pos
+                self.holes[poly_index] = new_hole
+                # Holes are already updated, no precision reduction needed
 
         except (ValueError, IndexError):
             # Fail gracefully if the handle format is invalid
+            return False
+
+        return True
+
+    def resize(self, handle: str, new_pos: QPointF):
+        """
+        Resize the annotation by moving a specific handle (vertex) to a new position.
+        The handle format is updated to support holes: 'point_{poly_index}_{vertex_index}'.
+
+        This runs once per mouse-move of a drag, so it does the minimum: mutate
+        the vertex, recompute derived geometry, rebuild the item, emit once.
+        It used to open with update_user_confidence(self.label), which rebuilt
+        the graphics item and fanned out annotationUpdated *and* verifiedChanged
+        before this method did its own rebuild and emit -- two full rebuilds and
+        two signal fan-outs per frame, one of which tore down and rebuilt the
+        entire ConfidenceWindow. Marking the annotation verified is a property
+        of the completed edit, not of each frame, so ResizeSubTool now does it
+        once on mouse release.
+        """
+        if not self.apply_vertex(handle, new_pos):
             return
 
         # --- Recalculate properties and refresh the graphics ---

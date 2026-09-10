@@ -37,6 +37,11 @@ class MoveSubTool(SubTool):
 
     def deactivate(self):
         super().deactivate()
+        # An aborted drag (the annotation turned out not to be moveable, the
+        # tool switched) never reaches mouseReleaseEvent, so clear the offset
+        # here too or the handles stay parked wherever the drag left them.
+        if self.parent_tool.resize_subtool.clear_handle_offset():
+            self.parent_tool.resize_subtool.refresh_handle_positions()
         self.move_start_pos = None
         self._last_pos = None
         self._pending_center = None
@@ -60,8 +65,16 @@ class MoveSubTool(SubTool):
         if group is not None and self.orig_center is not None:
             step = current_pos - self._last_pos
             group.moveBy(step.x(), step.y())
+            # The handle layer is a sibling of the group, not a child, so it
+            # has to be carried along by hand. Its handle points are only
+            # re-read from the annotation on release, when set_annotation_location
+            # makes the move authoritative; until then this offset is what keeps
+            # the handles sitting on the shape instead of hanging back at the
+            # position the drag started from.
+            self.parent_tool.resize_subtool.offset_handles(step.x(), step.y())
             self._last_pos = current_pos
             self._pending_center = self.orig_center + (current_pos - self.move_start_pos)
+            self.parent_tool.show_drag_offset(current_pos - self.move_start_pos)
         else:
             # Fallback: no live group (shouldn't happen for a selected annotation) —
             # use the legacy heavy per-move path so the move still works.
@@ -72,6 +85,10 @@ class MoveSubTool(SubTool):
 
     def mouseReleaseEvent(self, event):
         """Apply the deferred move, record the undo action, and deactivate."""
+        # Drop the drag-time offset before the handles are re-read from the
+        # annotation's new, authoritative geometry.
+        self.parent_tool.resize_subtool.clear_handle_offset()
+
         try:
             selected_annotation = self.parent_tool.selected_annotations[0]
             if self._pending_center is not None:
@@ -94,4 +111,5 @@ class MoveSubTool(SubTool):
         except Exception:
             pass
 
+        self.parent_tool.resize_subtool.refresh_handle_positions()
         self.parent_tool.deactivate_subtool()

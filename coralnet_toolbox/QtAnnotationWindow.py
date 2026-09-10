@@ -3208,15 +3208,22 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
         Qt items to represent a selection nobody is looking at is most of the
         cost of this operation.
         """
+        # try/finally rather than a bare pair: this body used to leave a stuck
+        # hourglass for the rest of the session if anything in it raised.
         QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            self._select_annotations_impl()
+        finally:
+            QApplication.restoreOverrideCursor()
 
+    def _select_annotations_impl(self):
+        """Body of select_annotations, minus cursor bookkeeping."""
         self._skip_phantom_refresh = True
         self.unselect_annotations()
         self._skip_phantom_refresh = False
 
         annotations = self.get_image_annotations()
         if not annotations:
-            QApplication.restoreOverrideCursor()
             return
 
         label_locked = self.main_window.label_window.label_locked
@@ -3257,12 +3264,22 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
         self.refresh_phantom_annotations()
         self.viewport().update()
         self._emit_selection_changed()
-        QApplication.restoreOverrideCursor()
 
     def select_annotations_by_ids(self, annotation_ids, scroll_to_first=True, quiet_mode=True):
         """Select a batch of annotations by their IDs."""
-        QApplication.setOverrideCursor(Qt.WaitCursor)
+        # Selecting one annotation from the gallery or the Explorer runs this
+        # too; only a genuinely large batch earns an hourglass.
+        busy = len(annotation_ids or ()) >= self.BUSY_CURSOR_SELECTION_THRESHOLD
+        if busy:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            self._select_annotations_by_ids_impl(annotation_ids, scroll_to_first, quiet_mode)
+        finally:
+            if busy:
+                QApplication.restoreOverrideCursor()
 
+    def _select_annotations_by_ids_impl(self, annotation_ids, scroll_to_first, quiet_mode):
+        """Body of select_annotations_by_ids, minus cursor bookkeeping."""
         # Prevent selection feedback loops BEFORE clearing the existing selection
         self._syncing_selection = True
 
@@ -3274,7 +3291,6 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
             self._syncing_selection = False
             self.viewport().update()
             self._emit_selection_changed()
-            QApplication.restoreOverrideCursor()
             return
         # -----------------------------------------------------------------------
 
@@ -3324,7 +3340,6 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
 
         self.viewport().update()
         self._emit_selection_changed()
-        QApplication.restoreOverrideCursor()
 
     def unselect_annotation(self, annotation, bulk_mode=False):
         """Unselect a specific annotation."""
@@ -3353,15 +3368,34 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
                     self.refresh_phantom_annotations(only_annotation=annotation)
                 self._emit_selection_changed()
 
+    # Below this many annotations the work here is sub-millisecond, and this is
+    # the path a plain click-to-select takes on its way to selecting something
+    # else. Flashing an hourglass at the start of every click (and of every
+    # click-and-drag to move) is pure noise; above the threshold the wait is
+    # real and worth signalling.
+    BUSY_CURSOR_SELECTION_THRESHOLD = 32
+
     def unselect_annotations(self):
         """Unselect all currently selected annotations."""
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-
         annotations_to_unselect = self.selected_annotations.copy()
         if not annotations_to_unselect:
-            QApplication.restoreOverrideCursor()
             self._emit_selection_changed()
             return
+
+        # try/finally rather than a bare pair: this body used to leave a stuck
+        # hourglass for the rest of the session if anything in it raised.
+        busy = len(annotations_to_unselect) >= self.BUSY_CURSOR_SELECTION_THRESHOLD
+        if busy:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            self._unselect_annotations_impl(annotations_to_unselect)
+        finally:
+            if busy:
+                QApplication.restoreOverrideCursor()
+        self._emit_selection_changed()
+
+    def _unselect_annotations_impl(self, annotations_to_unselect):
+        """Body of unselect_annotations, minus cursor and signal bookkeeping."""
 
         # A lazily-selected annotation (see select_phantom) never materialised
         # its own items — it is drawn by the phantom layer's selected-state
@@ -3406,8 +3440,6 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
                 for annotation in annotations_to_unselect:
                     self.refresh_phantom_annotations(only_annotation=annotation)
         self.viewport().update()
-        QApplication.restoreOverrideCursor()
-        self._emit_selection_changed()
     
     def _emit_selection_changed(self):
         """Emit the annotationSelectionChanged signal with current selection IDs."""
