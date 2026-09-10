@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (QFileDialog, QMessageBox, QCheckBox,
                              QVBoxLayout, QLabel, QLineEdit, QDialog, QHBoxLayout,
                              QPushButton, QFormLayout, QDialogButtonBox, QDoubleSpinBox,
                              QGroupBox, QTableWidget, QTableWidgetItem, QButtonGroup, QRadioButton,
-                             QSpinBox,
+                             QSpinBox, QHeaderView,
                              QWidget)
 
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
@@ -385,12 +385,19 @@ class Base(QDialog):
                                                            "Val",
                                                            "Test",
                                                            "Images"])
-        self.label_counts_table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
+        header = self.label_counts_table.horizontalHeader()
+        header.setDefaultAlignment(Qt.AlignCenter)
+        # The table widget always widened with the dialog, but its columns kept
+        # their fixed default widths, so the extra width sat empty to the right.
+        # Share it out instead; the checkbox column keeps only what it needs.
+        header.setSectionResizeMode(QHeaderView.Stretch)
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         # Note: No delegate needed - using widget-based checkboxes via setCellWidget
         layout.addWidget(self.label_counts_table)
 
         group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
+        # Stretch 1 so extra height also goes to the table, not the option groups
+        self.layout.addWidget(group_box, 1)
 
     def setup_status_layout(self):
         """Setup the ready status layout."""
