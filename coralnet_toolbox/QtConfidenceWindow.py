@@ -24,8 +24,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 BAR_TRACK_COLOR = app_theme.SURFACE_COLOR
 ROW_HOVER_COLOR = app_theme.SURFACE_ELEVATED_COLOR
-# Amber flags work that still needs a human: unverified annotations, close calls
-ATTENTION_COLOR = QColor("#ffd479")
+ATTENTION_COLOR = app_theme.ATTENTION_COLOR
 # A top-1 lead over top-2 smaller than this, in percentage points, is flagged as a close call
 LOW_MARGIN_PTS = 10.0
 # The crop sits beside the bars only when that still leaves the bars at least this wide

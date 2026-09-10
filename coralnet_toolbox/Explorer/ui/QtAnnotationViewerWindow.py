@@ -382,6 +382,10 @@ class AnnotationViewerWindow(QWidget):
         self.list_view.setResizeMode(QListView.Adjust)
         self.list_view.setSelectionMode(QListView.ExtendedSelection)
         self.list_view.setSpacing(app_theme.scale_int(5))
+        # The delegate highlights the tile under the cursor; it only hears
+        # about hover if the viewport is asked for hover events
+        self.list_view.setMouseTracking(True)
+        self.list_view.viewport().setAttribute(Qt.WA_Hover, True)
         # Override key press events to support Ctrl+A selection
         self.list_view.keyPressEvent = self._list_view_key_press_event
         # Set background and rubber-band styling (cyan rubber band)
