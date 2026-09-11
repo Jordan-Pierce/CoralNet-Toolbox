@@ -2,14 +2,13 @@ import warnings
 
 import os 
 
-from PyQt5.QtCore import Qt                           
-from PyQt5.QtWidgets import (QVBoxLayout, QLabel, QGroupBox, QFormLayout,
-                             QDoubleSpinBox, QComboBox, QSpinBox, QHBoxLayout,
-                             QWidget, QStackedWidget, QGridLayout, QMessageBox,
-                             QDialog, QListWidget, QPushButton, QFileDialog,
-                             QGraphicsView)
+from PyQt5.QtWidgets import (QVBoxLayout, QLabel, QGroupBox, QHBoxLayout, QApplication,
+                             QMessageBox, QDialog, QListWidget, QPushButton, QFileDialog)
 
-from coralnet_toolbox.Icons import get_icon, get_window_icon
+from coralnet_toolbox.QtProgressBar import ProgressBar
+
+from coralnet_toolbox.Icons import get_window_icon
+
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -23,6 +22,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 class UpdateImagePaths(QDialog):
     def __init__(self, image_paths, parent=None):
         super().__init__(parent)
+        self.main_window = parent
         
         self.setWindowIcon(get_window_icon("coral"))
         self.setWindowTitle("Update Image Paths")
@@ -56,11 +56,17 @@ class UpdateImagePaths(QDialog):
     
     def setup_info_layout(self):
         """Create information label explaining missing images."""
-        info_label = QLabel(f"The following {len(self.missing_images)} image(s) could not be found. "
-                            "Please select a directory to search for these images.")
+        group_box = QGroupBox("Information")
+        layout = QVBoxLayout()
+
+        info_label = QLabel("The following images could not be found. "
+                            "Please select a root directory; we will recursively search all subfolders for matches.")
         info_label.setWordWrap(True)
-        info_label.setToolTip("Some images in the project cannot be located.\nSelect a directory to search for them by filename.")
-        self.layout().addWidget(info_label)
+        info_label.setToolTip("Some images in the project cannot be highly located.\nSelect a directory to search for them by filename.")
+        layout.addWidget(info_label)
+
+        group_box.setLayout(layout)
+        self.layout().addWidget(group_box)
     
     def setup_list_widget(self):
         """Create list widget showing missing image paths."""
@@ -87,46 +93,65 @@ class UpdateImagePaths(QDialog):
         self.layout().addLayout(button_layout)
     
     def open_file_dialog(self):
-        """Open file selection dialog with first missing image name as filter."""
+        """Open directory selection dialog."""
         if not self.missing_images:
             return None
             
-        first_missing = self.missing_images[0]
-        first_basename = os.path.basename(first_missing)
-        
-        # Create filter based on the file extension
-        file_filter = f"Image files ({first_basename})"
-        
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, 
-            f"Select the corresponding file for '{first_basename}'",
-            os.path.dirname(first_missing) if os.path.dirname(first_missing) else "",
-            file_filter
+        directory = QFileDialog.getExistingDirectory(
+            self,
+            "Select Root Directory to Search",
+            ""
         )
         
-        return os.path.dirname(file_path) if file_path else None
+        return directory if directory else None
     
     def update_image_paths(self):
-        """Update missing image paths using file selection."""
-        while self.missing_images:
-            # Open file dialog and get the directory from selected file
+        """Update missing image paths using recursive search."""
+        if not self.missing_images:
+            return
+
+        # Start progress bar
+        progress_bar = ProgressBar(self, title="Searching for images...")
+        progress_bar.show()
+        
+        try:
             directory = self.open_file_dialog()
             if directory is None:  # User cancelled or closed dialog
-                # Ensure dialog is rejected and exit early to avoid further processing
                 self.reject()
                 return
 
-            # Update paths for missing images
+            # Prepare for recursive search
+            # We use a set for O(1) lookups of basenames
+            target_basenames = {os.path.basename(p) for p in self.missing_images}
+            
+            # Track which ones we've found
+            found_map = {} # basename -> new_full_path
+            
+            # We'll use the progress bar to show how many files we've checked
+            # But since we don't know how many files are in the tree, 
+            # we'll use the "busy" mode or just update the title.
+            progress_bar.set_busy_mode("Searching...")
+
+            # Perform the recursive search
+            for root, dirs, files in os.walk(directory):
+                # Check files in the current directory
+                for filename in files:
+                    if filename in target_basenames:
+                        new_path = os.path.join(root, filename).replace("\\", "/")
+                        found_map[filename] = new_path
+                
+                # Check if we've found everything
+                if len(found_map) == len(target_basenames):
+                    break
+
+            # Now update the actual paths
             updated_count = 0
             still_missing = []
             
             for missing_path in self.missing_images:
                 basename = os.path.basename(missing_path)
-                new_path = os.path.join(directory, basename)
-                # Replace "\\" with "/" for Windows paths
-                new_path = new_path.replace("\\", "/")
-                
-                if os.path.exists(new_path):
+                if basename in found_map:
+                    new_path = found_map[basename]
                     # Update the path in the main image_paths list
                     index = self.image_paths.index(missing_path)
                     self.image_paths[index] = new_path
@@ -140,12 +165,9 @@ class UpdateImagePaths(QDialog):
             self.missing_images = still_missing
 
             if updated_count == 0:
-                # Recompute the sample basename for the warning message (if available)
-                first_basename = os.path.basename(self.missing_images[0]) if self.missing_images else ''
                 QMessageBox.warning(self, 
                                     "No Images Found",
-                                    f"No images were found in the selected directory. Looking for files like: "
-                                    f"{first_basename}")
+                                    "No matching images were found in the selected directory or its subfolders.")
             elif still_missing:
                 # Update the list widget with remaining missing images
                 self.list_widget.clear()
@@ -161,6 +183,16 @@ class UpdateImagePaths(QDialog):
                                         "All Images Updated", 
                                         f"Successfully updated all {updated_count} missing image(s).")
                 self.accept()
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"An error occurred during the search: {int(e)}")
+        finally:
+            # Restore cursor
+            QApplication.restoreOverrideCursor()
+            # Stop the progress bar
+            progress_bar.stop_progress()
+            progress_bar.close()
+
     
     @staticmethod
     def update_paths(image_paths, parent=None):
