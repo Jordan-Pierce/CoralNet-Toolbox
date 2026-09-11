@@ -955,7 +955,7 @@ class MainWindow(QMainWindow):
                     "\t• Or, press Spacebar to create a working area for the current view.\n"
                     "• Ctrl+Left-click to add positive points (foreground).\n"
                     "• Ctrl+Right-click to add negative points (background).\n"
-                    "• Left-click and drag to create a bounding box for prompting.\n"
+                    "• Left-click, move, then left-click again to draw a bounding box for prompting.\n"
                     "• Press Spacebar to generate and confirm the segmentation.\n"
                     "• Press Backspace to cancel the current operation.\n"
                     "• Uncertainty can be adjusted in Parameters section.\n"

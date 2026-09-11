@@ -70,6 +70,7 @@ class DeployGeneratorDialog(QDialog):
         self.model_path = None
         self.class_mapping = None
         self.model_type = None  # Either 'fastSAM' or 'sam'
+        self._oom_skipped = 0  # Inputs skipped for GPU out-of-memory in the current predict()
 
         # Create the layout
         self.layout = QVBoxLayout(self)
@@ -197,9 +198,10 @@ class DeployGeneratorDialog(QDialog):
         # Image size control
         self.imgsz_spinbox = QSpinBox()
         self.imgsz_spinbox.setRange(640, 65536)
-        self.imgsz_spinbox.setSingleStep(24)
+        self.imgsz_spinbox.setSingleStep(32)
         self.imgsz_spinbox.setValue(self.imgsz)
-        self.imgsz_spinbox.setToolTip("Input image size for SAM.\nLarger sizes improve segmentation quality but increase processing time.")
+        self.imgsz_spinbox.setToolTip("Input image size for SAM.\nLarger sizes improve segmentation quality but increase processing time.\n"
+                                      "Rounded to a multiple of 32.")
         layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
 
         group_box.setLayout(layout)
@@ -329,16 +331,37 @@ class DeployGeneratorDialog(QDialog):
             progress_bar.close()
 
     def get_imgsz(self):
-        """Get the image size for the model."""
-        self.imgsz = self.imgsz_spinbox.value()
+        """Get the image size for the model, rounded to a multiple of 32.
+
+        SAM 2's Hiera encoder raises on sizes that aren't (1000 and 688, both
+        reachable with the old 24-px step). The spinbox is updated to match.
+        """
+        value = self.imgsz_spinbox.value()
+        snapped = int(round(value / 32)) * 32
+        snapped = max(self.imgsz_spinbox.minimum(), min(self.imgsz_spinbox.maximum(), snapped))
+        if snapped != value:
+            self.imgsz_spinbox.setValue(snapped)
+        self.imgsz = snapped
         return self.imgsz
+
+    def get_quantize(self):
+        """Precision for model calls: 32 for MobileSAM (crashes in FP16) and on the CPU, else 16.
+
+        On the CPU, SAM's .half() cast is ~15x slower than FP32. Ultralytics
+        fixes the precision when a predictor is built, i.e. on the first call
+        (the load-time warm-up, which runs FP32) and again whenever the device
+        changes; so this matters for the rebuild after a device change.
+        """
+        on_cpu = str(self.main_window.device).strip().lower() == "cpu"
+        is_mobile_sam = "mobile_sam" in (self.model_path or "")
+        return 32 if on_cpu or is_mobile_sam else 16
 
     def predict(self, image_paths=None):
         """Run inference on one or more images with the loaded SAM/FastSAM model.
 
         Manages its own progress bar and always bakes results at the end.
-        OOM-adaptive batching: on GPU out-of-memory errors the batch size is
-        halved and the failing chunk is retried automatically.
+        Images or tiles the GPU runs out of memory on are retried once by
+        _apply_model, then skipped and reported when the run finishes.
 
         Args:
             image_paths: List of image paths to process.  If None, processes
@@ -353,7 +376,9 @@ class DeployGeneratorDialog(QDialog):
                 return
             image_paths = [self.annotation_window.current_image_path]
 
+        # Tiles highlighted together; the model still runs one image at a time
         BATCH_SIZE = 32
+        self._oom_skipped = 0
 
         results_processor = ResultsProcessor(self.main_window, self.class_mapping)
         is_segmentation = self.task == 'segment'
@@ -416,11 +441,10 @@ class DeployGeneratorDialog(QDialog):
                 progress_bar.start_progress(len(work_items_data))
 
                 results_for_image = []
-                current_batch_size = BATCH_SIZE
 
-                for i in range(0, len(work_items_data), current_batch_size):
-                    data_chunk = work_items_data[i:i + current_batch_size]
-                    area_chunk = work_areas[i:i + current_batch_size]
+                for i in range(0, len(work_items_data), BATCH_SIZE):
+                    data_chunk = work_items_data[i:i + BATCH_SIZE]
+                    area_chunk = work_areas[i:i + BATCH_SIZE]
 
                     # Highlight all tiles in this batch before inference so the
                     # user can see which regions are queued for processing.
@@ -428,38 +452,11 @@ class DeployGeneratorDialog(QDialog):
                         if wa is not None:
                             wa.highlight()
 
-                    # OOM-adaptive: halve batch and retry on out-of-memory
-                    batch_results = None
-                    tmp_data = data_chunk
-                    tmp_areas = area_chunk
-                    tmp_bs = current_batch_size
+                    # One result per input (None for failures), so every tile
+                    # in the chunk is unhighlighted and counted below.
+                    batch_results = self._apply_model(data_chunk)
 
-                    while tmp_bs > 0:
-                        try:
-                            batch_results = self._apply_model(tmp_data)
-                            break
-                        except RuntimeError as e:
-                            if "out of memory" in str(e).lower():
-                                tmp_bs = max(1, tmp_bs // 2)
-                                import gc as _gc
-                                _gc.collect()
-                                empty_cache()
-                                print(f"OOM: retrying with batch size {tmp_bs}.")
-                                tmp_data  = data_chunk[:tmp_bs]
-                                tmp_areas = area_chunk[:tmp_bs]
-                                if not tmp_data:
-                                    break
-                            else:
-                                raise
-
-                    if batch_results is None:
-                        for wa in area_chunk:
-                            if wa is not None:
-                                wa.unhighlight()
-                            progress_bar.update_progress()
-                        continue
-
-                    for wa, result in zip(tmp_areas, batch_results):
+                    for wa, result in zip(area_chunk, batch_results):
                         if not result:
                             if wa is not None:
                                 wa.unhighlight()
@@ -544,6 +541,12 @@ class DeployGeneratorDialog(QDialog):
             _gc.collect()
             empty_cache()
 
+            if self._oom_skipped:
+                QMessageBox.warning(
+                    self.annotation_window, "GPU Out of Memory",
+                    f"{self._oom_skipped} image(s) or tile(s) were skipped because the GPU "
+                    "ran out of memory.\nTry a smaller Image Size or a smaller model.")
+
     def _fast_render_image(self, image_path, raster, results_for_image, results_processor,
                            frame_bgr=None):
         """Push a ghost-render of new predictions to the OpenGL canvas without baking."""
@@ -600,25 +603,21 @@ class DeployGeneratorDialog(QDialog):
         # Base kwargs always passed
         kwargs = {
             'conf': self.thresholds_widget.get_uncertainty_thresh(),
-            'imgsz': self.imgsz_spinbox.value(),
+            'imgsz': self.get_imgsz(),
             'max_det': self.thresholds_widget.get_max_detections(),
             'device': self.main_window.device
         }
-        
+
         # Task-specific kwargs
         if self.task == 'segment':
             kwargs['retina_masks'] = True  # High-quality, non-blocky polygons
         # For 'detect' task, omit retina_masks to maximize speed & minimize memory
-        
+
         # Always pass iou; let Ultralytics ignore it if not applicable
         kwargs['iou'] = self.thresholds_widget.get_iou_thresh()
-        
-        # MobileSAM precision constraint: prevent FP16 crash by using FP32
-        if "MobileSAM" in self.model_combo.currentText():
-            kwargs['quantize'] = 32  # FP32 mode for MobileSAM
-        else:
-            kwargs['quantize'] = 16   # FP16 mode for others (faster)
-        
+
+        kwargs['quantize'] = self.get_quantize()
+
         results_list = []
         import cv2
         
@@ -645,15 +644,52 @@ class DeployGeneratorDialog(QDialog):
                     continue
                 
                 # Call model with dynamically constructed kwargs
-                with torch.no_grad():
-                    results = self.loaded_model(img, **kwargs)
-                    results_list.append(results[0] if results else None)
-                    
+                results_list.append(self._run_model(img, kwargs))
+
             except Exception as e:
                 print(f"Error running model on input: {e}")
                 results_list.append(None)
-        
+
         return results_list
+
+    def _run_model(self, img, kwargs):
+        """
+        Run the model on one image, retrying once after a GPU out-of-memory error.
+
+        Returns the image's Results, or None if it runs out of memory again;
+        those are counted in self._oom_skipped for predict() to report.
+        """
+        for attempt in (1, 2):
+            try:
+                with torch.no_grad():
+                    results = self.loaded_model(img, **kwargs)
+                break
+            except RuntimeError as e:  # torch.cuda.OutOfMemoryError is a RuntimeError
+                if "out of memory" not in str(e).lower():
+                    raise
+                # Free cached blocks; fragmentation alone can cause this
+                gc.collect()
+                empty_cache()
+                if attempt == 2:
+                    print(f"SAM generator: GPU out of memory, skipping input: {e}")
+                    self._oom_skipped += 1
+                    return None
+
+        result = results[0] if results else None
+
+        # SAM's segment-everything ignores max_det (FastSAM, a YOLO model,
+        # applies it itself), so keep the most confident ones here.
+        if result is not None and self.model_type == "sam":
+            result = self._keep_top_detections(result, kwargs['max_det'])
+        return result
+
+    @staticmethod
+    def _keep_top_detections(result, max_det):
+        """Return `result` limited to its `max_det` most confident detections."""
+        if result.boxes is None or len(result.boxes) <= max_det:
+            return result
+        keep = torch.argsort(result.boxes.conf, descending=True)[:max_det]
+        return result[keep]
 
     def deactivate_model(self):
         """

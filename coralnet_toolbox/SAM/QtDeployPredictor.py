@@ -5,6 +5,7 @@ import gc
 
 import numpy as np
 
+import torch
 from torch.cuda import empty_cache
 from torch.cuda import is_available as cuda_is_available
 
@@ -45,6 +46,10 @@ class DeployPredictorDialog(QDialog):
         self.loaded_model = None
         self.image_path = None
         self.original_image = None
+        # Model input size the cached features were encoded at, as (h, w).
+        # Prompts must be scaled to this, not to the spinbox, which can change
+        # after encoding and which ultralytics rounds per model stride.
+        self.features_imgsz = None
 
         # Create the layout
         self.layout = QVBoxLayout(self)
@@ -118,11 +123,10 @@ class DeployPredictorDialog(QDialog):
         # Check for SAM 3 weights in the current directory and add to models if found
         if os.path.exists(os.path.join(os.getcwd(), "sam3.pt")):
             self.models["SAM 3"] = "sam3.pt"
-
-        # Check for SAM 3 weights in the current directory and add to models if found
+            
+ # Check for SAM 3 weights in the current directory and add to models if found
         if os.path.exists(os.path.join(os.getcwd(), "sam3.1_multiplex.pt")):
             self.models["SAM 3.1 Multiplex"] = "sam3.1_multiplex.pt"
-
         # Add all models to combo box
         for model_name in self.models.keys():
             self.model_combo.addItem(model_name)
@@ -169,9 +173,10 @@ class DeployPredictorDialog(QDialog):
         # Image size control
         self.imgsz_spinbox = QSpinBox()
         self.imgsz_spinbox.setRange(640, 2048)
-        self.imgsz_spinbox.setSingleStep(24)
+        self.imgsz_spinbox.setSingleStep(32)
         self.imgsz_spinbox.setValue(self.imgsz)
-        self.imgsz_spinbox.setToolTip("Input image size for SAM model.\nLarger sizes improve accuracy but use more GPU memory.")
+        self.imgsz_spinbox.setToolTip("Input image size for SAM model.\nLarger sizes improve accuracy but use more GPU memory.\n"
+                                      "Rounded to a multiple of 32.")
         layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
 
         group_box.setLayout(layout)
@@ -232,6 +237,24 @@ class DeployPredictorDialog(QDialog):
         """Return the current setting for output type."""
         return self.output_type_dropdown.currentText()
 
+    def _on_cpu(self):
+        """True when inference runs on the CPU (device is 'cpu', 'cuda:0', 'mps' or '0,1 ')."""
+        return str(self.main_window.device).strip().lower() == "cpu"
+
+    def _snapped_imgsz(self):
+        """Return the spinbox image size rounded to a multiple of 32.
+
+        SAM 2's Hiera encoder raises in set_image on sizes that aren't (1000 and
+        688, both reachable with the old 24-px step); multiples of 32 work for
+        SAM, SAM 2 and SAM 3. The spinbox is updated so it shows what is used.
+        """
+        value = self.imgsz_spinbox.value()
+        snapped = int(round(value / 32)) * 32
+        snapped = max(self.imgsz_spinbox.minimum(), min(self.imgsz_spinbox.maximum(), snapped))
+        if snapped != value:
+            self.imgsz_spinbox.setValue(snapped)
+        return snapped
+
     def load_model(self):
         """
         Load the selected SAM model using the appropriate Predictor class.
@@ -253,8 +276,13 @@ class DeployPredictorDialog(QDialog):
             self.model_path = self.models[selected_model_name]
             
             # Get imgsz and confidence from UI
-            imgsz = self.imgsz_spinbox.value()
+            imgsz = self._snapped_imgsz()
             conf = self.thresholds_widget.get_uncertainty_thresh()
+
+            # FP16 only off the CPU: MobileSAM doesn't support it, and on the CPU
+            # SAM's .half() cast is ~15x slower than FP32 (sam2.1_t encodes in
+            # 17 s vs 1.1 s).
+            use_fp16 = selected_model_name != "MobileSAM" and not self._on_cpu()
 
             # Create overrides dictionary
             overrides = dict(
@@ -265,7 +293,7 @@ class DeployPredictorDialog(QDialog):
                 conf=conf,
                 device=self.main_window.device,
                 retina_masks=False,
-                quantize=16 if selected_model_name != "MobileSAM" else 32,  # MobileSAM doesn't support quantization
+                quantize=16 if use_fp16 else 32,
                 save=False, 
                 show=False, 
                 save_txt=False
@@ -331,72 +359,115 @@ class DeployPredictorDialog(QDialog):
             self.main_window.status_bar.showMessage("Setting image for predictor...", 2000)
         
         try:
-            # Set the image in the predictor
-            self.loaded_model.set_image(image)
-            
+            # Encode at the spinbox size, then record the size ultralytics
+            # actually used (SAM 3's stride of 14 turns 1024 into 1036).
+            self.loaded_model.args.imgsz = self._snapped_imgsz()
+
+            # no_grad: SAM's parameters keep requires_grad=True and this
+            # ultralytics version's set_image has no inference decorator, so
+            # the features would otherwise hold the encoder's autograd graph
+            # (~1.3 GB for sam2.1_t, vs ~0.1 GB). Not inference_mode: the model
+            # is built lazily inside this call, and weights created there would
+            # be inference tensors.
+            with torch.no_grad():
+                self.loaded_model.set_image(image)
+            self.features_imgsz = tuple(self.loaded_model.imgsz)
+
         except Exception as e:
             QMessageBox.critical(self.annotation_window, "Error Setting Image", f"Error setting image: {e}")
             self.original_image = None
             self.image_path = None
-            
+            self.features_imgsz = None
+            # Don't leave the previous image's features behind to be
+            # prompted against.
+            self.loaded_model.reset_image()
+
         finally:
             # Restore cursor
             QApplication.restoreOverrideCursor()
+
+    def has_image(self, image):
+        """Return True if the cached features were encoded from `image` (the same array object).
+
+        The predictor is shared: batch callers (predict_from_results) and the
+        See Anything tool encode their own images into it, so an interactive
+        tool must check before prompting against features it assumes are its own.
+        """
+        return (self.loaded_model is not None
+                and image is not None
+                and self.original_image is image
+                and getattr(self.loaded_model, 'features', None) is not None)
+
+    def _snapshot_session(self):
+        """Capture the currently encoded image so a batch call can put it back."""
+        features = getattr(self.loaded_model, 'features', None)
+        if self.original_image is None or features is None:
+            return None
+        return self.original_image, self.image_path, features, self.features_imgsz
+
+    def _restore_session(self, session):
+        """Put back an encoded image captured by _snapshot_session.
+
+        Skipped if the batch encoded at a different size: set_image resizes the
+        prompt encoder to match, so the old features would no longer line up.
+        Tools then see has_image() is False and re-encode.
+        """
+        if session is None or self.loaded_model is None:
+            return
+        image, image_path, features, features_imgsz = session
+        if tuple(getattr(self.loaded_model, 'imgsz', None) or ()) != features_imgsz:
+            return
+        self.original_image = image
+        self.image_path = image_path
+        self.loaded_model.features = features
+        self.features_imgsz = features_imgsz
 
     def predict_from_prompts(self, bbox=None, points=None, labels=None):
         """
         Run SAM inference with prompts on the currently set image.
         
-        Optimized version: Bypasses the high-level Ultralytics Predictor loop 
+        Optimized version: Bypasses the high-level Ultralytics Predictor loop
         and directly queries the mask decoder using cached image features.
+
+        Returns None instead of raising when there is no model or image: the
+        SAM tool calls this from hover timers and mouse handlers, where an
+        exception reaches the app's excepthook, which exits the app.
         """
         if self.loaded_model is None:
-            raise RuntimeError("Model not loaded. Call load_model() first.")
-        
+            self.main_window.status_bar.showMessage("No SAM model loaded.", 3000)
+            return None
+
         if self.original_image is None or getattr(self.loaded_model, 'features', None) is None:
-            raise RuntimeError("No image set. Call set_image() first.")
-        
-        # Update the parameters and threshold from the UI
-        self.loaded_model.args.imgsz = self.imgsz_spinbox.value()
+            self.main_window.status_bar.showMessage("No image set for the SAM predictor.", 3000)
+            return None
+
+        # Update the threshold from the UI. The image size is not: prompts are
+        # scaled to features_imgsz, the size these features were encoded at.
         self.loaded_model.args.conf = self.thresholds_widget.get_uncertainty_thresh()
-        
+
         # Make cursor busy while predicting
         QApplication.setOverrideCursor(Qt.WaitCursor)
         self.main_window.status_bar.showMessage("Running fast prediction...", 2000)
-        
+
         try:
-            import torch
             from ultralytics.engine.results import Results
-            
+
             src_shape = self.original_image.shape[:2]
-            dst_shape = (self.loaded_model.args.imgsz, self.loaded_model.args.imgsz)
-            
-            # Determine if we are using SAM 3 (which has a slightly different inference signature)
-            selected_model_name = self.model_combo.currentText()
-            is_sam3 = "SAM 3" in selected_model_name
-            
-            # Run inference directly on the pre-encoded features
+
+            # Run inference directly on the pre-encoded features. SAM 3's
+            # interactive predictor is SAM 2-style (points, boxes, dst_shape),
+            # so one call covers every model.
             with torch.inference_mode():
-                if is_sam3:
-                    # SAM 3 handles geometric prompts (boxes) and text, but not points in the same way
-                    pred_masks, pred_bboxes = self.loaded_model.inference_features(
-                        features=self.loaded_model.features,
-                        src_shape=src_shape,
-                        bboxes=bbox,
-                        labels=labels if bbox is not None else None
-                    )
-                else:
-                    # SAM and SAM 2
-                    pred_masks, pred_bboxes = self.loaded_model.inference_features(
-                        features=self.loaded_model.features,
-                        src_shape=src_shape,
-                        dst_shape=dst_shape,
-                        bboxes=bbox,
-                        points=points,
-                        labels=labels,
-                        multimask_output=False
-                    )
-            
+                pred_masks, pred_bboxes = self.loaded_model.inference_features(
+                    features=self.loaded_model.features,
+                    src_shape=src_shape,
+                    dst_shape=self.features_imgsz,
+                    bboxes=bbox,
+                    points=points,
+                    labels=labels,
+                    multimask_output=False
+                )
+
             # Gracefully handle empty predictions
             if pred_masks is None or len(pred_masks) == 0:
                 return []
@@ -435,23 +506,21 @@ class DeployPredictorDialog(QDialog):
         """
         if self.loaded_model is None or not results_list:
             return results_list
-            
-        import torch
-        
+
+        # Whatever is encoded now (the SAM or See Anything tool's work area) is
+        # put back afterwards; see the finally block.
+        session = self._snapshot_session()
+
         # Set UI state once for the entire batch operation
         QApplication.setOverrideCursor(Qt.WaitCursor)
         self.main_window.status_bar.showMessage("Refining masks with SAM...", 2000)
-        
+
         try:
             output_results = []
-            
-            selected_model_name = self.model_combo.currentText()
-            is_sam3 = "SAM 3" in selected_model_name
-            
-            # Sync parameters once
-            self.loaded_model.args.imgsz = self.imgsz_spinbox.value()
+
+            # Sync the threshold once (set_image syncs the image size)
             self.loaded_model.args.conf = self.thresholds_widget.get_uncertainty_thresh()
-            
+
             for results in results_list:
                 original_image = results.orig_img
                 
@@ -465,42 +534,37 @@ class DeployPredictorDialog(QDialog):
                 if image_changed:
                     # set_image handles the heavy ViT backbone feature extraction
                     self.set_image(original_image, image_path or results.path)
-                
-                if results.boxes is None or len(results.boxes) == 0:
+
+                # A failed set_image has already reported itself and cleared
+                # the features; pass these results through unrefined.
+                if results.boxes is None or len(results.boxes) == 0 or self.features_imgsz is None:
                     output_results.append(results)
                     continue
-                
+
                 # Keep bounding boxes on the GPU as a PyTorch tensor!
-                bboxes = results.boxes.xyxy 
-                
+                bboxes = results.boxes.xyxy
+
                 # --- THE HARDWARE-AGNOSTIC FIX: ADAPTIVE CHUNKING ---
                 current_chunk_size = 256
                 i = 0
                 all_sam_masks = []
-                
+
                 src_shape = original_image.shape[:2]
-                dst_shape = (self.loaded_model.args.imgsz, self.loaded_model.args.imgsz)
-                
+
                 while i < len(bboxes):
                     bbox_chunk = bboxes[i:i + current_chunk_size]
-                    
+
                     try:
-                        # Run fast inference directly on the chunk
+                        # Run fast inference directly on the chunk. One call
+                        # covers SAM, SAM 2 and SAM 3 (see predict_from_prompts).
                         with torch.inference_mode():
-                            if is_sam3:
-                                pred_masks, _ = self.loaded_model.inference_features(
-                                    features=self.loaded_model.features,
-                                    src_shape=src_shape,
-                                    bboxes=bbox_chunk
-                                )
-                            else:
-                                pred_masks, _ = self.loaded_model.inference_features(
-                                    features=self.loaded_model.features,
-                                    src_shape=src_shape,
-                                    dst_shape=dst_shape,
-                                    bboxes=bbox_chunk,
-                                    multimask_output=False
-                                )
+                            pred_masks, _ = self.loaded_model.inference_features(
+                                features=self.loaded_model.features,
+                                src_shape=src_shape,
+                                dst_shape=self.features_imgsz,
+                                bboxes=bbox_chunk,
+                                multimask_output=False
+                            )
                         
                         if pred_masks is not None and len(pred_masks) > 0:
                             # --- THE VRAM SWAP FIX: COMPRESS TO BOOLEAN AND MOVE TO CPU ---
@@ -547,14 +611,16 @@ class DeployPredictorDialog(QDialog):
             return output_results
 
         finally:
-            # Release SAM's cached features + original image so RAM and VRAM
-            # don't accumulate across a long batch of images.  Interactive
-            # point/box prompts go through predict_from_prompts, which holds
-            # its own active session, so this cleanup only affects the batch
-            # post-processing callers.
+            # Release the batch images' features and arrays so RAM and VRAM
+            # don't accumulate across a long batch, then put back what was
+            # encoded before this call. Interactive tools share this predictor:
+            # wiping their work area's features left the SAM tool prompting
+            # against nothing, which raised inside a hover handler and exited
+            # the app.
             try:
                 self.original_image = None
                 self.image_path = None
+                self.features_imgsz = None
                 # reset_image() zeros both .im (preprocessed tensor, GPU) and
                 # .features (ViT output, GPU); covers SAM / SAM2 / SAM3.
                 if hasattr(self.loaded_model, 'reset_image'):
@@ -562,18 +628,21 @@ class DeployPredictorDialog(QDialog):
                         self.loaded_model.reset_image()
                     except Exception:
                         pass
-                for attr in ('features', 'im', 'interm_features', 'prompts', 'dataset'):
+                # Drop references rather than clearing dicts in place: SAM 2/3
+                # features are a dict that may be the session's, restored below.
+                for attr in ('features', 'im', 'interm_features', 'dataset'):
                     if hasattr(self.loaded_model, attr):
                         try:
-                            cur = getattr(self.loaded_model, attr)
-                            if isinstance(cur, dict):
-                                cur.clear()
-                            else:
-                                setattr(self.loaded_model, attr, None)
+                            setattr(self.loaded_model, attr, None)
                         except Exception:
                             pass
+                # Ultralytics pops from .prompts, so it must stay a dict.
+                prompts = getattr(self.loaded_model, 'prompts', None)
+                if isinstance(prompts, dict):
+                    prompts.clear()
             except Exception:
                 pass
+            self._restore_session(session)
             gc.collect()
             try:
                 empty_cache()
@@ -590,6 +659,7 @@ class DeployPredictorDialog(QDialog):
         self.model_path = None
         self.image_path = None
         self.original_image = None
+        self.features_imgsz = None
         # Clear the cache
         gc.collect()
         empty_cache()

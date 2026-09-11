@@ -548,10 +548,10 @@ class SamBatchInferenceTask(AsyncYoloBatchInferenceTask):
             "agnostic_nms": False,
             "retina_masks": task == "segment",
         }
-        # MobileSAM crashes in FP16; force FP32 for it (others stay FP16).
+        # FP32 for MobileSAM (crashes in FP16) and on the CPU (FP16 there is
+        # far slower for SAM); the dialog decides, as for its own calls.
         try:
-            if "MobileSAM" in md.model_combo.currentText():
-                overrides["quantize"] = 32
+            overrides["quantize"] = md.get_quantize()
         except Exception:
             pass
         return overrides
