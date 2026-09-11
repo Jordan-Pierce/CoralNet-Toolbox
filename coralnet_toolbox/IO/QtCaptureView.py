@@ -3,9 +3,10 @@ import datetime
 from pathlib import Path
 
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QFormLayout,
                              QLineEdit, QPushButton, QFileDialog, QApplication,
-                             QMessageBox, QLabel, QButtonGroup, QRadioButton)
+                             QMessageBox, QLabel, QButtonGroup, QRadioButton, QComboBox)
 
 from coralnet_toolbox.Icons import get_window_icon
 
@@ -29,6 +30,31 @@ def get_default_filename():
     return datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + ".png"
 
 
+def clear_transient_overlays(annotation_window):
+    """Clear the active tool's hover overlays so they are not baked into a capture.
+
+    Only the transient crosshair and cursor annotation are removed; the tool stays
+    active and the current selection is left untouched.
+    """
+    tool = annotation_window.tools.get(annotation_window.selected_tool)
+    if not tool:
+        return
+
+    tool.clear_crosshair()
+    tool.clear_cursor_annotation()
+
+
+def capture_high_res_pixmap(widget, scale=2.0):
+    """Render a widget at `scale` times its on-screen pixel density, like a higher-DPR QWidget.grab()."""
+    dpr = widget.devicePixelRatioF() * scale
+    pixmap = QPixmap(widget.size() * dpr)
+    # Scaling comes only from the DPR; a painter transform on top double-scales and crops
+    pixmap.setDevicePixelRatio(dpr)
+    pixmap.fill(Qt.transparent)
+    widget.render(pixmap)
+    return pixmap
+
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Main Dialog Class
 # ----------------------------------------------------------------------------------------------------------------------
@@ -43,7 +69,7 @@ class CaptureView(QDialog):
 
         self.setWindowIcon(get_window_icon("camera.svg"))
         self.setWindowTitle("Capture View")
-        self.resize(600, 500)
+        self.resize(600, 620)
 
         # Main layout for the dialog
         self.layout = QVBoxLayout(self)
@@ -51,6 +77,7 @@ class CaptureView(QDialog):
         # Set up the UI sections
         self.setup_info_layout(parent_layout=self.layout)
         self.setup_source_layout(parent_layout=self.layout)
+        self.setup_scale_layout(parent_layout=self.layout)
         self.setup_destination_layout(parent_layout=self.layout)
         self.setup_output_layout(parent_layout=self.layout)
         # Add a stretch to push the buttons to the bottom of the dialog
@@ -66,6 +93,7 @@ class CaptureView(QDialog):
         self.refresh_defaults()
         self.update_ui_for_source_availability()
         self.update_ui_for_destination()
+        self.update_output_size_label()
 
     def setup_info_layout(self, parent_layout=None):
         """Set up the information layout section."""
@@ -95,11 +123,35 @@ class CaptureView(QDialog):
         self.source_group = QButtonGroup(self)
         self.source_group.addButton(self.application_radio)
         self.source_group.addButton(self.annotation_radio)
+        self.source_group.buttonClicked.connect(self.update_output_size_label)
 
         layout.addWidget(self.application_radio)
         layout.addWidget(self.annotation_radio)
 
         self.application_radio.setChecked(True)
+
+        groupbox.setLayout(layout)
+        parent_layout.addWidget(groupbox)
+
+    def setup_scale_layout(self, parent_layout=None):
+        """Set up the resolution scale layout."""
+        groupbox = QGroupBox("Resolution")
+        layout = QFormLayout()
+
+        self.scale_combo = QComboBox()
+        for scale in (1, 2, 3, 4):
+            self.scale_combo.addItem("1x (Screen)" if scale == 1 else f"{scale}x", float(scale))
+        self.scale_combo.setCurrentIndex(1)
+        self.scale_combo.setToolTip("Multiple of the on-screen resolution to render at. Also used by Ctrl+F1.\n"
+                                    "Text and outlines are redrawn sharper; icons and thumbnails are only enlarged.\n"
+                                    "3x and 4x are for large prints or cropping into a small region.")
+        self.scale_combo.currentIndexChanged.connect(self.update_output_size_label)
+        layout.addRow("Scale:", self.scale_combo)
+
+        self.output_size_label = QLabel()
+        layout.addRow("Output Size:", self.output_size_label)
+
+        layout.addRow(QLabel("<i>Ctrl+F1 captures the Application Window to the clipboard at this scale.</i>"))
 
         groupbox.setLayout(layout)
         parent_layout.addWidget(groupbox)
@@ -193,6 +245,23 @@ class CaptureView(QDialog):
         """Enable the output group box only when saving to disk."""
         self.output_groupbox.setEnabled(self.disk_radio.isChecked())
 
+    def get_scale(self):
+        """Return the selected resolution scale."""
+        return self.scale_combo.currentData()
+
+    def get_source_widget(self):
+        """Return the widget for the currently selected source."""
+        if self.annotation_radio.isChecked():
+            return self.annotation_window.viewport()
+        return self.main_window
+
+    def update_output_size_label(self):
+        """Show the pixel size the capture will have at the selected scale."""
+        widget = self.get_source_widget()
+        size = widget.size() * (widget.devicePixelRatioF() * self.get_scale())
+        megapixels = size.width() * size.height() / 1e6
+        self.output_size_label.setText(f"{size.width()} × {size.height()} px ({megapixels:.1f} MP)")
+
     def browse_output_dir(self):
         """Browse for the output directory."""
         directory = QFileDialog.getExistingDirectory(self,
@@ -226,23 +295,12 @@ class CaptureView(QDialog):
         return os.path.abspath(os.path.join(directory, filename))
 
     def clear_transient_overlays(self):
-        """Clear the active tool's hover overlays so they are not baked into the capture.
-
-        Only the transient crosshair and cursor annotation are removed; the tool stays
-        active and the current selection is left untouched.
-        """
-        tool = self.annotation_window.tools.get(self.annotation_window.selected_tool)
-        if not tool:
-            return
-
-        tool.clear_crosshair()
-        tool.clear_cursor_annotation()
+        """Clear the active tool's hover overlays so they are not baked into the capture."""
+        clear_transient_overlays(self.annotation_window)
 
     def grab_pixmap(self):
-        """Grab the pixmap for the currently selected source."""
-        if self.annotation_radio.isChecked():
-            return self.annotation_window.viewport().grab()
-        return self.main_window.grab()
+        """Grab the pixmap for the currently selected source at the selected scale."""
+        return capture_high_res_pixmap(self.get_source_widget(), self.get_scale())
 
     def run_capture_process(self):
         """Run the capture process for the selected source and destination."""
@@ -273,6 +331,7 @@ class CaptureView(QDialog):
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             pixmap = self.grab_pixmap()
+            source_name += f" ({pixmap.width()}x{pixmap.height()})"
 
             if to_disk:
                 os.makedirs(os.path.dirname(output_path), exist_ok=True)
