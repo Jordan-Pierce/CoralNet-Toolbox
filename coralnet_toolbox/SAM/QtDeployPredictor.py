@@ -61,10 +61,11 @@ class DeployPredictorDialog(QDialog):
         # Setup the info layout
         self.setup_info_layout()
 
+        # Equal-width columns; the last box in each stretches so both end level
         columns = QHBoxLayout()
         left, right = QVBoxLayout(), QVBoxLayout()
-        columns.addLayout(left)
-        columns.addLayout(right)
+        columns.addLayout(left, 1)
+        columns.addLayout(right, 1)
         root.addLayout(columns)
 
         self.layout = left
@@ -74,14 +75,14 @@ class DeployPredictorDialog(QDialog):
         self.setup_buttons_layout()
         # Setup the status layout
         self.setup_status_layout()
-        left.addStretch()
+        left.setStretch(left.count() - 1, 1)
 
         self.layout = right
         # Setup the parameter layout
         self.setup_parameters_layout()
         # Setup the thresholds layout
         self.setup_thresholds_layout()
-        right.addStretch()
+        right.setStretch(right.count() - 1, 1)
 
     def showEvent(self, event):
         """
@@ -240,6 +241,8 @@ class DeployPredictorDialog(QDialog):
         layout = QVBoxLayout()
 
         self.status_bar = QLabel("No model loaded")
+        # Top-aligned: this box stretches to level the columns
+        self.status_bar.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         layout.addWidget(self.status_bar)
 
         group_box.setLayout(layout)

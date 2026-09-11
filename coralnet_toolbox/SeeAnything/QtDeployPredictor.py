@@ -63,10 +63,11 @@ class DeployPredictorDialog(QDialog):
         # Setup the info layout
         self.setup_info_layout()
 
+        # Equal-width columns; the last box in each stretches so both end level
         columns = QHBoxLayout()
         left, right = QVBoxLayout(), QVBoxLayout()
-        columns.addLayout(left)
-        columns.addLayout(right)
+        columns.addLayout(left, 1)
+        columns.addLayout(right, 1)
         root.addLayout(columns)
 
         self.layout = left
@@ -76,16 +77,23 @@ class DeployPredictorDialog(QDialog):
         self.setup_parameters_layout()
         # Setup the SAM layout
         self.setup_sam_layout()
-        left.addStretch()
+        left.setStretch(left.count() - 1, 1)
 
         self.layout = right
         # Setup the thresholds layout
         self.setup_thresholds_layout()
+        right.setStretch(right.count() - 1, 1)
+
+        # Actions and status side by side along the bottom
+        footer = QHBoxLayout()
+        root.addLayout(footer)
+        self.layout = footer
         # Setup the buttons layout
         self.setup_buttons_layout()
         # Setup the status layout
         self.setup_status_layout()
-        right.addStretch()
+        footer.setStretch(0, 1)
+        footer.setStretch(1, 1)
 
     def showEvent(self, event):
         """
