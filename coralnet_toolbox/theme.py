@@ -53,6 +53,7 @@ ACCENT_HOVER_COLOR = QColor("#5090ff")
 ACCENT_SOFT_COLOR = QColor("#2347a0")
 ACCENT_ALT_COLOR = QColor("#2e4a90")
 DISABLED_COLOR = QColor("#555870")
+ATTENTION_COLOR = QColor("#ffd479")        # work that still needs a human: unverified, close calls
 SHADOW_COLOR = QColor(0, 0, 0, 80)
 
 FONT_STACK = '"JetBrains Mono", "Cascadia Code", "Fira Code", monospace'
