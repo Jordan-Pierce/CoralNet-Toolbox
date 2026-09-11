@@ -45,7 +45,7 @@ class DeployPredictorDialog(QDialog):
 
         self.setWindowIcon(get_window_icon("eye.svg"))
         self.setWindowTitle("See Anything Deploy Model")
-        self.resize(400, 325)
+        self.resize(800, 325)
 
         # Initialize instance variables
         self.imgsz = 1024
@@ -56,23 +56,36 @@ class DeployPredictorDialog(QDialog):
 
         self.class_mapping = {}
 
-        # Create the layout
-        self.layout = QVBoxLayout(self)
-
+        # Information across the top, then two columns (landscape);
+        # self.layout is the layout being filled
+        root = QVBoxLayout(self)
+        self.layout = root
         # Setup the info layout
         self.setup_info_layout()
+
+        columns = QHBoxLayout()
+        left, right = QVBoxLayout(), QVBoxLayout()
+        columns.addLayout(left)
+        columns.addLayout(right)
+        root.addLayout(columns)
+
+        self.layout = left
         # Setup the model layout
         self.setup_models_layout()
         # Setup the parameter layout
         self.setup_parameters_layout()
         # Setup the SAM layout
         self.setup_sam_layout()
+        left.addStretch()
+
+        self.layout = right
         # Setup the thresholds layout
         self.setup_thresholds_layout()
         # Setup the buttons layout
         self.setup_buttons_layout()
         # Setup the status layout
         self.setup_status_layout()
+        right.addStretch()
 
     def showEvent(self, event):
         """

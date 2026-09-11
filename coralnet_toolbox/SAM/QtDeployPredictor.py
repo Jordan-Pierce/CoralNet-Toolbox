@@ -20,6 +20,7 @@ from ultralytics.models.sam import SAM2Predictor, SAM3Predictor
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Common import ThresholdsWidget
 from coralnet_toolbox.Icons import get_icon, get_window_icon
+from coralnet_toolbox.SAM import SharedWeights
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -38,7 +39,7 @@ class DeployPredictorDialog(QDialog):
 
         self.setWindowIcon(get_window_icon("wizard.svg"))
         self.setWindowTitle("SAM Deploy Model")
-        self.resize(400, 325)
+        self.resize(800, 325)
 
         # Initialize instance variables
         self.imgsz = 640 if not cuda_is_available() else 1024  # Default to smaller size on CPU for performance
@@ -50,22 +51,37 @@ class DeployPredictorDialog(QDialog):
         # Prompts must be scaled to this, not to the spinbox, which can change
         # after encoding and which ultralytics rounds per model stride.
         self.features_imgsz = None
+        # (weights, device, quantize) of the loaded model; see SharedWeights
+        self.weights_key = None
 
-        # Create the layout
-        self.layout = QVBoxLayout(self)
-
+        # Information across the top, then two columns (landscape);
+        # self.layout is the layout being filled
+        root = QVBoxLayout(self)
+        self.layout = root
         # Setup the info layout
         self.setup_info_layout()
+
+        columns = QHBoxLayout()
+        left, right = QVBoxLayout(), QVBoxLayout()
+        columns.addLayout(left)
+        columns.addLayout(right)
+        root.addLayout(columns)
+
+        self.layout = left
         # Setup the model layout
         self.setup_models_layout()
-        # Setup the parameter layout
-        self.setup_parameters_layout()
-        # Setup the thresholds layout
-        self.setup_thresholds_layout()
         # Setup the buttons layout
         self.setup_buttons_layout()
         # Setup the status layout
         self.setup_status_layout()
+        left.addStretch()
+
+        self.layout = right
+        # Setup the parameter layout
+        self.setup_parameters_layout()
+        # Setup the thresholds layout
+        self.setup_thresholds_layout()
+        right.addStretch()
 
     def showEvent(self, event):
         """
@@ -310,8 +326,14 @@ class DeployPredictorDialog(QDialog):
                 # SAM, MobileSAM use standard SAMPredictor
                 self.loaded_model = SAMPredictor(overrides=overrides)
 
+            # The model itself is built on the first set_image, unless the
+            # Generator dialog already has one for these weights to lend.
+            self.weights_key = (self.model_path, self.main_window.device, overrides['quantize'])
+            shared = self._adopt_shared_weights()
+
             progress_bar.finish_progress()
-            self.status_bar.setText(f"Model loaded: {self.model_path}")
+            self.status_bar.setText(f"Model loaded: {self.model_path}"
+                                    + (" (weights shared with SAM Generator)" if shared else ""))
             QMessageBox.information(self, "Model Loaded", "Model loaded successfully")
             # The dialog has done its job; leaving it up meant it reappeared
             # behind the message box and had to be dismissed a second time.
@@ -322,6 +344,7 @@ class DeployPredictorDialog(QDialog):
             QMessageBox.critical(self, "Error Loading Model", f"Error loading model: {e}")
             self.loaded_model = None
             self.model_path = None
+            self.weights_key = None
 
         finally:
             # Restore cursor
@@ -329,6 +352,38 @@ class DeployPredictorDialog(QDialog):
             # Stop the progress bar
             progress_bar.stop_progress()
             progress_bar.close()
+
+    def _adopt_shared_weights(self):
+        """Use the Generator dialog's model if it has built one for these weights.
+
+        Checked at load and again before the first encode, because either
+        dialog may be loaded first and this one builds its model lazily.
+
+        Returns:
+            bool: True if the model is now a shared one.
+        """
+        if self.loaded_model is None or self.loaded_model.model is not None:
+            return False
+        module = SharedWeights.get(*self.weights_key)
+        if module is None:
+            return False
+        self.loaded_model.setup_model(model=module, verbose=False)
+        return True
+
+    def _sync_model_imgsz(self):
+        """Set the model's input size back to the one the cached features were encoded at.
+
+        The model can be shared with the Generator dialog (see SharedWeights),
+        whose predictor sets its own input size on every image. The prompt
+        encoder reads that size, so prompts after a generator run at another
+        Image Size would otherwise be embedded for the wrong grid.
+        """
+        model = getattr(self.loaded_model, 'model', None)
+        if model is None or self.features_imgsz is None:
+            return
+        encoder = getattr(model, 'prompt_encoder', None) or getattr(model, 'sam_prompt_encoder', None)
+        if encoder is not None and tuple(encoder.input_image_size) != tuple(self.features_imgsz):
+            model.set_imgsz(list(self.features_imgsz))
 
     def set_image(self, image, image_path):
         """
@@ -363,15 +418,13 @@ class DeployPredictorDialog(QDialog):
             # actually used (SAM 3's stride of 14 turns 1024 into 1036).
             self.loaded_model.args.imgsz = self._snapped_imgsz()
 
-            # no_grad: SAM's parameters keep requires_grad=True and this
-            # ultralytics version's set_image has no inference decorator, so
-            # the features would otherwise hold the encoder's autograd graph
-            # (~1.3 GB for sam2.1_t, vs ~0.1 GB). Not inference_mode: the model
-            # is built lazily inside this call, and weights created there would
-            # be inference tensors.
-            with torch.no_grad():
-                self.loaded_model.set_image(image)
+            # set_image runs under inference mode (ultralytics >= 8.4.147), so
+            # the features don't hold the encoder's autograd graph, and it
+            # builds the model on first use unless one is borrowed here.
+            self._adopt_shared_weights()
+            self.loaded_model.set_image(image)
             self.features_imgsz = tuple(self.loaded_model.imgsz)
+            SharedWeights.register(*self.weights_key, self.loaded_model.model)
 
         except Exception as e:
             QMessageBox.critical(self.annotation_window, "Error Setting Image", f"Error setting image: {e}")
@@ -445,10 +498,8 @@ class DeployPredictorDialog(QDialog):
         # scaled to features_imgsz, the size these features were encoded at.
         self.loaded_model.args.conf = self.thresholds_widget.get_uncertainty_thresh()
 
-        # Make cursor busy while predicting
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        self.main_window.status_bar.showMessage("Running fast prediction...", 2000)
-
+        # No wait cursor or status message: this runs on every hover update,
+        # takes milliseconds, and setting them each time made the cursor flicker.
         try:
             from ultralytics.engine.results import Results
 
@@ -458,6 +509,7 @@ class DeployPredictorDialog(QDialog):
             # interactive predictor is SAM 2-style (points, boxes, dst_shape),
             # so one call covers every model.
             with torch.inference_mode():
+                self._sync_model_imgsz()
                 pred_masks, pred_bboxes = self.loaded_model.inference_features(
                     features=self.loaded_model.features,
                     src_shape=src_shape,
@@ -492,9 +544,6 @@ class DeployPredictorDialog(QDialog):
                                  "Prediction Error",
                                  f"Error predicting: {e}")
             return None
-        finally:
-            # Restore cursor
-            QApplication.restoreOverrideCursor()
 
     def predict_from_results(self, results_list, image_path=None):
         """
@@ -558,6 +607,7 @@ class DeployPredictorDialog(QDialog):
                         # Run fast inference directly on the chunk. One call
                         # covers SAM, SAM 2 and SAM 3 (see predict_from_prompts).
                         with torch.inference_mode():
+                            self._sync_model_imgsz()
                             pred_masks, _ = self.loaded_model.inference_features(
                                 features=self.loaded_model.features,
                                 src_shape=src_shape,
@@ -660,7 +710,9 @@ class DeployPredictorDialog(QDialog):
         self.image_path = None
         self.original_image = None
         self.features_imgsz = None
-        # Clear the cache
+        self.weights_key = None
+        # Clear the cache (a model shared with the Generator dialog stays
+        # loaded there until that dialog lets it go too)
         gc.collect()
         empty_cache()
         # Untoggle all tools

@@ -117,7 +117,11 @@ torchvision = "*"
 cuda-version = "12.9.*"
 
 # --- vision / ML ---
-ultralytics = ">=8.4.80"
+# 8.4.147: SAM's segment-everything encodes each crop once (was once per 64
+# prompts) and takes min_mask_region_area, crop-layer prompts land in the right
+# place, set_image runs without autograd, and SAM 3 masks threshold correctly.
+# The SAM Generator dialog passes generate() keywords older versions reject.
+ultralytics = ">=8.4.147"
 open-clip-torch = ">=2.20.0"
 transformers = ">=5.0.0"
 timm = ">=1.0.0"

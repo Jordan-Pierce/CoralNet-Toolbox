@@ -89,12 +89,19 @@ class SAMTool(Tool):
         # Targets will remap the mask to their class IDs before applying.
         self.post_prediction_callback = None
 
-        # --- THE FIX: Hover Debounce Timer ---
-        # Debounce heavy hover predictions so rapid mouseMoveEvents don't flood the UI thread
+        # Hover predictions: latest request wins. A mouse move only records the
+        # position and, if no prediction is pending, queues one on a zero-delay
+        # timer, which fires once the moves already queued have been handled.
+        # Moves that arrive while a prediction runs therefore collapse into the
+        # next one, which uses the newest position: at most one pending, stale
+        # positions dropped, and no fixed delay before the preview follows.
         self.hover_timer = QTimer()
         self.hover_timer.setSingleShot(True)
+        self.hover_timer.setInterval(0)
         self.hover_timer.timeout.connect(self._on_hover_timeout)
-        self.debounce_ms = 10  # Wait 10ms after the mouse stops before predicting
+        # Image pixel the hover preview was last predicted at; moving within
+        # one pixel (at high zoom) would re-run the same prompt
+        self.hover_pixel = None
 
     def activate(self):
         """
@@ -217,21 +224,32 @@ class SAMTool(Tool):
 
     def _on_hover_timeout(self):
         """
-        Triggered when the mouse stops moving for 'debounce_ms'.
-        Safe to run heavy predictions here without lagging the UI.
+        Run the queued prediction for the latest pointer position (see hover_timer).
+
+        Previews either the box being dragged out or, before any prompt is
+        placed, a point prompt at the pointer.
         """
         if not self.active or not self.working_area or not self.hover_pos:
             return
 
-        # The pointer can leave during the debounce; predicting anyway would
+        # The pointer can leave before this runs; predicting anyway would
         # re-add the temp annotation leave() just cleared.
         if not self._pointer_over_window():
             return
 
+        if self.drawing_rectangle:
+            if self.end_point is not None:
+                self.create_temp_annotation(self.end_point)
         # Hover previews only until a prompt is placed (see create_temp_annotation)
-        if not self.has_active_prompts:
+        elif not self.has_active_prompts:
+            pixel = (int(self.hover_pos.x()), int(self.hover_pos.y()))
+            if pixel == self.hover_pixel:
+                return
             self.create_temp_annotation(self.hover_pos)
-            self.annotation_window.scene.update()
+            self.hover_pixel = pixel
+        else:
+            return
+        self.annotation_window.scene.update()
         
     def set_custom_working_area(self, start_point, end_point):
         """
@@ -351,6 +369,7 @@ class SAMTool(Tool):
             self.temp_annotation.delete()
             self.temp_annotation = None
         self.preview_prediction = None
+        self.hover_pixel = None
 
         # Force scene update to ensure graphics are removed
         self.annotation_window.scene.update()
@@ -416,115 +435,102 @@ class SAMTool(Tool):
         if not self._ensure_predictor_image():
             return
 
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
+        # No wait cursor: this runs for every hover update and takes
+        # milliseconds, and setting one each time made the cursor flicker.
 
-        try:
-            # Prepare points and bounding box for SAM
-            positive = [[point.x(), point.y()] for point in self.positive_points]
-            negative = [[point.x(), point.y()] for point in self.negative_points]
-            bbox = None
-            points = None
-            labels = None
+        # Prepare points and bounding box for SAM
+        positive = [[point.x(), point.y()] for point in self.positive_points]
+        negative = [[point.x(), point.y()] for point in self.negative_points]
+        bbox = None
+        points = None
+        labels = None
 
-            # Check if we have a rectangle (bbox)
-            if self.start_point and self.end_point and self.top_left is not None and self.bottom_right is not None:
-                bbox = [self.top_left.x(), self.top_left.y(), self.bottom_right.x(), self.bottom_right.y()]
+        # Check if we have a rectangle (bbox)
+        if self.start_point and self.end_point and self.top_left is not None and self.bottom_right is not None:
+            bbox = [self.top_left.x(), self.top_left.y(), self.bottom_right.x(), self.bottom_right.y()]
 
-            # Add the hover point as a positive point only before any prompt is
-            # placed (drawing a box counts as placed)
-            if scene_pos and not self.has_active_prompts:
-                # Adjust hover point relative to working area
-                working_area_top_left = self.working_area.rect.topLeft()
-                adjusted_pos = QPointF(scene_pos.x() - working_area_top_left.x(),
-                                       scene_pos.y() - working_area_top_left.y())
-                # Add to positive points for prediction
-                positive.append([adjusted_pos.x(), adjusted_pos.y()])
+        # Add the hover point as a positive point only before any prompt is
+        # placed (drawing a box counts as placed)
+        if scene_pos and not self.has_active_prompts:
+            # Adjust hover point relative to working area
+            working_area_top_left = self.working_area.rect.topLeft()
+            adjusted_pos = QPointF(scene_pos.x() - working_area_top_left.x(),
+                                   scene_pos.y() - working_area_top_left.y())
+            # Add to positive points for prediction
+            positive.append([adjusted_pos.x(), adjusted_pos.y()])
 
-            # Check if we have points
-            all_points = positive + negative
-            # --- THE FIX: Format as a single batch item for SAM ---
-            # Ultralytics expects batched inputs (list of lists) to combine prompts for ONE object
-            bboxes_input = [bbox] if bbox is not None else None
-            points_input = [all_points] if len(all_points) > 0 else None
-            labels_input = [[1] * len(positive) + [0] * len(negative)] if len(all_points) > 0 else None
+        # Check if we have points
+        all_points = positive + negative
+        # --- THE FIX: Format as a single batch item for SAM ---
+        # Ultralytics expects batched inputs (list of lists) to combine prompts for ONE object
+        bboxes_input = [bbox] if bbox is not None else None
+        points_input = [all_points] if len(all_points) > 0 else None
+        labels_input = [[1] * len(positive) + [0] * len(negative)] if len(all_points) > 0 else None
 
-            if points_input is not None or bboxes_input is not None:
-                results = self.sam_dialog.predict_from_prompts(
-                    bbox=bboxes_input, 
-                    points=points_input, 
-                    labels=labels_input
-                )
-            else:
-                # No prompts at all
-                QApplication.restoreOverrideCursor()
+        if points_input is not None or bboxes_input is not None:
+            results = self.sam_dialog.predict_from_prompts(
+                bbox=bboxes_input, 
+                points=points_input, 
+                labels=labels_input
+            )
+        else:
+            # No prompts at all
+            return
+
+        # Predict the mask from prompts
+        # Note: results is already obtained from the conditional above
+
+        if not results or len(results) == 0:
+            return
+
+        # Get the first Results object from the list returned by Ultralytics
+        result = results[0]
+        
+        if not result.boxes:
+            return
+
+        # Safely handle confidence tensor/array (CPU/GPU/MPS-safe)
+        conf = result.boxes.conf
+        if isinstance(conf, torch.Tensor):
+            if conf.numel() == 0:
                 return
-
-            # Predict the mask from prompts
-            # Note: results is already obtained from the conditional above
-
-            if not results or len(results) == 0:
-                QApplication.restoreOverrideCursor()
+            # Skip low confidence predictions for temporary annotations
+            if conf[0].item() < self.main_window.get_uncertainty_thresh():
                 return
-
-            # Get the first Results object from the list returned by Ultralytics
-            result = results[0]
-            
-            if not result.boxes:
-                QApplication.restoreOverrideCursor()
+            top1_index = int(torch.argmax(conf).item())
+        else:
+            # assume numpy/sequence
+            conf_arr = np.asarray(conf)
+            if conf_arr.size == 0:
                 return
-
-            # Safely handle confidence tensor/array (CPU/GPU/MPS-safe)
-            conf = result.boxes.conf
-            if isinstance(conf, torch.Tensor):
-                if conf.numel() == 0:
-                    QApplication.restoreOverrideCursor()
-                    return
-                # Skip low confidence predictions for temporary annotations
-                if conf[0].item() < self.main_window.get_uncertainty_thresh():
-                    QApplication.restoreOverrideCursor()
-                    return
-                top1_index = int(torch.argmax(conf).item())
-            else:
-                # assume numpy/sequence
-                conf_arr = np.asarray(conf)
-                if conf_arr.size == 0:
-                    QApplication.restoreOverrideCursor()
-                    return
-                if conf_arr[0] < self.main_window.get_uncertainty_thresh():
-                    QApplication.restoreOverrideCursor()
-                    return
-                top1_index = int(np.argmax(conf_arr))
-
-            mask_tensor = result.masks.data[top1_index]
-
-            # For temporary annotations, don't use Mask output type (convert to Polygon for speed)
-            # Save the desired output type and temporarily override it if needed
-            saved_output_type = self.output_type
-            if self.output_type == "Mask":
-                self.output_type = "Polygon"
-            
-            # Create temporary annotation (Rectangle or Polygon, never Mask)
-            self.temp_annotation = self.create_annotation_from_mask(mask_tensor)
-            
-            # Restore the desired output type for final annotation
-            self.output_type = saved_output_type
-            
-            if not self.temp_annotation:
-                QApplication.restoreOverrideCursor()
+            if conf_arr[0] < self.main_window.get_uncertainty_thresh():
                 return
+            top1_index = int(np.argmax(conf_arr))
 
-            # Keep the prediction itself so Space can commit exactly this
-            self.preview_prediction = (mask_tensor, float(conf[top1_index]))
+        mask_tensor = result.masks.data[top1_index]
 
-            # Mark selected so it gets the dashed selected-state pen
-            self.temp_annotation.is_selected = True
-            self.temp_annotation.render_mode = RenderMode.FULL
-            self.temp_annotation.create_graphics_item(self.annotation_window.scene, force_hydrate=True)
+        # For temporary annotations, don't use Mask output type (convert to Polygon for speed)
+        # Save the desired output type and temporarily override it if needed
+        saved_output_type = self.output_type
+        if self.output_type == "Mask":
+            self.output_type = "Polygon"
+        
+        # Create temporary annotation (Rectangle or Polygon, never Mask)
+        self.temp_annotation = self.create_annotation_from_mask(mask_tensor)
+        
+        # Restore the desired output type for final annotation
+        self.output_type = saved_output_type
+        
+        if not self.temp_annotation:
+            return
 
-        finally:
-            # Always restore cursor
-            QApplication.restoreOverrideCursor()
+        # Keep the prediction itself so Space can commit exactly this
+        self.preview_prediction = (mask_tensor, float(conf[top1_index]))
+
+        # Mark selected so it gets the dashed selected-state pen
+        self.temp_annotation.is_selected = True
+        self.temp_annotation.render_mode = RenderMode.FULL
+        self.temp_annotation.create_graphics_item(self.annotation_window.scene, force_hydrate=True)
 
     def refresh_label_preview(self):
         """Recolor the prompt rectangle and hover preview for the new label.
@@ -549,9 +555,14 @@ class SAMTool(Tool):
 
         self.annotation_window.scene.update()
 
-    def display_rectangle(self):
+    def display_rectangle(self, predict=True):
         """
         Display the rectangle during drawing.
+
+        Args:
+            predict (bool): Also update the segmentation preview for the box.
+                Mouse moves pass False and queue the prediction instead (see
+                hover_timer), so a drag doesn't run one per move.
         """
         if not self.working_area or not self.start_point or not self.end_point:
             return
@@ -592,7 +603,8 @@ class SAMTool(Tool):
         self.annotation_window.scene.addItem(self.rectangle_graphics)
 
         # Update the temporary annotation to show segmentation preview
-        self.create_temp_annotation(self.end_point)
+        if predict:
+            self.create_temp_annotation(self.end_point)
 
     def mousePressEvent(self, event: QMouseEvent):
         """
@@ -700,17 +712,20 @@ class SAMTool(Tool):
         if not self.working_area:
             return
 
-        # Update rectangle during drawing
+        # Update rectangle during drawing; its preview is queued like a hover's
         if self.drawing_rectangle and self.start_point:
             self.end_point = scene_pos
-            self.display_rectangle()
+            self.display_rectangle(predict=False)
+            if not self.hover_timer.isActive():
+                self.hover_timer.start()
         # Create hover annotation when not drawing rectangle
         elif not self.drawing_rectangle and self.annotation_window.cursorInWindow(event.pos()):
             # Hover previews only until a prompt is placed; after that the
-            # preview is the placed prompts and doesn't follow the cursor
-            if not self.has_active_prompts:
-                # Reset/start the hover debounce timer - prediction will run when mouse stops
-                self.hover_timer.start(self.debounce_ms)
+            # preview is the placed prompts and doesn't follow the cursor.
+            # Queue a prediction unless one is pending; it will use the
+            # newest hover_pos when it runs.
+            if not self.has_active_prompts and not self.hover_timer.isActive():
+                self.hover_timer.start()
 
         # Remove hover annotation when cursor leaves window
         elif not self.annotation_window.cursorInWindow(event.pos()):

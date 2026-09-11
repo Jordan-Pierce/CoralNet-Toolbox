@@ -62,7 +62,7 @@ class DeployGeneratorDialog(QDialog):
 
         self.setWindowIcon(get_window_icon("eye.svg"))
         self.setWindowTitle("See Anything (YOLOE) Generator (Ctrl + 6)")
-        self.resize(800, 800)  # Increased size to accommodate the horizontal layout
+        self.resize(1200, 700)  # Landscape, to fit the two panels side by side
 
         self.deploy_model_dialog = None
         self.last_selected_label_code = None

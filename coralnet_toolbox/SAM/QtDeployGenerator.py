@@ -9,12 +9,14 @@ import torch
 from torch.cuda import empty_cache
 from torch.cuda import is_available as is_cuda_available
 
-from ultralytics import SAM, FastSAM
+from ultralytics import FastSAM
+from ultralytics.models.sam import Predictor as SAMPredictor
+from ultralytics.models.sam import SAM2Predictor, SAM3Predictor
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout, QHBoxLayout,
-                             QLabel, QMessageBox, QPushButton, QSpinBox,
-                             QVBoxLayout, QGroupBox)
+from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QDoubleSpinBox, QFormLayout,
+                             QHBoxLayout, QLabel, QMessageBox, QPushButton, QSpinBox,
+                             QToolButton, QVBoxLayout, QGroupBox, QWidget)
 
 from coralnet_toolbox.Results import ResultsProcessor
 from coralnet_toolbox.Results import MapResults
@@ -26,13 +28,76 @@ from coralnet_toolbox.utilities import bgr_to_qimage, decode_video_frame
 from coralnet_toolbox.Common import ThresholdsWidget
 
 from coralnet_toolbox.Icons import get_icon, get_window_icon
+from coralnet_toolbox.SAM import SharedWeights
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+
+# Segment-everything settings for SAM models, as Predictor.generate() keywords.
+# FastSAM is a YOLO model and takes none of them.
+#   points_stride           prompt points per side of the grid (16 -> 256 points)
+#   crop_n_layers           extra passes over zoomed-in crops: layer n adds 4**n
+#                           crops, each encoded at the full input size
+#   conf_thres              minimum predicted mask quality (IoU)
+#   stability_score_thresh  minimum mask stability under threshold changes
+#   min_mask_region_area    islands and holes smaller than this (original-image
+#                           pixels) are removed from each mask
+GENERATE_PRESETS = {
+    "Fast": dict(points_stride=16, crop_n_layers=0, conf_thres=0.88,
+                 stability_score_thresh=0.95, min_mask_region_area=0),
+    "Balanced": dict(points_stride=32, crop_n_layers=0, conf_thres=0.86,
+                     stability_score_thresh=0.92, min_mask_region_area=100),
+    # One crop layer, so each quarter of the image is encoded at the full input
+    # size and small organisms cover 2x the pixels, and a denser grid, so more
+    # of them get a prompt point of their own.
+    "Small objects": dict(points_stride=48, crop_n_layers=1, conf_thres=0.82,
+                          stability_score_thresh=0.90, min_mask_region_area=25),
+}
+CUSTOM_PRESET = "Custom"
+DEFAULT_PRESET = "Balanced"
+
+# Points per side is halved for each crop layer. A layer-1 crop covers about a
+# quarter of the image, so the absolute point density stays the same and the
+# crop layer spends its cost on resolution rather than on 4x the prompts.
+CROP_DOWNSCALE_FACTOR = 2
 
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
+
+
+class SegmentEverything:
+    """Callable stand-in for ultralytics.SAM that runs Predictor.generate() with the dialog's settings.
+
+    SAM()(img, crop_n_layers=1) is rejected: Model.predict checks every
+    keyword against the ultralytics config, which has none of generate()'s.
+    The predictor's own __call__ hands extra keywords through inference() to
+    generate() when no prompts are set, so this calls the predictor instead.
+
+    It takes the same keywords as SAM() so the batch inference worker can call
+    it unchanged. conf, iou and imgsz are applied; the rest are ignored, since
+    the device and precision were fixed when the model was loaded.
+    """
+
+    _ARGS = ('conf', 'iou', 'imgsz')
+
+    def __init__(self, predictor, get_generate_kwargs):
+        self.predictor = predictor
+        # Read on each call. The batch worker calls from its own thread, so the
+        # dialog hands over a plain dict it rebuilds on the GUI thread rather
+        # than having this read the widgets.
+        self.get_generate_kwargs = get_generate_kwargs
+
+    @property
+    def model(self):
+        return self.predictor.model
+
+    def __call__(self, source, stream=False, **kwargs):
+        for key in self._ARGS:
+            if key in kwargs:
+                setattr(self.predictor.args, key, kwargs[key])
+        return self.predictor(source, stream=stream, **self.get_generate_kwargs())
 
 
 class DeployGeneratorDialog(QDialog):
@@ -57,36 +122,54 @@ class DeployGeneratorDialog(QDialog):
 
         self.setWindowIcon(get_window_icon("wizard.svg"))
         self.setWindowTitle("SAM Generator (Ctrl + 5)")
-        self.resize(400, 325)
+        self.resize(800, 400)
 
         # Initialize variables
         self.imgsz = 640 if not is_cuda_available() else 1024
         self.iou_thresh = 0.20
         self.uncertainty_thresh = 0.30
 
-        self.task = 'detect'
+        self.task = 'segment'
         self.max_detect = 300
         self.loaded_model = None
         self.model_path = None
         self.class_mapping = None
         self.model_type = None  # Either 'fastSAM' or 'sam'
         self._oom_skipped = 0  # Inputs skipped for GPU out-of-memory in the current predict()
+        # Predictor.generate() keywords from the Segment Everything group,
+        # rebuilt whenever a setting changes (see SegmentEverything)
+        self.generate_kwargs = {}
 
-        # Create the layout
-        self.layout = QVBoxLayout(self)
-
+        # Information across the top, then two columns (landscape);
+        # self.layout is the layout being filled
+        root = QVBoxLayout(self)
+        self.layout = root
         # Setup the info layout
         self.setup_info_layout()
+
+        columns = QHBoxLayout()
+        left, right = QVBoxLayout(), QVBoxLayout()
+        columns.addLayout(left)
+        columns.addLayout(right)
+        root.addLayout(columns)
+
+        self.layout = left
         # Setup the model layout
         self.setup_models_layout()
         # Setup the parameter layout
         self.setup_parameters_layout()
+        # Setup the segment-everything layout
+        self.setup_generate_layout()
+        left.addStretch()
+
+        self.layout = right
         # Setup the thresholds layout
         self.setup_thresholds_layout()
         # Setup the buttons layout
         self.setup_buttons_layout()
         # Setup the status layout
         self.setup_status_layout()
+        right.addStretch()
 
     def showEvent(self, event):
         """
@@ -153,9 +236,7 @@ class DeployGeneratorDialog(QDialog):
             self.model_combo.addItem(model_name)
 
         # Set default to MobileSAM (fastest startup)
-        models_list = list(self.models.keys())
-        if "MobileSAM" in models_list:
-            self.model_combo.setCurrentIndex(models_list.index("SAM 2.1 Tiny"))
+        self.model_combo.setCurrentText("MobileSAM")
         self.model_combo.setToolTip("Choose a SAM variant for segment-everything inference.\nFastSAM: Fastest, lower accuracy.\nSAM 2.1/3: Slower, higher quality segmentation.\nMobileSAM: Lightweight, good balance.")
 
         layout.addWidget(QLabel("Select Model:"))
@@ -183,6 +264,7 @@ class DeployGeneratorDialog(QDialog):
         # Task dropdown
         self.use_task_dropdown = QComboBox()
         self.use_task_dropdown.addItems(["detect", "segment"])
+        self.use_task_dropdown.setCurrentText(self.task)
         self.use_task_dropdown.currentIndexChanged.connect(self.update_task)
         self.use_task_dropdown.setToolTip("Task mode for SAM.\nDetect: Bounding boxes only.\nSegment: Full instance segmentation masks.")
         layout.addRow("Task:", self.use_task_dropdown)
@@ -197,7 +279,10 @@ class DeployGeneratorDialog(QDialog):
 
         # Image size control
         self.imgsz_spinbox = QSpinBox()
-        self.imgsz_spinbox.setRange(640, 65536)
+        # Same cap as the Predictor dialog. SAM's cost grows at least with the
+        # square of this, and every crop layer re-encodes at it; large images
+        # are better covered with work areas than with one huge input.
+        self.imgsz_spinbox.setRange(640, 2048)
         self.imgsz_spinbox.setSingleStep(32)
         self.imgsz_spinbox.setValue(self.imgsz)
         self.imgsz_spinbox.setToolTip("Input image size for SAM.\nLarger sizes improve segmentation quality but increase processing time.\n"
@@ -206,7 +291,147 @@ class DeployGeneratorDialog(QDialog):
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
-        
+
+    def setup_generate_layout(self):
+        """
+        Setup the segment-everything settings (SAM models only) in a group box.
+        """
+        self.generate_group = QGroupBox("Segment Everything")
+        layout = QVBoxLayout()
+        preset_layout = QFormLayout()
+
+        self.preset_combo = QComboBox()
+        self.preset_combo.addItems(list(GENERATE_PRESETS) + [CUSTOM_PRESET])
+        self.preset_combo.setCurrentText(DEFAULT_PRESET)
+        self.preset_combo.setToolTip(
+            "Fast: sparse grid, fewest masks.\n"
+            "Balanced: the standard 32x32 grid.\n"
+            "Small objects: denser grid plus one crop layer, for small organisms.\n"
+            "The slowest: the crop layer encodes the image 5 times instead of once.\n"
+            "Editing any of its settings switches to Custom.")
+        preset_layout.addRow("Preset:", self.preset_combo)
+        layout.addLayout(preset_layout)
+
+        # The individual settings start folded away: the dialog is already tall,
+        # and a preset is what most runs need.
+        self.generate_settings_toggle = QToolButton()
+        self.generate_settings_toggle.setText("Settings")
+        self.generate_settings_toggle.setCheckable(True)
+        self.generate_settings_toggle.setStyleSheet("QToolButton { border: none; }")
+        self.generate_settings_toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.generate_settings_toggle.setArrowType(Qt.RightArrow)
+        self.generate_settings_toggle.toggled.connect(self.toggle_generate_settings)
+        self.generate_settings_toggle.setToolTip("Show the settings behind the preset.")
+        layout.addWidget(self.generate_settings_toggle)
+        # Presets only for now: the toggle (and so the settings) stays hidden
+        self.generate_settings_toggle.setVisible(False)
+
+        self.generate_settings_widget = QWidget()
+        settings_layout = QFormLayout(self.generate_settings_widget)
+        settings_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.points_spinbox = QSpinBox()
+        self.points_spinbox.setRange(4, 128)
+        self.points_spinbox.setToolTip(
+            "Prompt points per side of the grid SAM segments from (32 -> 1024 points).\n"
+            "More points find more, smaller objects, and take longer.")
+        settings_layout.addRow("Points per Side:", self.points_spinbox)
+
+        self.crop_layers_spinbox = QSpinBox()
+        self.crop_layers_spinbox.setRange(0, 2)
+        self.crop_layers_spinbox.setToolTip(
+            "Extra passes over zoomed-in crops of the image. Layer 1 adds 4 crops,\n"
+            "layer 2 another 16, each encoded at the full Image Size, so small objects\n"
+            "are seen at higher resolution. Each layer multiplies the run time.")
+        settings_layout.addRow("Crop Layers:", self.crop_layers_spinbox)
+
+        self.mask_conf_spinbox = QDoubleSpinBox()
+        self.mask_conf_spinbox.setRange(0.0, 1.0)
+        self.mask_conf_spinbox.setSingleStep(0.01)
+        self.mask_conf_spinbox.setDecimals(2)
+        self.mask_conf_spinbox.setToolTip(
+            "Minimum mask quality SAM predicts for itself (its IoU estimate).\n"
+            "The Uncertainty Threshold below is applied as well.")
+        settings_layout.addRow("Mask Confidence:", self.mask_conf_spinbox)
+
+        self.stability_spinbox = QDoubleSpinBox()
+        self.stability_spinbox.setRange(0.0, 1.0)
+        self.stability_spinbox.setSingleStep(0.01)
+        self.stability_spinbox.setDecimals(2)
+        self.stability_spinbox.setToolTip(
+            "Minimum mask stability: how little the mask changes when its cutoff moves.\n"
+            "Lower keeps more, fuzzier-edged masks.")
+        settings_layout.addRow("Stability:", self.stability_spinbox)
+
+        self.min_area_spinbox = QSpinBox()
+        self.min_area_spinbox.setRange(0, 100000)
+        self.min_area_spinbox.setSingleStep(25)
+        self.min_area_spinbox.setSuffix(" px")
+        self.min_area_spinbox.setToolTip(
+            "Islands and holes smaller than this many image pixels are removed\n"
+            "from each mask. 0 skips the cleanup, which is the fastest.")
+        settings_layout.addRow("Min Region Area:", self.min_area_spinbox)
+
+        self.generate_settings_widget.setVisible(False)
+        layout.addWidget(self.generate_settings_widget)
+
+        self.generate_group.setLayout(layout)
+        self.layout.addWidget(self.generate_group)
+
+        self.preset_combo.currentTextChanged.connect(self.apply_generate_preset)
+        for spinbox in (self.points_spinbox, self.crop_layers_spinbox, self.mask_conf_spinbox,
+                        self.stability_spinbox, self.min_area_spinbox):
+            spinbox.valueChanged.connect(self.on_generate_setting_changed)
+        self.model_combo.currentTextChanged.connect(self.update_generate_enabled)
+
+        self.apply_generate_preset(DEFAULT_PRESET)
+        self.update_generate_enabled()
+
+    def _generate_spinboxes(self):
+        """Map each Predictor.generate() keyword to the spinbox that sets it."""
+        return {
+            'points_stride': self.points_spinbox,
+            'crop_n_layers': self.crop_layers_spinbox,
+            'conf_thres': self.mask_conf_spinbox,
+            'stability_score_thresh': self.stability_spinbox,
+            'min_mask_region_area': self.min_area_spinbox,
+        }
+
+    def apply_generate_preset(self, name):
+        """Fill the segment-everything settings from a preset (Custom leaves them as they are)."""
+        preset = GENERATE_PRESETS.get(name)
+        if preset is not None:
+            for key, spinbox in self._generate_spinboxes().items():
+                spinbox.blockSignals(True)
+                spinbox.setValue(preset[key])
+                spinbox.blockSignals(False)
+        self.on_generate_setting_changed()
+
+    def on_generate_setting_changed(self):
+        """Rebuild generate_kwargs and show the preset the settings match, or Custom."""
+        values = {key: spinbox.value() for key, spinbox in self._generate_spinboxes().items()}
+
+        match = next((name for name, preset in GENERATE_PRESETS.items()
+                      if all(abs(values[k] - v) < 1e-6 for k, v in preset.items())), CUSTOM_PRESET)
+        if self.preset_combo.currentText() != match:
+            self.preset_combo.blockSignals(True)
+            self.preset_combo.setCurrentText(match)
+            self.preset_combo.blockSignals(False)
+
+        # A new dict rather than an update in place: the batch worker reads
+        # this from its own thread (see SegmentEverything)
+        self.generate_kwargs = {**values, 'crop_downscale_factor': CROP_DOWNSCALE_FACTOR}
+
+    def toggle_generate_settings(self, checked):
+        """Show or fold away the settings behind the preset."""
+        self.generate_settings_toggle.setArrowType(Qt.DownArrow if checked else Qt.RightArrow)
+        self.generate_settings_widget.setVisible(checked)
+        self.adjustSize()
+
+    def update_generate_enabled(self):
+        """Grey the segment-everything settings out for FastSAM, which doesn't use them."""
+        self.generate_group.setEnabled("FastSAM" not in self.model_combo.currentText())
+
     def setup_thresholds_layout(self):
         """
         Setup threshold control section using ThresholdsWidget.
@@ -283,42 +508,59 @@ class DeployGeneratorDialog(QDialog):
     def load_model(self):
         """
         Load the selected SAM or FastSAM model with the current configuration.
-        Dynamically instantiates SAM or FastSAM based on the model name.
+
+        FastSAM loads as an ultralytics FastSAM model. SAM models load as a
+        SAM predictor wrapped in SegmentEverything, which is what lets the
+        segment-everything settings reach Predictor.generate(), and lets the
+        predictor share its model with the Predictor dialog (SharedWeights).
         """
         QApplication.setOverrideCursor(Qt.WaitCursor)
         self.main_window.status_bar.showMessage("Obtaining model...", 3000)
         progress_bar = ProgressBar(self.annotation_window, title="Loading Model")
         progress_bar.show()
-        
+
         try:
             # Get selected model name and path
             selected_model_name = self.model_combo.currentText()
             self.model_path = self.models[selected_model_name]
             self.task = self.use_task_dropdown.currentText()
-            
+            imgsz = self.get_imgsz()
+            shared = False
+
+            # Warm-up input. Letterboxed up to imgsz for SAM, so the encoder
+            # still runs at full size; kept small so preparing it costs nothing.
+            blank = np.zeros((64, 64, 3), dtype=np.uint8)
+
             # Determine which class to instantiate
             if "FastSAM" in selected_model_name:
                 self.loaded_model = FastSAM(self.model_path)
                 self.model_type = "fastSAM"
+                # Warm-up at the precision the real calls use: ultralytics
+                # rebuilds the predictor when quantize changes between calls.
+                with torch.no_grad():
+                    self.loaded_model(
+                        blank,
+                        conf=self.thresholds_widget.get_uncertainty_thresh(),
+                        imgsz=imgsz,
+                        device=self.main_window.device,
+                        quantize=self.get_quantize(),
+                        verbose=False
+                    )
             else:
-                self.loaded_model = SAM(self.model_path)
+                shared = self._load_sam(imgsz)
                 self.model_type = "sam"
-            
-            # Warm-up run to initialize on GPU
-            imgsz = self.get_imgsz()
-            with torch.no_grad():
-                blank = np.zeros((imgsz, imgsz, 3), dtype=np.uint8)
-                self.loaded_model(
-                    blank,
-                    conf=self.thresholds_widget.get_uncertainty_thresh(),
-                    imgsz=imgsz,
-                    device=self.main_window.device
-                )
-            
+                # Warm-up: one encoder pass and a one-point decode, instead of
+                # segmenting everything in a blank image (1024 prompts)
+                self.loaded_model.predictor(blank, point_grids=[np.array([[0.5, 0.5]])])
+
             progress_bar.finish_progress()
-            self.status_bar.setText(f"Model loaded: {self.model_path}")
+            self.status_bar.setText(f"Model loaded: {self.model_path}"
+                                    + (" (weights shared with SAM Predictor)" if shared else ""))
             QMessageBox.information(self, "Model Loaded", "Model loaded successfully")
-            
+            # Close on success, as the Predictor dialog does; a failed load
+            # keeps it open so the choice can be retried.
+            self.accept()
+
         except Exception as e:
             QMessageBox.critical(self, "Error Loading Model", str(e))
             self.loaded_model = None
@@ -329,6 +571,45 @@ class DeployGeneratorDialog(QDialog):
             QApplication.restoreOverrideCursor()
             progress_bar.stop_progress()
             progress_bar.close()
+
+    def _load_sam(self, imgsz):
+        """
+        Build the SAM predictor for self.model_path and wrap it as self.loaded_model.
+
+        The device and precision are fixed here, as in the Predictor dialog.
+
+        Returns:
+            bool: True if the model was borrowed from the Predictor dialog.
+        """
+        stem = os.path.splitext(os.path.basename(self.model_path))[0]
+        # The same choice ultralytics.SAM makes from the file name
+        if "sam2" in stem:
+            predictor_class = SAM2Predictor
+        elif "sam3" in stem:
+            predictor_class = SAM3Predictor
+        else:
+            predictor_class = SAMPredictor
+
+        device = self.main_window.device
+        quantize = self.get_quantize()
+        predictor = predictor_class(overrides=dict(
+            model=self.model_path,
+            imgsz=imgsz,
+            conf=self.thresholds_widget.get_uncertainty_thresh(),
+            iou=self.thresholds_widget.get_iou_thresh(),
+            device=device,
+            quantize=quantize,
+            save=False,
+            verbose=False,
+        ))
+        # Builds the model from the weights (downloading them if needed)
+        # unless the Predictor dialog has already built it
+        module = SharedWeights.get(self.model_path, device, quantize)
+        predictor.setup_model(model=module, verbose=False)
+        SharedWeights.register(self.model_path, device, quantize, predictor.model)
+
+        self.loaded_model = SegmentEverything(predictor, lambda: self.generate_kwargs)
+        return module is not None
 
     def get_imgsz(self):
         """Get the image size for the model, rounded to a multiple of 32.
@@ -347,10 +628,10 @@ class DeployGeneratorDialog(QDialog):
     def get_quantize(self):
         """Precision for model calls: 32 for MobileSAM (crashes in FP16) and on the CPU, else 16.
 
-        On the CPU, SAM's .half() cast is ~15x slower than FP32. Ultralytics
-        fixes the precision when a predictor is built, i.e. on the first call
-        (the load-time warm-up, which runs FP32) and again whenever the device
-        changes; so this matters for the rebuild after a device change.
+        On the CPU, SAM's .half() cast is ~15x slower than FP32. A SAM
+        predictor's precision is fixed when load_model builds it; FastSAM and
+        the batch worker pass this on every call. It is the Predictor dialog's
+        rule too, so the two dialogs can share a model (see SharedWeights).
         """
         on_cpu = str(self.main_window.device).strip().lower() == "cpu"
         is_mobile_sam = "mobile_sam" in (self.model_path or "")
@@ -599,6 +880,9 @@ class DeployGeneratorDialog(QDialog):
         """
         Apply the model to the inputs with task-aware parameters.
         Constructs kwargs dynamically based on task selection and model type.
+
+        A SAM model (SegmentEverything) uses conf, iou and imgsz from these and
+        adds the Segment Everything settings itself; the rest are for FastSAM.
         """
         # Base kwargs always passed
         kwargs = {
@@ -697,7 +981,9 @@ class DeployGeneratorDialog(QDialog):
         """
         self.loaded_model = None
         self.model_path = None
-        # Clean up resources
+        self.model_type = None
+        # Clean up resources (a model shared with the Predictor dialog stays
+        # loaded there until that dialog lets it go too)
         gc.collect()
         torch.cuda.empty_cache()
         # Untoggle all tools
