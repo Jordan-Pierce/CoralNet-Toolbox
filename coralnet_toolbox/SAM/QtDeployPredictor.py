@@ -141,9 +141,10 @@ class DeployPredictorDialog(QDialog):
         if os.path.exists(os.path.join(os.getcwd(), "sam3.pt")):
             self.models["SAM 3"] = "sam3.pt"
             
- # Check for SAM 3 weights in the current directory and add to models if found
+        # Check for SAM 3 weights in the current directory and add to models if found
         if os.path.exists(os.path.join(os.getcwd(), "sam3.1_multiplex.pt")):
             self.models["SAM 3.1 Multiplex"] = "sam3.1_multiplex.pt"
+            
         # Add all models to combo box
         for model_name in self.models.keys():
             self.model_combo.addItem(model_name)
@@ -241,8 +242,8 @@ class DeployPredictorDialog(QDialog):
         layout = QVBoxLayout()
 
         self.status_bar = QLabel("No model loaded")
-        # Top-aligned: this box stretches to level the columns
-        self.status_bar.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        # Centred in the box, which stretches to level the columns
+        self.status_bar.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.status_bar)
 
         group_box.setLayout(layout)
@@ -260,16 +261,33 @@ class DeployPredictorDialog(QDialog):
         """True when inference runs on the CPU (device is 'cpu', 'cuda:0', 'mps' or '0,1 ')."""
         return str(self.main_window.device).strip().lower() == "cpu"
 
-    def _snapped_imgsz(self):
-        """Return the spinbox image size rounded to a multiple of 32.
+    def _model_stride(self):
+        """The input-size granularity the selected model needs.
 
-        SAM 2's Hiera encoder raises in set_image on sizes that aren't (1000 and
-        688, both reachable with the old 24-px step); multiples of 32 work for
-        SAM, SAM 2 and SAM 3. The spinbox is updated so it shows what is used.
+        SAM 3 is a stride-14 model, so ultralytics rounds anything else up
+        (1024 -> 1036) and warns about it. SAM 2's Hiera encoder raises in
+        set_image on sizes that aren't a multiple of 32 (1000 and 688, both
+        reachable with the old 24-px step), and 32 suits SAM and MobileSAM too.
         """
+        return 14 if "SAM 3" in self.model_combo.currentText() else 32
+
+    def _snapped_imgsz(self):
+        """Return the spinbox image size rounded to a multiple of the model's stride.
+
+        The spinbox is updated so it shows what is used.
+        """
+        stride = self._model_stride()
+        low, high = self.imgsz_spinbox.minimum(), self.imgsz_spinbox.maximum()
+
         value = self.imgsz_spinbox.value()
-        snapped = int(round(value / 32)) * 32
-        snapped = max(self.imgsz_spinbox.minimum(), min(self.imgsz_spinbox.maximum(), snapped))
+        snapped = int(round(value / stride)) * stride
+        # Round inwards at the ends, so the result is a multiple of the stride
+        # rather than the range's own bound.
+        if snapped < low:
+            snapped = -(-low // stride) * stride
+        elif snapped > high:
+            snapped = (high // stride) * stride
+
         if snapped != value:
             self.imgsz_spinbox.setValue(snapped)
         return snapped

@@ -7,7 +7,7 @@ rasterio
 geopandas
 pyogrio
 pycocotools
-ultralytics>=8.4.147
+ultralytics>=8.4.148
 lightly-train[ultralytics]
 open-clip-torch>=2.20.0
 # NVIDIA GPU video decode. No Mac has an NVIDIA GPU, and there are no macOS

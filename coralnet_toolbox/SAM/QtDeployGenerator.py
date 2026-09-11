@@ -622,14 +622,26 @@ class DeployGeneratorDialog(QDialog):
         return module is not None
 
     def get_imgsz(self):
-        """Get the image size for the model, rounded to a multiple of 32.
+        """Get the image size for the model, rounded to a multiple of its stride.
 
-        SAM 2's Hiera encoder raises on sizes that aren't (1000 and 688, both
-        reachable with the old 24-px step). The spinbox is updated to match.
+        SAM 3 is a stride-14 model, so ultralytics rounds anything else up
+        (1024 -> 1036) and warns about it. SAM 2's Hiera encoder raises on
+        sizes that aren't a multiple of 32 (1000 and 688, both reachable with
+        the old 24-px step), and 32 suits the rest. The spinbox is updated to
+        match.
         """
+        stride = 14 if "SAM 3" in self.model_combo.currentText() else 32
+        low, high = self.imgsz_spinbox.minimum(), self.imgsz_spinbox.maximum()
+
         value = self.imgsz_spinbox.value()
-        snapped = int(round(value / 32)) * 32
-        snapped = max(self.imgsz_spinbox.minimum(), min(self.imgsz_spinbox.maximum(), snapped))
+        snapped = int(round(value / stride)) * stride
+        # Round inwards at the ends, so the result is a multiple of the stride
+        # rather than the range's own bound.
+        if snapped < low:
+            snapped = -(-low // stride) * stride
+        elif snapped > high:
+            snapped = (high // stride) * stride
+
         if snapped != value:
             self.imgsz_spinbox.setValue(snapped)
         self.imgsz = snapped
