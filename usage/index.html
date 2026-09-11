@@ -608,10 +608,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#annotation-gallery-viewer-annotation-viewer-window" class="md-nav__link">
+  <a href="#annotation-gallery-window" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Annotation Gallery Viewer (Annotation Viewer Window)
+        Annotation Gallery Window
       
     </span>
   </a>
@@ -712,15 +712,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#label-window" class="md-nav__link">
+  <a href="#labels-window" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Label Window
+        Labels Window
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Label Window">
+    <nav class="md-nav" aria-label="Labels Window">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -834,15 +834,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#image-window" class="md-nav__link">
+  <a href="#rasters-window" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Image Window
+        Rasters Window
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Image Window">
+    <nav class="md-nav" aria-label="Rasters Window">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -1404,10 +1404,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#annotation-gallery-viewer-annotation-viewer-window" class="md-nav__link">
+  <a href="#annotation-gallery-window" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Annotation Gallery Viewer (Annotation Viewer Window)
+        Annotation Gallery Window
       
     </span>
   </a>
@@ -1508,15 +1508,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#label-window" class="md-nav__link">
+  <a href="#labels-window" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Label Window
+        Labels Window
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Label Window">
+    <nav class="md-nav" aria-label="Labels Window">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -1630,15 +1630,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#image-window" class="md-nav__link">
+  <a href="#rasters-window" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Image Window
+        Rasters Window
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Image Window">
+    <nav class="md-nav" aria-label="Rasters Window">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -1928,7 +1928,7 @@ This guide provides instructions on how to use the application, including key fu
 - <strong>Digital Elevation Models (DEMs)</strong>: Georeferenced elevation data for terrain analysis
 - Supports GeoTIFF, PNG, and other raster formats that can be loaded with rasterio</p>
 <p><strong>Importing Z-Channel Data</strong>
-- <kbd>Right-Click</kbd> on highlighted images in Image Window
+- <kbd>Right-Click</kbd> on highlighted images in Rasters Window
 - <strong>Import Z-Channel</strong>: Select depth / elevation file(s) to attach to image(s)
   - Files are automatically resized to match image dimensions if needed
   - Unit of measurement can be specified (meters, feet, centimeters, etc.)
@@ -1950,7 +1950,7 @@ This guide provides instructions on how to use the application, including key fu
 - <strong>Hover Tooltips</strong>: View exact Z value when mouse hovers over image
 - <strong>Nodata Handling</strong>: Automatically detects and masks NULL / missing values in Z data</p>
 <p><strong>Removing Z-Channel Data</strong>
-- <kbd>Right-Click</kbd> on highlighted images in Image Window
+- <kbd>Right-Click</kbd> on highlighted images in Rasters Window
 - <strong>Remove Z-Channel</strong>: Clear depth / elevation data from selected image(s)
   - Annotation and other data remain intact</p>
 <h2 id="computer-vision-tasks">Computer Vision Tasks<a class="headerlink" href="#computer-vision-tasks" title="Permanent link">&para;</a></h2>
@@ -1980,14 +1980,14 @@ This guide provides instructions on how to use the application, including key fu
 - <strong>Tool Bar</strong>: Contains tools for selection and annotation
 - <strong>Status Bar</strong>: Displays the image size, cursor position, view extent, annotation transparency, and thresholds
 - <strong>Annotation Window</strong>: Displays the image, Z-channel, and annotations with interactive annotation tools
-- <strong>Label Window</strong>: Lists and manages labels with operations for editing, merging, and organizing
-- <strong>Image Window</strong>: Displays imported images with filtering and batch operations
+- <strong>Labels Window</strong>: Lists and manages labels with operations for editing, merging, and organizing
+- <strong>Rasters Window</strong>: Displays imported images with filtering and batch operations
 - <strong>Confidence Window</strong>: Displays cropped images and confidence charts for annotation predictions
 - <strong>Metadata Window</strong>: Displays and edits structured metadata for the selected annotation(s)
 - <strong>Performance Window</strong>: Real-time hardware monitor showing CPU, Memory, and GPU usage with historical sparkline graphs
 - <strong>Timer Window</strong>: Session timer with start, stop, and reset controls; tracks total work duration across sessions</p>
 <h3 id="advanced-docking-system">Advanced Docking System<a class="headerlink" href="#advanced-docking-system" title="Permanent link">&para;</a></h3>
-<p>All dock windows (Annotation Window, Label Window, Image Window, Confidence Window, Metadata Window, Explorer, Performance, Timer) use an advanced docking system that allows complete layout customization:</p>
+<p>All dock windows (Annotation Window, Labels Window, Rasters Window, Confidence Window, Metadata Window, Explorer, Performance, Timer) use an advanced docking system that allows complete layout customization:</p>
 <p><strong>Moving &amp; Rearranging Docks</strong>
 - <strong>Grab &amp; Drag</strong>: Click and drag the dock title bar to move the window
   - Drag to any dock area (left, right, top, bottom) to dock it
@@ -2288,11 +2288,71 @@ This guide provides instructions on how to use the application, including key fu
 <li>
 <p><strong>Feature Selector</strong>:</p>
 </li>
-<li><strong>Deploy Model</strong>: Deploy a dense feature extraction model for semantic similarity queries<ul>
+<li>
+<p><strong>Deploy Model</strong>: Deploy a dense feature extraction model for semantic similarity queries</p>
+<ul>
 <li>Use the Feature Select Tool to click-to-query semantic similarity across images</li>
 <li>Supports binary mode (single object) and multi-class mode (multiple classes)</li>
 </ul>
 </li>
+<li>
+<p><strong>Active Learning</strong>: train on what you have already confirmed, then let the model
+  propose the rest — annotate a little, train, review, repeat</p>
+</li>
+<li><strong>Detect</strong> / <strong>Segment</strong>: each task keeps its own session, for as long as the
+    application is open</li>
+<li>Choose the labels to include and a model, then press <strong>Train Round</strong>. Training reads
+    the project directly — no dataset is exported — and uses <strong>verified annotations
+    only</strong>, so a round never trains on its own guesses</li>
+<li><strong>Browse</strong> to start from a model of your own, or from an earlier session's best.
+    Otherwise leave the default nano model: rounds are only useful if they are cheap
+    enough to run often</li>
+<li>
+<p>After a round, predictions land on un-reviewed images and the Rasters Window is
+    filtered to <strong>Needs Review</strong>. Predictions always arrive unverified</p>
+</li>
+<li>
+<p><strong>Review in the Annotation Gallery. This is the fastest way to work through a
+    round, and it is worth setting up before your first one.</strong> Open <strong>Gallery</strong>, press
+    <strong>Apply Filter</strong>, and sort by <strong>Confidence</strong>: the model's least certain predictions
+    group together at the top, which is exactly where your attention is worth most</p>
+<ul>
+<li><kbd>Ctrl</kbd> + <kbd>Space</kbd> confirms everything selected in one press —
+  select a whole high-confidence bucket and accept it at once</li>
+<li><kbd>Ctrl</kbd> + <kbd>Right-Click</kbd> jumps to an annotation on the canvas when
+  you need to see it in context; <kbd>Delete</kbd> removes a wrong one from there</li>
+</ul>
+</li>
+<li>
+<p>You can also review from the session window: <strong>Previous</strong> / <strong>Next</strong> walk what is
+    waiting, least confident first, opening each image and centring the annotation.
+    <strong>Mark Verified</strong> confirms it; <strong>Mark as Review</strong> parks anything you cannot judge yet</p>
+</li>
+<li>An image you clear of predictions trains as a <strong>background</strong> image — deleting a wrong
+    box is how you teach the model there is nothing there. An image you simply never
+    annotated is left out of training rather than treated as empty</li>
+<li><strong>Image Budget</strong>: how many un-reviewed images a round predicts on. Most of it goes to
+    images with nothing on them and the rest to images you have already worked on, so a
+    round looks for new objects and checks itself where you are annotating</li>
+<li>A round skips the image open on the canvas and images already carrying predictions
+    you have not reviewed; a round that finds nothing tells you which. <strong>Re-run
+    Predictions</strong> predicts again at the current thresholds without training, which is the
+    only way a threshold change takes effect before the next round. It reads the <strong>Image
+    Budget</strong> as it stands, so raising the budget first reaches images the last round did
+    not, and lowering it trims the least promising of its picks</li>
+<li><strong>Auto Train</strong> starts the next round on its own once every included label has gained
+    the given number of newly confirmed annotations</li>
+<li>A round's model is kept only if it beat the best round before it, so predictions and
+    <strong>Deploy Model</strong> always use the best model rather than the newest. The <strong>Rounds</strong>
+    table reports mAP50 and mAP50-95, and <strong>Change</strong> is the column to read: it is blank
+    when a round trained on different labels and is not comparable</li>
+<li><strong>Stop</strong> ends a running round after the current epoch, keeping what it trained</li>
+<li><strong>New Session</strong> forgets the rounds and starts over, and offers to clear out round
+    folders left on disk. <strong>Save Session</strong> copies the best model, its results and a
+    summary of the session to a folder you choose — rounds are kept in a cache that
+    prunes its own older weights, so this is how a model becomes something you keep</li>
+<li>The Setup tab warns when your objects are too small for the image size, which is the
+    one problem more annotating will not fix</li>
 </ul>
 <h3 id="machine-learning">Machine Learning<a class="headerlink" href="#machine-learning" title="Permanent link">&para;</a></h3>
 <ul>
@@ -2388,7 +2448,7 @@ This guide provides instructions on how to use the application, including key fu
 </ul>
 <h3 id="explorer">Explorer<a class="headerlink" href="#explorer" title="Permanent link">&para;</a></h3>
 <p>The Explorer is a dual-window system for browsing and analyzing annotations using embeddings (high-dimensional feature vectors). It enables exploration of annotations through two linked views: a gallery viewer and an embedding visualization, with real-time synchronization and feature caching.</p>
-<h4 id="annotation-gallery-viewer-annotation-viewer-window">Annotation Gallery Viewer (Annotation Viewer Window)<a class="headerlink" href="#annotation-gallery-viewer-annotation-viewer-window" title="Permanent link">&para;</a></h4>
+<h4 id="annotation-gallery-window">Annotation Gallery Window<a class="headerlink" href="#annotation-gallery-window" title="Permanent link">&para;</a></h4>
 <p>The gallery displays annotation crops as a scrollable grid of thumbnail images. It includes:</p>
 <p><strong>Filtering &amp; Sorting</strong>
 - <strong>Image Filter</strong>: Multi-select to show annotations from specific images
@@ -2503,8 +2563,9 @@ This guide provides instructions on how to use the application, including key fu
 <li><kbd>Ctrl</kbd> + <kbd>Delete</kbd> / <kbd>Backspace</kbd>: Remove selected annotation(s)</li>
 <li><kbd>Ctrl</kbd> + <kbd>Drag</kbd>: Create rectangle selection to select multiple annotations</li>
 <li><kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd>: Change size of the selected annotation</li>
-<li><kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show resize handles for the selected annotation</li>
-<li><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Mouse Wheel</kbd>: Change the number of vertices for a polygon annotation</li>
+<li><strong>Resize handles</strong>: Appear automatically whenever a single annotation is selected; they stay subdued until the cursor comes near, then grow and light up. Drag one to reshape; the cursor shows which way it moves</li>
+<li><kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show <em>every</em> vertex at full strength (dense polygons normally thin their handles until you zoom in)</li>
+<li><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Mouse Wheel</kbd>: Change the number of vertices for a polygon annotation (each tick up doubles the count, so it stops at 2000 vertices; scroll down to simplify first)</li>
 <li><kbd>Ctrl</kbd> + <kbd>Space</kbd>: Confirm prediction for selected annotation with top machine confidence</li>
 <li><kbd>Ctrl</kbd> + <kbd>X</kbd>: Cut a polygon annotation, explode a multi-polygon annotation, or subtract polygon annotations<ul>
 <li><strong>Cutting Rules</strong>:<ul>
@@ -2737,7 +2798,7 @@ This guide provides instructions on how to use the application, including key fu
   - Keyframes appear as gold tick marks on the slider
   - Useful for marking important frames for review or processing
 - <strong>Frame Counter</strong>: Displays current frame number and total frame count</p>
-<h2 id="label-window">Label Window<a class="headerlink" href="#label-window" title="Permanent link">&para;</a></h2>
+<h2 id="labels-window">Labels Window<a class="headerlink" href="#labels-window" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Move Label</strong>: <kbd>Right-Click</kbd> and drag to reorder labels in the window</li>
 <li><strong>Label Visibility</strong>: Each label has a checkbox to show / hide annotations of that label</li>
@@ -2840,7 +2901,7 @@ This guide provides instructions on how to use the application, including key fu
   - <strong>Columns</strong>: Select from Location, Size, Shape, and 3D metrics, plus your custom fields
   - <strong>Filters</strong>: Restrict the export by Images, Labels, and Annotation Types
   - Identity columns (annotation id, image name, label codes, color) are always included</p>
-<h2 id="image-window">Image Window<a class="headerlink" href="#image-window" title="Permanent link">&para;</a></h2>
+<h2 id="rasters-window">Rasters Window<a class="headerlink" href="#rasters-window" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Select Image</strong>: <kbd>Double-Click</kbd> on a row to load the image in the annotation window</li>
 <li><strong>Highlight Image</strong>: <kbd>Single-Click</kbd> on a row to highlight it</li>
@@ -2936,7 +2997,7 @@ This guide provides instructions on how to use the application, including key fu
 <li><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Mouse Wheel</kbd>: Change polygon vertex count</li>
 <li><kbd>Ctrl</kbd> + <kbd>X</kbd>: Cut a polygon annotation, explode a multi-polygon, or subtract polygons</li>
 <li><kbd>Ctrl</kbd> + <kbd>C</kbd>: Combine multiple selected annotations (if same type and label)</li>
-<li><kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show resize handles for selected annotations</li>
+<li><kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show every vertex handle at full strength (handles themselves appear on selection)</li>
 <li><kbd>Ctrl</kbd> + <kbd>R</kbd>: Bake or unbake annotations (opens dialog to choose between baking vectors into mask or unbaking mask into vectors; Select tool must be active)</li>
 <li><kbd>Backspace</kbd> / <kbd>Delete</kbd>: Cancel current drawing (rectangle, polygon, work area, cutting line)</li>
 </ul>
@@ -2997,13 +3058,13 @@ This guide provides instructions on how to use the application, including key fu
 <li><kbd>Left-Click</kbd>: Select annotation, add point, start / end shape</li>
 <li><kbd>Left-Click</kbd> + <kbd>Drag</kbd>: Move selected annotation, draw shape</li>
 <li><kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add / remove from selection, add positive point / prototype</li>
-<li><kbd>Shift</kbd> + <kbd>Left-Click</kbd>: Select range of items (Image Window)</li>
+<li><kbd>Shift</kbd> + <kbd>Left-Click</kbd>: Select range of items (Rasters Window)</li>
 <li><kbd>Ctrl</kbd> + <kbd>Drag</kbd>: Box-select multiple annotations</li>
 <li><kbd>Right-Click</kbd> + <kbd>Drag</kbd>: Pan the image viewer</li>
-<li><kbd>Right-Click</kbd>: Open context menu (Image Window)</li>
+<li><kbd>Right-Click</kbd>: Open context menu (Rasters Window)</li>
 <li><kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Center Annotation Window on selected annotation</li>
 <li><kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Add negative point / prototype</li>
-<li><kbd>Double-Click</kbd>: Load image (Image Window)</li>
+<li><kbd>Double-Click</kbd>: Load image (Rasters Window)</li>
 <li><kbd>Mouse Wheel</kbd>: Zoom in / out, adjust patch / brush size (with Ctrl)</li>
 </ul>
 <h3 id="annotation-window-navigation">Annotation Window Navigation<a class="headerlink" href="#annotation-window-navigation" title="Permanent link">&para;</a></h3>
@@ -3034,7 +3095,7 @@ This guide provides instructions on how to use the application, including key fu
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="September 4, 2026 22:26:54 UTC"><span class="timeago" datetime="2026-09-04T22:26:54+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="September 4, 2026 22:26:54 UTC">2026-09-04</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="September 9, 2026 23:37:46 UTC"><span class="timeago" datetime="2026-09-09T23:37:46+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="September 9, 2026 23:37:46 UTC">2026-09-09</span>
   </span>
 
     
