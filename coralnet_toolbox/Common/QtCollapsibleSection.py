@@ -1,8 +1,8 @@
 import warnings
 
 from PyQt5.QtGui import QIcon
-from PyQt5.QtCore import Qt, QPoint
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QToolButton, QFrame, QGroupBox, QAction
+from PyQt5.QtCore import Qt, QPoint, QEvent
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QToolButton, QFrame, QGroupBox, QAction, QToolBar
 
 from coralnet_toolbox.Icons import get_icon
 
@@ -62,6 +62,37 @@ class CollapsibleSection(QWidget):
 
         # Add button to layout
         self.layout().addWidget(self.toggle_button)
+
+        # The QToolBar this section sits in, once it has been added to one
+        self._toolbar = None
+
+    def event(self, event):
+        """Match the button to a toolbar whenever the section is added to one."""
+        if event.type() == QEvent.ParentChange:
+            self._follow_toolbar(self.parent())
+        return super().event(event)
+
+    def _follow_toolbar(self, parent):
+        """Give the button its toolbar's icon size and button style, and keep them in step.
+
+        QToolBar keeps the buttons it creates for actions in step with its icon
+        size and button style, but leaves a widget added with addWidget() --
+        this one -- alone. The button fell back to the style's default 16 px
+        icon and came out smaller than every button around it.
+
+        This only ever connects. It also runs while a toolbar is being torn
+        down, when the toolbar hands its widgets back with setParent(None), and
+        disconnecting then reaches into a half-destroyed object and crashes.
+        Qt drops the connections itself once either end is destroyed.
+        """
+        if not isinstance(parent, QToolBar) or parent is self._toolbar:
+            return
+
+        self._toolbar = parent
+        self.toggle_button.setIconSize(parent.iconSize())
+        self.toggle_button.setToolButtonStyle(parent.toolButtonStyle())
+        parent.iconSizeChanged.connect(self.toggle_button.setIconSize)
+        parent.toolButtonStyleChanged.connect(self.toggle_button.setToolButtonStyle)
 
     def toggle_content(self):
         """Toggle the visibility of the popup content."""

@@ -1033,7 +1033,17 @@ class ImageWindow(QWidget):
             else:
                 annotations = self.annotation_window.get_image_annotations(image_path)
                 self.raster_manager.update_annotation_info(image_path, annotations)
-        
+
+        # This raster's per-label counts just changed, so the Label Window's
+        # count bars and tooltips are stale. Every path that changes those
+        # counts comes through here -- batch adds from importers and project
+        # open, batch inference, bulk deletes -- including the ones that emit
+        # no per-annotation signal. The refresh is debounced, so a loop over
+        # thousands of images still costs one recount.
+        label_window = getattr(self.main_window, 'label_window', None)
+        if label_window is not None:
+            label_window.update_tooltips()
+
         if update_counts:
             self.main_window.label_window.update_annotation_count()
         

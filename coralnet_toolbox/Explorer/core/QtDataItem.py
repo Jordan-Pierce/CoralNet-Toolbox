@@ -32,14 +32,17 @@ SPRITE_SIZE = 48
 ANNOTATION_WIDTH = 4
 
 # Magnifier lens (see ScatterPlotItem._paint_lens). The lens is always on: it
-# redraws the points nearest the cursor as thumbnails, at roughly the size the
-# old single hover sprite used, so the plot reads as dots with a readable
-# neighbourhood under the pointer.
-LENS_SPRITE_SCALE = 3.5      # thumbnail size as a multiple of the dot diameter
-LENS_SPRITE_MIN_PX = 24
-LENS_SPRITE_MAX_PX = 96      # past this a "thumbnail" is just a picture in the way
-LENS_RADIUS_BASE_PX = 170.0  # lens radius shrinks as the thumbnails grow
-LENS_RADIUS_MIN_PX = 70.0
+# redraws the points nearest the cursor as thumbnails, so the plot reads as
+# dots with a readable neighbourhood under the pointer. Every length here is
+# half what the lens first shipped with -- thumbnails and radius together, so
+# it shows the same number of neighbours in a quarter of the area. At full
+# size it covered too much of the plot it was meant to be a detail view of.
+LENS_SPRITE_SCALE = 1.75     # thumbnail size as a multiple of the dot diameter
+LENS_SPRITE_EXTENT_SCALE = 0.5  # in sprites view, as a multiple of the sprite size
+LENS_SPRITE_MIN_PX = 12
+LENS_SPRITE_MAX_PX = 48      # past this a "thumbnail" is just a picture in the way
+LENS_RADIUS_BASE_PX = 85.0   # lens radius shrinks as the thumbnails grow
+LENS_RADIUS_MIN_PX = 35.0
 LENS_MAX_SPRITES = 24
 
 
@@ -250,7 +253,7 @@ class ScatterPlotItem(QGraphicsItem):
         # Thumbnail size tracks whatever the user has sized the marks to, so the
         # lens stays proportionate to the plot instead of a fixed magnification.
         if is_sprites:
-            sprite_px = self._lens_sprite_px(self._current_sprite_extent())
+            sprite_px = self._lens_sprite_px(self._current_sprite_extent() * LENS_SPRITE_EXTENT_SCALE)
             # Nothing to add once the ordinary sprites are already this big.
             if drawn_diameter * view_scale >= sprite_px:
                 return
@@ -726,11 +729,23 @@ class AnnotationDataItem:
         """Generates a rich HTML-formatted tooltip with all relevant information."""
         info = self.get_display_info()
 
+        label_text = info['label']
+        if self.has_preview_changes():
+            label_text += f" <i>(pending, was {self.annotation.label.short_label_code})</i>"
+
+        if self.annotation.verified:
+            status = "Verified"
+        elif self.annotation.machine_confidence:
+            status = f"Unverified, {self.get_confidence_value() * 100:.1f}% confidence"
+        else:
+            status = "Unverified"
+
         tooltip_parts = [
             f"<b>ID:</b> {info['id']}",
             f"<b>Image:</b> {info['image']}",
-            f"<b>Label:</b> {info['label']}",
-            f"<b>Type:</b> {info['type']}"
+            f"<b>Label:</b> {label_text}",
+            f"<b>Type:</b> {info['type'].replace('Annotation', '')}",
+            f"<b>Status:</b> {status}",
         ]
 
         return "<br>".join(tooltip_parts)

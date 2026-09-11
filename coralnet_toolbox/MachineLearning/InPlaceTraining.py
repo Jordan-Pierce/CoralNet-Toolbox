@@ -342,7 +342,7 @@ def is_rtdetr_model(model):
 
 
 def _parse_floats(text):
-    """Parse a whitespace-separated coordinate string, skipping unparseable values."""
+    """Parse a whitespace-separated coordinate string, skipping values that cannot be parsed."""
     values = []
     for token in text.split():
         try:

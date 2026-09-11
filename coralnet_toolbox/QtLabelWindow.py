@@ -1,6 +1,7 @@
 import warnings
 
 import re
+import math
 import uuid
 import random
 from contextlib import contextmanager
@@ -11,7 +12,8 @@ from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QToolButton, Q
                              QVBoxLayout, QColorDialog, QLineEdit, QDialog, 
                              QPushButton, QApplication, QScrollArea,
                              QGraphicsDropShadowEffect, QToolBar,
-                             QListWidget, QListWidgetItem, QComboBox, QLabel)
+                             QListWidget, QListWidgetItem, QComboBox, QLabel,
+                             QMenu, QActionGroup)
 
 from coralnet_toolbox.Icons import get_icon, get_window_icon
 from coralnet_toolbox import theme as app_theme
@@ -37,6 +39,43 @@ LABEL_HEIGHT = 34
 SWATCH_SIZE = 14
 SWATCH_RADIUS = 4
 LABEL_SPACING = 6
+
+# Count bars: the Label rows double as a per-label histogram
+COUNT_SCOPE_IMAGE = "image"
+COUNT_SCOPE_PROJECT = "project"
+COUNT_SCOPE_NAMES = {COUNT_SCOPE_IMAGE: "Current Image", COUNT_SCOPE_PROJECT: "Whole Project"}
+BAR_TRACK = app_theme.SURFACE_COLOR
+# Counts are refreshed this long after the last change, so a burst of changes
+# (an import, a batch delete, dragging an annotation) costs one recount
+COUNT_REFRESH_DEBOUNCE_MS = 150
+
+# The app stylesheet styles QPushButton but leaves QToolButton flat, and a menu
+# button has to be a QToolButton -- so match the neighbouring push buttons here.
+COUNT_BUTTON_STYLE = f"""
+QToolButton {{
+    background-color: {SURFACE.name()};
+    border: 1px solid #2e3348;
+    border-radius: 5px;
+    padding: 5px 18px 5px 8px;
+}}
+QToolButton:hover {{
+    background-color: {app_theme.SURFACE_ELEVATED_COLOR.name()};
+    border-color: #3d5aad;
+}}
+QToolButton:checked {{
+    background-color: {app_theme.ACCENT_SOFT_COLOR.name()};
+    border-color: {PRIMARY.name()};
+}}
+QToolButton::menu-button {{
+    border: none;
+    width: 14px;
+}}
+QToolButton::menu-arrow {{
+    image: url("{app_theme.SPINBOX_DOWN_ARROW_ICON}");
+    width: 8px;
+    height: 8px;
+}}
+"""
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -99,6 +138,10 @@ class LabelDisplay(QWidget):
 
         rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
 
+        if self.label.count_bar is not None:
+            self._paint_count_bar(painter, rect)
+            return
+
         # --- 1. Background Gradient ---
         gradient = QLinearGradient(rect.topLeft(), rect.bottomLeft())
         base_color = QColor(self.label.color)
@@ -147,7 +190,85 @@ class LabelDisplay(QWidget):
         truncated_text = font_metrics.elidedText(self.label.short_label_code, Qt.ElideRight, int(text_rect.width() - 10))
         painter.setPen(QPen(text_color))
         painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, truncated_text)
-        
+
+    def _paint_count_bar(self, painter, rect):
+        """Paint the row as a bar, filled to the fraction the Label Window worked out for it.
+
+        The label at the top of the distribution fills the whole row and so
+        looks exactly like the plain label; every other row is the same label,
+        cut short. The colour accent always survives, even at zero, so a row
+        never loses its identity.
+        """
+        count, fraction = self.label.count_bar
+        base_color = QColor(self.label.color)
+        accent_width = 6
+
+        # --- 1. Track: the full row, so every bar is measured against the same width ---
+        track = QColor(BAR_TRACK)
+        if self.label.is_selected:
+            # Tint the track, or a short bar's selection would be a few pixels wide
+            track = QColor(
+                int(track.red() * 0.75 + base_color.red() * 0.25),
+                int(track.green() * 0.75 + base_color.green() * 0.25),
+                int(track.blue() * 0.75 + base_color.blue() * 0.25),
+            )
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(track))
+        painter.drawRect(rect)
+
+        # --- 2. Fill, never narrower than the accent so a nonzero count is visible ---
+        fill_width = rect.width() * max(0.0, min(1.0, fraction))
+        if count > 0:
+            fill_width = max(fill_width, accent_width + 3)
+        else:
+            fill_width = accent_width
+        fill_rect = QRectF(rect.left(), rect.top(), fill_width, rect.height())
+
+        gradient = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+        if self.label.is_hovered:
+            gradient.setColorAt(0, base_color.lighter(130))
+            gradient.setColorAt(1, base_color.lighter(110))
+        else:
+            gradient.setColorAt(0, base_color.lighter(115))
+            gradient.setColorAt(1, base_color)
+        painter.setBrush(QBrush(gradient))
+        painter.drawRect(fill_rect)
+
+        if self.label.is_selected:
+            pen = QPen(base_color.lighter(130))
+            pen.setWidthF(1.5)
+            painter.setPen(pen)
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(rect.adjusted(0.75, 0.75, -0.75, -0.75))
+
+        # --- 3. Name on the left, count on the right ---
+        font_metrics = QFontMetrics(painter.font())
+        padding = 6
+        count_text = f"{count:,}"
+        count_width = font_metrics.horizontalAdvance(count_text)
+        count_rect = QRectF(rect.right() - padding - count_width, rect.top(), count_width, rect.height())
+        name_rect = rect.adjusted(accent_width + padding, 0, -(count_width + 2 * padding), 0)
+        name = font_metrics.elidedText(self.label.short_label_code, Qt.ElideRight, int(max(0, name_rect.width())))
+
+        # The text is drawn twice, clipped once to the fill and once to the
+        # track, because the fill edge can land anywhere -- including through
+        # the middle of a word -- and each side needs its own contrast.
+        r, g, b, _ = base_color.getRgb()
+        luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
+        on_fill = QColor(Qt.black) if luminance > 0.5 else QColor(Qt.white)
+        on_track = QColor(TEXT_PRIMARY if count > 0 else TEXT_SECONDARY)
+        track_rect = QRectF(fill_rect.right(), rect.top(), rect.right() - fill_rect.right(), rect.height())
+
+        for clip, color in ((fill_rect, on_fill), (track_rect, on_track)):
+            if clip.width() <= 0:
+                continue
+            painter.save()
+            painter.setClipRect(clip)
+            painter.setPen(QPen(color))
+            painter.drawText(name_rect, Qt.AlignVCenter | Qt.AlignLeft, name)
+            painter.drawText(count_rect, Qt.AlignVCenter | Qt.AlignRight, count_text)
+            painter.restore()
+
 
 class Label(QWidget):
     colorChanged = pyqtSignal(QColor)
@@ -169,6 +290,9 @@ class Label(QWidget):
         self.is_selected = False
         self.is_hovered = False
         self.drag_start_position = None
+        # (count, fraction of the largest count) while the Label Window shows
+        # count bars; None paints the plain label
+        self.count_bar = None
 
         # --- Layout and Child Widgets ---
         self.main_layout = QHBoxLayout(self)
@@ -355,6 +479,13 @@ class Label(QWidget):
         """Trigger a repaint to reflect selection changes."""
         self.display_widget.update()
 
+    def set_count_bar(self, count, fraction=0.0):
+        """Paint this row as a count bar, or as the plain label when count is None."""
+        count_bar = None if count is None else (count, fraction)
+        if count_bar != self.count_bar:
+            self.count_bar = count_bar
+            self.display_widget.update()
+
     def update_label_color(self, new_color: QColor):
         """Update the label's color and emit the colorChanged signal."""
         if self.color != new_color:
@@ -430,8 +561,19 @@ class LabelWindow(QWidget):
         self.locked_label = None
 
         self.label_height = app_theme.scale_int(30)
-        self.label_width = app_theme.scale_int(50) 
-        
+        self.label_width = app_theme.scale_int(50)
+
+        # Per-label annotation counts, refreshed by update_tooltips. The Label
+        # rows show them as bars unless turned off with the count bars button.
+        self.count_bars_enabled = True
+        self.count_scope = COUNT_SCOPE_PROJECT
+        self._image_counts = {}
+        self._project_counts = {}
+        self._counts_timer = QTimer(self)
+        self._counts_timer.setSingleShot(True)
+        self._counts_timer.setInterval(COUNT_REFRESH_DEBOUNCE_MS)
+        self._counts_timer.timeout.connect(self._refresh_label_counts)
+
         # Setup UI components
         self.setup_ui()
         
@@ -514,6 +656,21 @@ class LabelWindow(QWidget):
         self.toggle_all_button.setToolTip("Toggle All Labels")
         self.toggle_all_button.clicked.connect(self.toggle_all_labels)
 
+        # Click toggles the count bars; the arrow picks what they count
+        self.count_bars_button = QToolButton()
+        self.count_bars_button.setIcon(get_icon("histogram.svg"))
+        self.count_bars_button.setIconSize(app_theme.scale_size(16))
+        self.count_bars_button.setCheckable(True)
+        self.count_bars_button.setPopupMode(QToolButton.MenuButtonPopup)
+        # Preferred vertically so the row stretches it to its push-button neighbours' height
+        self.count_bars_button.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Preferred)
+        self.count_bars_button.setStyleSheet(app_theme.scale_qss(COUNT_BUTTON_STYLE))
+        self.count_bars_button.setMenu(self._build_count_menu())
+        # Before connecting: there are no labels to apply bars to yet
+        self.count_bars_button.setChecked(self.count_bars_enabled)
+        self.count_bars_button.toggled.connect(self.set_count_bars_enabled)
+        self._update_count_bars_tooltip()
+
         self.filter_bar = QLineEdit()
         self.filter_bar.setPlaceholderText("Filter Labels")
         self.filter_bar.textChanged.connect(self.filter_labels)
@@ -566,6 +723,7 @@ class LabelWindow(QWidget):
         container_layout.addWidget(self.bulk_map_button)
         container_layout.addWidget(self.label_lock_button)
         container_layout.addWidget(self.toggle_all_button)
+        container_layout.addWidget(self.count_bars_button)
 
         # Force the container itself to expand across the toolbar
         button_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -662,6 +820,8 @@ class LabelWindow(QWidget):
         self.bulk_map_button.setIconSize(app_theme.scale_size(16))
         self.label_lock_button.setIconSize(app_theme.scale_size(16))
         self.toggle_all_button.setIconSize(app_theme.scale_size(16))
+        self.count_bars_button.setIconSize(app_theme.scale_size(16))
+        self.count_bars_button.setStyleSheet(app_theme.scale_qss(COUNT_BUTTON_STYLE))
         self.label_count_display.setStyleSheet(app_theme.scale_qss(FIELD_STYLE))
         self.annotation_count_display.setStyleSheet(
             app_theme.scale_qss(FIELD_STYLE_EDITABLE if not self.annotation_count_display.isReadOnly() else FIELD_STYLE)
@@ -865,6 +1025,7 @@ class LabelWindow(QWidget):
         label.selected.connect(self.set_active_label)
         label.label_deleted.connect(self.delete_label)
         label.visibilityChanged.connect(self._on_label_visibility_changed)
+        self._start_count_bar(label)
         self.labels.insert(0, label)
         self._short_code_map[label.short_label_code.strip().lower()] = label
         # Do not set active by default
@@ -885,6 +1046,7 @@ class LabelWindow(QWidget):
         label.selected.connect(self.set_active_label)
         label.label_deleted.connect(self.delete_label)
         label.visibilityChanged.connect(self._on_label_visibility_changed)
+        self._start_count_bar(label)
         self.labels.append(label)
         self._short_code_map[label.short_label_code.strip().lower()] = label
         if refresh_ui:
@@ -1755,29 +1917,42 @@ class LabelWindow(QWidget):
         self.reorganize_labels()
 
     def update_tooltips(self):
-        """Update tooltips for all labels with current annotation counts."""
+        """Refresh the per-label counts: the row tooltips and, when shown, the count bars.
+
+        Debounced by COUNT_REFRESH_DEBOUNCE_MS: every call restarts the wait,
+        so a burst of calls costs one refresh, after it ends. This is called for
+        every raster whose counts change (see ImageWindow.update_image_annotations)
+        and each refresh walks every raster. Some callers also fire before the
+        raster's label_counts have caught up with the change, which a tooltip
+        hides but a count bar shows as an off-by-one.
+        """
+        self._counts_timer.start()
+
+    def _refresh_label_counts(self):
+        """Recount annotations per label, for the current image and the whole project."""
+        image_window = getattr(self.main_window, 'image_window', None)
+        if image_window is None:
+            return
+
         # Get current raster for cached counts
-        current_raster = self.main_window.image_window.current_raster
-        
+        current_raster = image_window.current_raster
+        image_counts = dict(getattr(current_raster, 'label_counts', None) or {})
+
         # PRE-COMPUTE total counts across all rasters in one pass
         total_counts = {}
-        rasters = self.main_window.image_window.raster_manager.rasters.values()
-        
-        for raster in rasters:
+        for raster in image_window.raster_manager.rasters.values():
             if hasattr(raster, 'label_counts'):
                 for label_code, count in raster.label_counts.items():
                     total_counts[label_code] = total_counts.get(label_code, 0) + count
-        
+
+        self._image_counts = image_counts
+        self._project_counts = total_counts
+
         # Now update tooltips using pre-computed data
         for label in self.labels:
-            # Get count for current image from cached raster data
-            current_count = 0
-            if current_raster and hasattr(current_raster, 'label_counts'):
-                current_count = current_raster.label_counts.get(label.short_label_code, 0)
-            
-            # Get total count from pre-computed totals
+            current_count = image_counts.get(label.short_label_code, 0)
             total_count = total_counts.get(label.short_label_code, 0)
-            
+
             # Get RGB color values
             rgb = label.color.getRgb()
             rgb_text = f"RGB({rgb[0]}, {rgb[1]}, {rgb[2]})"
@@ -1788,6 +1963,81 @@ class LabelWindow(QWidget):
                       f"Color: {rgb_text}\n" \
                       f"ID: {label.id}"
             label.setToolTip(tooltip)
+
+        self._apply_count_bars()
+
+    # --- Count bars ---
+
+    def _build_count_menu(self):
+        """Build the count bars button's menu: what to count."""
+        menu = QMenu(self)
+
+        scope_group = QActionGroup(menu)
+        scope_group.setExclusive(True)
+        self.count_scope_actions = {}
+        for scope in (COUNT_SCOPE_IMAGE, COUNT_SCOPE_PROJECT):
+            action = menu.addAction(COUNT_SCOPE_NAMES[scope])
+            action.setCheckable(True)
+            action.setChecked(scope == self.count_scope)
+            action.setActionGroup(scope_group)
+            action.triggered.connect(lambda checked, s=scope: self.set_count_scope(s))
+            self.count_scope_actions[scope] = action
+        return menu
+
+    def _update_count_bars_tooltip(self):
+        """Describe the count bars button's current state."""
+        state = COUNT_SCOPE_NAMES[self.count_scope] if self.count_bars_enabled else "Off"
+        self.count_bars_button.setToolTip(f"Annotations Per Label: {state}\n"
+                                          "Click to toggle, use the arrow to choose what is counted")
+
+    def set_count_bars_enabled(self, enabled):
+        """Show or hide the count bars on the Label rows."""
+        self.count_bars_enabled = bool(enabled)
+        if self.count_bars_button.isChecked() != self.count_bars_enabled:
+            self.count_bars_button.setChecked(self.count_bars_enabled)
+        self._update_count_bars_tooltip()
+        self._apply_count_bars()
+
+    def set_count_scope(self, scope):
+        """Count annotations on the current image or across the whole project.
+
+        Choosing a scope while the bars are off turns them on; picking what to
+        count is as clear a request to see the counts as clicking the button.
+        """
+        self.count_scope = scope
+        self.count_scope_actions[scope].setChecked(True)
+        if not self.count_bars_enabled:
+            self.set_count_bars_enabled(True)
+            return
+        self._update_count_bars_tooltip()
+        self._apply_count_bars()
+
+    def _start_count_bar(self, label):
+        """Start a new row as an empty bar, not as a full-width plain label that shrinks on the next refresh."""
+        if self.count_bars_enabled:
+            label.set_count_bar(0, 0.0)
+
+    def _apply_count_bars(self):
+        """Push the latest counts onto the Label rows, or return them to plain labels.
+
+        Bars are scaled by the square root of the count. Benthic label sets are
+        long-tailed -- a substrate class in the thousands, rare taxa in the
+        tens -- and on a linear scale the tail is a column of slivers. The
+        numbers on the rows are always the true counts.
+        """
+        if not self.count_bars_enabled:
+            for label in self.labels:
+                label.set_count_bar(None)
+            return
+
+        counts = self._image_counts if self.count_scope == COUNT_SCOPE_IMAGE else self._project_counts
+        values = [counts.get(label.short_label_code, 0) for label in self.labels]
+        # Every label, filtered out or not, so the scale holds still while filtering
+        peak = max(values, default=0)
+
+        for label, count in zip(self.labels, values):
+            fraction = math.sqrt(count) / math.sqrt(peak) if peak > 0 else 0.0
+            label.set_count_bar(count, fraction)
 
 
 class AddLabelDialog(QDialog):
