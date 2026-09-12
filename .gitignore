@@ -124,6 +124,8 @@ launch.json
 *.bin
 *.engine
 *.onnx
+# TorchScript text encoder ultralytics downloads for YOLOE text prompts
+mobileclip_blt.ts
 *__pycache__/
 *.amltmp
 *.amlignore

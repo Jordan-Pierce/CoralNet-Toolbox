@@ -725,11 +725,32 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
                 except Exception:
                     pass
 
+        # Unconfirmed tool previews are not in the data model, so the loop above
+        # never reaches them. Without this, a See Anything or SAM preview kept
+        # whatever transparency it was born with until it was confirmed and the
+        # whole prediction had to be redone to see it at a different opacity.
+        self._update_active_tool_transparency(transparency)
+
         # Rebuild phantom layer with updated transparency
         self.refresh_phantom_annotations()
 
         # Restore cursor
         QApplication.restoreOverrideCursor()
+
+    def _update_active_tool_transparency(self, transparency):
+        """Push a new transparency onto the active tool's unconfirmed previews.
+
+        Tools opt in by defining `update_transparency(value)`; the rest are
+        skipped.
+        """
+        tool = self.tools.get(self.selected_tool) if self.selected_tool else None
+        updater = getattr(tool, 'update_transparency', None)
+        if updater is None:
+            return
+        try:
+            updater(transparency)
+        except Exception:
+            pass
 
     # --- VIDEO TOOLBAR HOOK ---
     def create_video_toolbar(self) -> QToolBar:

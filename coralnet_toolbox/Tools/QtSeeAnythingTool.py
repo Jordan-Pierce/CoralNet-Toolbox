@@ -1,15 +1,15 @@
 import warnings
 
-import copy
-
+import cv2
 import numpy as np
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush
-from PyQt5.QtWidgets import QGraphicsRectItem, QApplication
+from PyQt5.QtWidgets import QGraphicsRectItem, QApplication, QInputDialog
 
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.Annotations.QtAnnotation import RenderMode
+from coralnet_toolbox.QtActions import MaskEditAction
 
 from coralnet_toolbox.Results import ResultsProcessor
 from coralnet_toolbox.Results import CombineResults
@@ -24,6 +24,8 @@ from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.WorkArea import WorkArea
+
+from coralnet_toolbox.SeeAnything.QtDeployPredictor import DEFAULT_OUTPUT_TYPE
 
 from coralnet_toolbox.utilities import work_area_to_numpy_bgr
 
@@ -75,10 +77,16 @@ class SeeAnythingTool(Tool):
         
         # Add hover position tracking
         self.hover_pos = None
-        
+
         self.annotations = []
         self.results = None
-    
+
+        # Output settings - synced from the dialog, as the SAM tool does
+        self.output_type = DEFAULT_OUTPUT_TYPE
+
+        # Text prompt (Ctrl+T) standing in for drawn boxes, or None
+        self.text_prompt = None
+
     def activate(self):
         """
         Activates the tool.
@@ -86,6 +94,14 @@ class SeeAnythingTool(Tool):
         self.active = True
         self.annotation_window.setCursor(self.cursor)
         self.see_anything_dialog = self.main_window.see_anything_deploy_predictor_dialog
+        # Sync settings from dialog when the tool is activated
+        self.sync_settings_from_dialog()
+        self.report_state()
+
+    def sync_settings_from_dialog(self):
+        """Copy the output type from the dialog to this tool."""
+        if self.see_anything_dialog:
+            self.output_type = self.see_anything_dialog.get_output_type()
 
     def deactivate(self):
         """
@@ -106,12 +122,104 @@ class SeeAnythingTool(Tool):
         self.cancel_working_area_creation()
         # Clear detection data
         self.results = None
+        self.text_prompt = None
+        if self.see_anything_dialog is not None:
+            self.see_anything_dialog.set_text_prompt(None)
+
+        # If output type was Mask, unrasterize annotations to remove lock
+        # protection, exactly as the SAM tool does.
+        if self.output_type == "Mask":
+            self.annotation_window.unrasterize_annotations()
 
         # Update the viewport
         self.annotation_window.scene.update()
-        
+
         # Call parent deactivate to ensure crosshair is properly cleared
         super().deactivate()
+
+    def leave(self):
+        """Pointer left the window -- drop the rectangle being dragged out.
+
+        The work area, the rectangles already placed and any unconfirmed
+        predictions are deliberately kept: only the half-drawn rectangle, which
+        tracks the cursor and would otherwise freeze mid-drag, is discarded.
+        """
+        if self.drawing_rectangle:
+            self.cancel_rectangle_drawing()
+        self.hover_pos = None
+        super().leave()
+
+    def report_state(self):
+        """Say what Space and Backspace will do from here.
+
+        Space means several different things depending on the state -- create
+        the work area, predict, or confirm -- and nothing used to say which.
+        Where a third option exists (drawing more reference boxes to widen the
+        same prediction) it is named too, because nothing on screen suggests it.
+        """
+        if not self.active:
+            return
+
+        if self.creating_working_area:
+            message = "Space: finish the work area  |  Backspace: cancel it"
+        elif not self.working_area:
+            message = "Space: use the current view as the work area, or drag one out"
+        elif self.drawing_rectangle:
+            message = "Click to finish the box  |  Backspace: cancel it"
+        elif self.rectangles and not self.rectangles_processed:
+            count = len(self.rectangles)
+            message = (f"Space: predict from {count} reference box{'es' if count != 1 else ''}"
+                       "  |  Draw another box to add an example"
+                       "  |  Backspace: clear them")
+        elif self.annotations:
+            count = len(self.annotations)
+            confirm = "refine with SAM and confirm" if self._sam_enabled() else "confirm"
+            message = (f"Space: {confirm} {count} detection{'s' if count != 1 else ''}"
+                       "  |  Draw another box to find more"
+                       "  |  Backspace: discard them")
+        elif self.text_prompt:
+            message = (f"Space: predict from text prompt '{self.text_prompt}'"
+                       "  |  Ctrl+T: change it  |  Or draw a box instead")
+        else:
+            message = ("Draw a box around an example, or Ctrl+T for a text prompt"
+                       "  |  Space: close the work area")
+
+        self.main_window.status_bar.showMessage(message, 6000)
+
+    def _sam_enabled(self):
+        """True when the dialog is set to refine detections with SAM."""
+        dialog = self.see_anything_dialog
+        return dialog is not None and dialog.use_sam_dropdown.currentText() == "True"
+
+    def _sam_dialog(self):
+        """The SAM predictor dialog, if one is loaded and SAM refinement is on."""
+        if not self._sam_enabled():
+            return None
+        sam_dialog = getattr(self.see_anything_dialog, 'sam_dialog', None)
+        if sam_dialog is None or getattr(sam_dialog, 'loaded_model', None) is None:
+            return None
+        return sam_dialog
+
+    def _ensure_sam_image(self):
+        """Make sure the shared SAM predictor holds this work area's features.
+
+        The predictor is shared: the SAM tool and batch inference encode their
+        own images into it. Encoding here when the work area is created runs the
+        ViT pass under the wait cursor rather than at confirm time, and calling
+        it again before refinement re-encodes if something else took the
+        predictor in the meantime, instead of prompting against another image's
+        features.
+
+        Returns:
+            bool: True if SAM can be prompted against this work area.
+        """
+        sam_dialog = self._sam_dialog()
+        if sam_dialog is None or self.work_area_image is None:
+            return False
+        if sam_dialog.has_image(self.work_area_image):
+            return True
+        sam_dialog.set_image(self.work_area_image, self.image_path)
+        return sam_dialog.has_image(self.work_area_image)
 
     def set_working_area(self):
         """
@@ -155,16 +263,10 @@ class SeeAnythingTool(Tool):
         self.work_area_image = work_area_to_numpy_bgr(
             self.annotation_window.rasterio_image, self.working_area)
 
-        # Set the image in the SeeAnything dialog
+        # Set the image in the SeeAnything dialog, and pre-encode it for SAM
+        # while the wait cursor is still up
         self.see_anything_dialog.set_image(self.work_area_image, self.image_path)
-        
-        # --- PRELOAD SAM EMBEDDINGS ---
-        if self.see_anything_dialog.use_sam_dropdown.currentText() == "True":
-            sam_dialog = getattr(self.see_anything_dialog, 'sam_dialog', None)
-            if sam_dialog is not None and getattr(sam_dialog, 'loaded_model', None) is not None:
-                # This runs the 500ms ViT encoder while the WaitCursor is active during setup
-                sam_dialog.set_image(self.work_area_image, self.image_path)
-        # ----------------------------------------
+        self._ensure_sam_image()
 
         self.annotation_window.setCursor(Qt.CrossCursor)
         self.annotation_window.scene.update()
@@ -220,16 +322,10 @@ class SeeAnythingTool(Tool):
         self.work_area_image = work_area_to_numpy_bgr(
             self.annotation_window.rasterio_image, self.working_area)
         
-        # Set the image in the SeeAnything dialog
+        # Set the image in the SeeAnything dialog, and pre-encode it for SAM
+        # while the wait cursor is still up
         self.see_anything_dialog.set_image(self.work_area_image, self.image_path)
-        
-        # --- PRELOAD SAM EMBEDDINGS ---
-        if self.see_anything_dialog.use_sam_dropdown.currentText() == "True":
-            sam_dialog = getattr(self.see_anything_dialog, 'sam_dialog', None)
-            if sam_dialog is not None and getattr(sam_dialog, 'loaded_model', None) is not None:
-                # This runs the 500ms ViT encoder while the WaitCursor is active during setup
-                sam_dialog.set_image(self.work_area_image, self.image_path)
-        # ----------------------------------------
+        self._ensure_sam_image()
         
         self.annotation_window.setCursor(Qt.CrossCursor)
         self.annotation_window.scene.update()
@@ -436,6 +532,7 @@ class SeeAnythingTool(Tool):
             self.end_point = None
 
         self.annotation_window.scene.update()
+        self.report_state()
 
     def mouseMoveEvent(self, event: QMouseEvent):
         """
@@ -470,13 +567,18 @@ class SeeAnythingTool(Tool):
         Args:
             event (QKeyEvent): The key press event
         """
+        if event.key() == Qt.Key_T and event.modifiers() == Qt.ControlModifier:
+            self.prompt_for_text()
+            return
+
         if event.key() == Qt.Key_Space:
             # If creating working area, confirm it
             if self.creating_working_area and self.working_area_start and self.hover_pos:
                 self.set_custom_working_area(self.working_area_start, self.hover_pos)
                 self.cancel_working_area_creation()
+                self.report_state()
                 return
-        
+
             # If there is no working area, set it
             if not self.working_area:
                 self.set_working_area()
@@ -489,11 +591,16 @@ class SeeAnythingTool(Tool):
                 self.clear_all_rectangles()
                 # Mark rectangles as processed for this cycle
                 self.rectangles_processed = True
+
+            # No boxes drawn, but a text prompt is standing in for them
+            elif not self.annotations and self.text_prompt:
+                self.create_annotations_from_text()
+
             else:
                 # If there's a working area but no new user rectangles,
                 # or if rectangles have been processed, confirm the accumulated annotations.
                 if self.annotations:  # Check if there are any annotations to confirm/process
-                    if self.see_anything_dialog.use_sam_dropdown.currentText() == "True":
+                    if self._sam_enabled():
                         self.apply_sam_model()
                     else:
                         # Confirm the annotations accumulated so far
@@ -505,16 +612,12 @@ class SeeAnythingTool(Tool):
             # If creating working area, cancel it
             if self.creating_working_area:
                 self.cancel_working_area_creation()
+                self.report_state()
                 return
-                
+
             # Cancel current rectangle being drawn
             if self.drawing_rectangle:
-                self.drawing_rectangle = False
-                if self.current_rect_graphics:
-                    self.annotation_window.scene.removeItem(self.current_rect_graphics)
-                    self.current_rect_graphics = None
-                self.start_point = None
-                self.end_point = None
+                self.cancel_rectangle_drawing()
             # If we have a working area and accumulated annotations, clear them
             elif self.working_area and len(self.annotations) > 0:
                 self.clear_annotations()  # Clears unconfirmed annotations
@@ -523,6 +626,56 @@ class SeeAnythingTool(Tool):
                 self.clear_all_rectangles()  # Clears user input rectangles
 
         self.annotation_window.scene.update()
+        self.report_state()
+
+    def cancel_rectangle_drawing(self):
+        """Discard the rectangle currently being dragged out."""
+        self.drawing_rectangle = False
+        if self.current_rect_graphics:
+            if self.current_rect_graphics.scene() is not None:
+                self.annotation_window.scene.removeItem(self.current_rect_graphics)
+            self.current_rect_graphics = None
+        self.start_point = None
+        self.end_point = None
+        self.annotation_window.scene.update()
+
+    def prompt_for_text(self):
+        """Ask for a text prompt (Ctrl+T) to use in place of drawn boxes.
+
+        Ultralytics turns the phrase into a class embedding via
+        `YOLOE.get_text_pe`, so no reference boxes are needed at all. An empty
+        entry clears the prompt and returns to box prompting.
+        """
+        if self.see_anything_dialog is None or self.see_anything_dialog.loaded_model is None:
+            self.main_window.status_bar.showMessage(
+                "Load a See Anything model before using a text prompt.", 4000)
+            return
+
+        text, accepted = QInputDialog.getText(
+            self.annotation_window,
+            "Text Prompt",
+            "Describe what to find (leave empty to go back to box prompts):",
+            text=self.text_prompt or "")
+        if not accepted:
+            return
+
+        text = text.strip()
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            applied = self.see_anything_dialog.set_text_prompt(text)
+        except Exception as e:
+            applied = False
+            self.main_window.status_bar.showMessage(f"Could not set text prompt: {e}", 5000)
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        self.text_prompt = text if (text and applied) else None
+        if self.text_prompt:
+            self.main_window.status_bar.showMessage(
+                f"Text prompt set to '{self.text_prompt}'. Press Space to predict.", 5000)
+        elif not text:
+            self.main_window.status_bar.showMessage("Text prompt cleared.", 3000)
+        self.report_state()
 
     def create_annotations_from_rectangles(self):
         """
@@ -543,28 +696,61 @@ class SeeAnythingTool(Tool):
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
-        # Move the points back to the original image space
-        working_area_top_left = self.working_area.rect.topLeft()
-
         masks = None
         # Create masks from the rectangles (these are not polygons)
-        if self.see_anything_dialog.task_dropdown.currentText() == 'segment':
+        if self.see_anything_dialog.get_task() == 'segment':
             masks = []
             for r in self.rectangles:
                 x1, y1, x2, y2 = r
                 masks.append(np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]]))
 
-        from time import time
-        t0 = time()
-        # Predict from prompts, providing masks if the task is segmentation
+        # Predict from prompts, providing masks if the task is segmentation.
+        # The rectangles are in work-area pixels and are handed over unscaled:
+        # ultralytics rasterizes them against its own letterbox (see
+        # DeployPredictorDialog.build_prompts).
         results = self.see_anything_dialog.predict_from_prompts(self.rectangles, masks=masks)
-        print(f"YOLOE prediction from prompts took {time() - t0:.2f} seconds")
 
         if not results:
             # Make cursor normal
             QApplication.restoreOverrideCursor()
+            self.main_window.status_bar.showMessage(
+                "See Anything returned nothing for those reference boxes.", 5000)
             return None
-        
+
+        self._build_annotations_from_results(results)
+
+    def create_annotations_from_text(self):
+        """Predict from the current text prompt (Ctrl+T) instead of drawn boxes."""
+        if not self.annotation_window.active_image or not self.working_area:
+            return None
+        if not self.text_prompt:
+            return None
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        results = self.see_anything_dialog.predict_from_text()
+
+        if not results:
+            QApplication.restoreOverrideCursor()
+            self.main_window.status_bar.showMessage(
+                f"See Anything found nothing matching '{self.text_prompt}'.", 5000)
+            return None
+
+        self._build_annotations_from_results(results)
+
+    def _build_annotations_from_results(self, results):
+        """Filter a prediction and turn what survives into preview annotations.
+
+        Shared by the box-prompt and text-prompt paths. Restores the cursor and
+        reports how many detections were kept and how many the confidence and
+        area thresholds dropped -- an empty result used to be silent, which read
+        as a crash.
+
+        Args:
+            results (list): Ultralytics Results, as returned by the dialog.
+        """
+        # Move the points back to the original image space
+        working_area_top_left = self.working_area.rect.topLeft()
+
         # Get the first result from the list
         results = results[0]
 
@@ -615,12 +801,17 @@ class SeeAnythingTool(Tool):
         # Clear previous annotations if any
         self.clear_annotations()
 
+        # Counted so the result can be reported rather than left to guess at
+        dropped_confidence = 0
+        dropped_area = 0
+
         # Process results based on the task type (creates polygons or rectangle annotations)
-        if self.see_anything_dialog.task_dropdown.currentText() == "segment":
+        if self.see_anything_dialog.get_task() == "segment":
             if self.results.masks:
                 for i, polygon in enumerate(self.results.masks.xyn):
                     confidence = self.results.boxes.conf[i].item()
                     if confidence < self.main_window.get_uncertainty_thresh():
+                        dropped_confidence += 1
                         continue
 
                     # Get absolute bounding box for area check (relative to work area)
@@ -629,6 +820,7 @@ class SeeAnythingTool(Tool):
 
                     # Area filtering
                     if area_bounds and not (area_bounds[0] <= box_area <= area_bounds[1]):
+                        dropped_area += 1
                         continue
 
                     # Convert normalized polygon points to absolute coordinates in the whole image
@@ -638,12 +830,13 @@ class SeeAnythingTool(Tool):
 
                     # No automatic simplification - preserve full precision
                     self.create_polygon_annotation(polygon_abs, confidence)
-                    
+
         else:  # Task is 'detect'
             if self.results.boxes:
                 for i, box_norm in enumerate(self.results.boxes.xyxyn):
                     confidence = self.results.boxes.conf[i].item()
                     if confidence < self.main_window.get_uncertainty_thresh():
+                        dropped_confidence += 1
                         continue
 
                     # Convert normalized box to absolute coordinates in the work area
@@ -656,6 +849,7 @@ class SeeAnythingTool(Tool):
 
                     # Area filtering
                     if area_bounds and not (area_bounds[0] <= box_area <= area_bounds[1]):
+                        dropped_area += 1
                         continue
 
                     # Add working area offset to get coordinates in the whole image
@@ -670,6 +864,34 @@ class SeeAnythingTool(Tool):
 
         # Make cursor normal
         QApplication.restoreOverrideCursor()
+
+        self.report_detection_counts(dropped_confidence, dropped_area)
+        return len(self.annotations)
+
+    def report_detection_counts(self, dropped_confidence, dropped_area):
+        """Say how many detections were kept, and what the thresholds removed."""
+        kept = len(self.annotations)
+        message = f"{kept} detection{'s' if kept != 1 else ''} found"
+
+        dropped = []
+        if dropped_confidence:
+            dropped.append(f"{dropped_confidence} below the uncertainty threshold")
+        if dropped_area:
+            dropped.append(f"{dropped_area} outside the area thresholds")
+        if dropped:
+            message += " (" + ", ".join(dropped) + " discarded)"
+
+        if kept:
+            confirm = "refine with SAM and confirm" if self._sam_enabled() else "confirm"
+            message += (f". Space: {confirm}"
+                        "  |  Draw another box to find more"
+                        "  |  Backspace: discard.")
+        elif dropped:
+            message += ". Try lowering the thresholds, or draw another example box."
+        else:
+            message += ". Try another example box, or a different work area."
+
+        self.main_window.status_bar.showMessage(message, 8000)
 
     def create_rectangle_annotation(self, box, confidence):
         """
@@ -776,6 +998,13 @@ class SeeAnythingTool(Tool):
         """
         Confirm the annotations and clear the working area.
         """
+        # Sync the latest output type from the dialog before committing
+        self.sync_settings_from_dialog()
+
+        if self.output_type == "Mask":
+            self.confirm_annotations_as_mask()
+            return
+
         # Confirm annotations, using a bulk path for large batches to avoid O(N^2) UI work.
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
@@ -863,11 +1092,137 @@ class SeeAnythingTool(Tool):
             self.annotations = []
             self.results = None
 
+    def _mask_target(self):
+        """The raster mask annotation and class ID to paint into, or (None, None).
+
+        Mask output writes into the image's existing MaskAnnotation rather than
+        creating vector annotations, the same way the SAM tool does.
+        """
+        mask_annotation = self.annotation_window.current_mask_annotation
+        label = self.annotation_window.selected_label
+        if mask_annotation is None or label is None:
+            return None, None
+        class_id = mask_annotation.label_id_to_class_id_map.get(label.id)
+        if class_id is None:
+            return None, None
+        return mask_annotation, class_id
+
+    def _commit_prediction_mask(self, prediction_mask, mask_annotation, painted):
+        """Push a filled prediction mask onto the annotation and the undo stack."""
+        if not painted:
+            self.main_window.status_bar.showMessage(
+                "Nothing to paint into the mask.", 4000)
+            return
+
+        history_action = MaskEditAction(mask_annotation, description="See Anything prediction")
+        mask_annotation.update_mask_with_prediction_mask(
+            prediction_mask,
+            history_action=history_action,
+        )
+        if not history_action.is_empty():
+            self.annotation_window.action_stack.push(history_action)
+
+        self.main_window.status_bar.showMessage(
+            f"Painted {painted} region{'s' if painted != 1 else ''} into the mask.", 5000)
+
+    def confirm_annotations_as_mask(self):
+        """Commit the preview annotations by painting them into the raster mask.
+
+        The previews are polygons and rectangles because those draw cheaply;
+        Mask output rasterizes them at confirm time, which is the same split the
+        SAM tool uses between its preview and its committed result.
+        """
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            mask_annotation, class_id = self._mask_target()
+            if mask_annotation is None:
+                self.main_window.status_bar.showMessage(
+                    "No raster mask on this image to paint into; "
+                    "switch the output type or create a mask first.", 6000)
+                return
+
+            prediction_mask = np.zeros_like(mask_annotation.mask_data)
+            painted = 0
+
+            for annotation in self.annotations:
+                polygon = self._annotation_to_polygon(annotation)
+                if polygon is None:
+                    continue
+                cv2.fillPoly(prediction_mask, [polygon], int(class_id))
+                painted += 1
+
+            self._commit_prediction_mask(prediction_mask, mask_annotation, painted)
+        finally:
+            QApplication.restoreOverrideCursor()
+            self.clear_annotations()
+            self.clear_all_rectangles()
+            self.cancel_working_area()
+            self.annotations = []
+            self.results = None
+
+    @staticmethod
+    def _annotation_to_polygon(annotation):
+        """Return an annotation's outline as an int32 (N, 2) array for cv2.fillPoly."""
+        if isinstance(annotation, PolygonAnnotation):
+            points = [[p.x(), p.y()] for p in annotation.points]
+        elif isinstance(annotation, RectangleAnnotation):
+            top_left, bottom_right = annotation.top_left, annotation.bottom_right
+            points = [[top_left.x(), top_left.y()],
+                      [bottom_right.x(), top_left.y()],
+                      [bottom_right.x(), bottom_right.y()],
+                      [top_left.x(), bottom_right.y()]]
+        else:
+            return None
+
+        if len(points) < 3:
+            return None
+        return np.round(np.array(points, dtype=np.float32)).astype(np.int32)
+
+    def paint_results_into_mask(self, results_list):
+        """Paint SAM-refined masks straight into the raster mask annotation.
+
+        Used for Mask output when SAM refinement is on: the masks are already
+        in whole-image coordinates by this point, so they are rasterized rather
+        than turned into polygons and back.
+
+        Args:
+            results_list: Ultralytics Results (or a list of them) already mapped
+                out of the work area.
+        """
+        mask_annotation, class_id = self._mask_target()
+        if mask_annotation is None:
+            self.main_window.status_bar.showMessage(
+                "No raster mask on this image to paint into; "
+                "switch the output type or create a mask first.", 6000)
+            return
+
+        if not isinstance(results_list, list):
+            results_list = [results_list]
+
+        prediction_mask = np.zeros_like(mask_annotation.mask_data)
+        painted = 0
+
+        for result in results_list:
+            if result is None or result.masks is None:
+                continue
+            for polygon in result.masks.xy:
+                if polygon is None or len(polygon) < 3:
+                    continue
+                cv2.fillPoly(prediction_mask,
+                             [np.round(polygon).astype(np.int32)],
+                             int(class_id))
+                painted += 1
+
+        self._commit_prediction_mask(prediction_mask, mask_annotation, painted)
+
     def apply_sam_model(self):
         """Uses the Results with SAM predictor to create polygons instead of confirming the
         ones created by the SeeAnything predictor."""
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
+
+        # Pick up the output type chosen in the dialog before committing
+        self.sync_settings_from_dialog()
 
         # Create a class mapping dictionary
         class_mapping = {0: self.annotation_window.selected_label}
@@ -884,36 +1239,24 @@ class SeeAnythingTool(Tool):
         results_to_process = self.results
         results_to_process.names = {0: class_mapping[0].short_label_code}
 
-        # results_to_process.boxes.xyxy is in SeeAnything's internal, non-uniformly
-        # resized image space (long side snapped to imgsz, short side independently
-        # rounded to a multiple of 32 in QtDeployPredictor.get_target_shape). Rebind
-        # boxes to true work-area pixel space via the resolution-independent
-        # normalized coords, and rebind orig_img/orig_shape to the work area image so
-        # SAM operates on its already-preloaded full-resolution embeddings instead of
-        # re-encoding the smaller, non-uniformly scaled SeeAnything image. Otherwise
-        # Ultralytics' letterbox-based scale_coords/scale_masks (used to map SAM's
-        # masks back to work-area space) misinterprets that non-uniform resize as a
-        # uniform gain + pad, producing polygons that drift increasingly off as you
-        # move away from the middle of the work area.
-        if results_to_process.boxes is not None and len(results_to_process.boxes) > 0:
-            boxes_xyxyn = results_to_process.boxes.xyxyn.clone()
-            wa_h, wa_w = self.work_area_image.shape[:2]
+        # The boxes are already in work-area pixels and orig_img is already the
+        # work-area crop: the prediction ran on that crop directly, letterboxed
+        # by ultralytics, which inverts its own transform in scale_boxes.
+        #
+        # There used to be a block here rebinding boxes and orig_img through
+        # xyxyn. It existed because this dialog pre-resized the crop with a
+        # separate scale per axis, which ultralytics then unwound as if it were
+        # a uniform letterbox -- so masks drifted further off the further they
+        # sat from the centre of the work area. The resize is gone (see
+        # DeployPredictorDialog.set_image), and so is the correction for it.
 
-            results_to_process.orig_img = self.work_area_image
-            results_to_process.orig_shape = (wa_h, wa_w)
-
-            new_boxes = results_to_process.boxes.data.clone()
-            new_boxes[:, [0, 2]] = boxes_xyxyn[:, [0, 2]] * wa_w
-            new_boxes[:, [1, 3]] = boxes_xyxyn[:, [1, 3]] * wa_h
-            results_to_process.update(boxes=new_boxes)
-
-        from time import time
-        t0 = time()
+        # Re-encode if another tool or a batch run took the shared SAM
+        # predictor since the work area was created.
+        self._ensure_sam_image()
 
         # Process the results with the SAM predictor
         processed_results = self.see_anything_dialog.sam_dialog.predict_from_results([results_to_process],
                                                                                      self.image_path)
-        print(f"SAM prediction from results took {time() - t0:.2f} seconds")
 
         # Get the raster
         raster = self.main_window.image_window.raster_manager.get_raster(self.image_path)
@@ -937,8 +1280,12 @@ class SeeAnythingTool(Tool):
         elif final_results is not None:
             final_results.path = self.image_path
 
-        # Process the results
-        results_processor.process_segmentation_results(final_results)
+        # Process the results, either as vector annotations or straight into
+        # the image's raster mask
+        if self.output_type == "Mask":
+            self.paint_results_into_mask(final_results)
+        else:
+            results_processor.process_segmentation_results(final_results)
 
         # Make cursor normal
         QApplication.restoreOverrideCursor()

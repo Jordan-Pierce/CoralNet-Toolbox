@@ -3,7 +3,6 @@ import warnings
 import os
 import gc
 
-import cv2
 import numpy as np
 
 import torch
@@ -18,17 +17,23 @@ from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout,
                              QSpinBox, QVBoxLayout, QGroupBox, QTabWidget,
                              QWidget, QLineEdit, QFileDialog)
 
-from coralnet_toolbox.Results import ResultsProcessor
-
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Common import ThresholdsWidget
 
-from coralnet_toolbox.Icons import get_icon, get_window_icon
-
-from coralnet_toolbox.utilities import rasterio_to_numpy
+from coralnet_toolbox.Icons import get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+# Input-size granularity for YOLOE. Everything in the family is a stride-32
+# model, so the letterbox pads to a multiple of this.
+IMGSZ_STRIDE = 32
+
+# Shared by both See Anything dialogs so they open on the same model.
+DEFAULT_MODEL = 'yoloe-11l-seg.pt'
+
+# What the interactive tool produces unless the user says otherwise.
+DEFAULT_OUTPUT_TYPE = "Rectangle"
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -53,6 +58,12 @@ class DeployPredictorDialog(QDialog):
         self.model_path = None
         self.loaded_model = None
         self.image_path = None
+        # The work-area crop exactly as the tool read it. It is handed to the
+        # model unresized; ultralytics letterboxes it and inverts that transform
+        # for us (see predict_from_prompts).
+        self.original_image = None
+        # Text prompt set from the tool (Ctrl+T), or None for box prompts
+        self.text_prompt = None
 
         self.class_mapping = {}
 
@@ -161,8 +172,8 @@ class DeployPredictorDialog(QDialog):
         self.model_combo.addItems(standard_models)
 
         # Set the default model
-        self.model_combo.setCurrentIndex(standard_models.index('yoloe-11s-seg.pt'))
-        self.model_combo.setToolTip("Choose a See Anything (YOLOE) model variant.\nSmall: Faster inference, lower accuracy.\nLarge: Slower, higher accuracy.\nRecommended: 11s or 11m for balanced performance.")
+        self.model_combo.setCurrentIndex(standard_models.index(DEFAULT_MODEL))
+        self.model_combo.setToolTip("Choose a See Anything (YOLOE) model variant.\nSmall: Faster inference, lower accuracy.\nLarge: Slower, higher accuracy.\nDefault: 11l; drop to 11s or 11m if inference is too slow.")
         model_select_layout.addRow("Model:", self.model_combo)
 
         tab_widget.addTab(model_select_tab, "Select Model")
@@ -204,26 +215,33 @@ class DeployPredictorDialog(QDialog):
         group_box = QGroupBox("Parameters")
         layout = QFormLayout()
 
-        # Task dropdown
-        self.task_dropdown = QComboBox()
-        self.task_dropdown.addItems(["detect", "segment"])
-        self.task_dropdown.setToolTip("Task mode for See Anything.\nDetect: Object detection with bounding boxes.\nSegment: Instance segmentation with masks.")
-        layout.addRow("Task", self.task_dropdown)
+        # Output type. This replaces the old detect/segment "Task" dropdown,
+        # which named the model's mode rather than what the user gets. The task
+        # is derived from it (see get_task), so there is one control instead of
+        # two that could disagree. Same three options as the SAM tool's dialog.
+        self.output_type_dropdown = QComboBox()
+        self.output_type_dropdown.addItems(["Polygon", "Rectangle", "Mask"])
+        self.output_type_dropdown.setCurrentText(DEFAULT_OUTPUT_TYPE)
+        self.output_type_dropdown.setToolTip(
+            "Format for See Anything output annotations.\n"
+            "Polygon: Free-form shapes (segmentation).\n"
+            "Rectangle: Bounding boxes (detection, fastest).\n"
+            "Mask: Segmentation painted into the image's raster mask.")
+        layout.addRow("Output Type", self.output_type_dropdown)
 
-        # Resize image dropdown
-        self.resize_image_dropdown = QComboBox()
-        self.resize_image_dropdown.addItems(["True", "False"])
-        self.resize_image_dropdown.setCurrentIndex(0)
-        self.resize_image_dropdown.setEnabled(False)
-        self.resize_image_dropdown.setToolTip("(Automatic) Resize image to match model input requirements.")
-        layout.addRow("Resize Image", self.resize_image_dropdown)
+        # The greyed-out "Resize Image" dropdown that used to sit here is gone.
+        # It offered a choice that was never taken -- it was disabled -- and it
+        # described a manual resize that no longer happens: ultralytics
+        # letterboxes the work-area crop itself.
 
-        # Image size control
+        # Image size control. The old 512-65536 range in steps of 1024 offered
+        # sizes no GPU can run; YOLOE's cost grows with the square of this.
         self.imgsz_spinbox = QSpinBox()
-        self.imgsz_spinbox.setRange(512, 65536)
-        self.imgsz_spinbox.setSingleStep(1024)
+        self.imgsz_spinbox.setRange(512, 4096)
+        self.imgsz_spinbox.setSingleStep(IMGSZ_STRIDE)
         self.imgsz_spinbox.setValue(self.imgsz)
-        self.imgsz_spinbox.setToolTip("Input image size for the model.\nLarger sizes improve accuracy but consume more GPU memory.")
+        self.imgsz_spinbox.setToolTip("Input image size for the model.\nLarger sizes improve accuracy but consume more GPU memory.\n"
+                                      f"Rounded to a multiple of {IMGSZ_STRIDE}.")
         layout.addRow("Image Size (imgsz)", self.imgsz_spinbox)
 
         group_box.setLayout(layout)
@@ -248,10 +266,14 @@ class DeployPredictorDialog(QDialog):
         """
         Setup thresholds control section in a group box.
         """
-        # Add ThresholdsWidget for all threshold controls
+        # Add ThresholdsWidget for all threshold controls. Boundary detections
+        # is shown because the See Anything tool reads it when it maps SAM's
+        # masks out of the work area; leaving it hidden meant the setting was
+        # in force but not visible anywhere.
         self.thresholds_widget = ThresholdsWidget(
             self.main_window,
             show_max_detections=True,
+            show_boundary=True,
             show_uncertainty=True,
             show_iou=True,
             show_area=True
@@ -294,8 +316,12 @@ class DeployPredictorDialog(QDialog):
 
     def is_sam_model_deployed(self):
         """
-        Check if the SAM model is deployed and update the checkbox state accordingly.
-        If SAM is enabled for polygons, sync and disable the imgsz spinbox.
+        Check if the SAM model is deployed and update the dropdown state accordingly.
+
+        The See Anything image size is no longer tied to SAM's. That coupling
+        existed while SAM was handed this dialog's resized image; it now encodes
+        the native work-area crop at its own size, so pinning the two together
+        only capped YOLOE at SAM's ceiling.
 
         :return: Boolean indicating whether the SAM model is deployed
         """
@@ -305,50 +331,22 @@ class DeployPredictorDialog(QDialog):
         self.sam_dialog = self.main_window.sam_deploy_predictor_dialog
 
         if not self.sam_dialog.loaded_model:
+            # Signals blocked: this is connected to currentIndexChanged, so
+            # resetting the dropdown here re-entered the method and showed the
+            # error a second time.
+            self.use_sam_dropdown.blockSignals(True)
             self.use_sam_dropdown.setCurrentText("False")
+            self.use_sam_dropdown.blockSignals(False)
             QMessageBox.critical(self, "Error", "Please deploy the SAM model first.")
             return False
-        
-        # Check if SAM polygons are enabled
-        if self.use_sam_dropdown.currentText() == "True":
-            # Sync the imgsz spinbox with SAM's value
-            self.imgsz_spinbox.setValue(self.sam_dialog.imgsz_spinbox.value())
-            # Disable the spinbox
-            self.imgsz_spinbox.setEnabled(False)
-            
-            # Connect SAM's imgsz_spinbox valueChanged signal to update our value
-            # First disconnect any existing connection to avoid duplicates
-            try:
-                self.sam_dialog.imgsz_spinbox.valueChanged.disconnect(self.update_from_sam_imgsz)
-            except TypeError:
-                # No connection exists yet
-                pass
-            
-            # Connect the signal
-            self.sam_dialog.imgsz_spinbox.valueChanged.connect(self.update_from_sam_imgsz)
-        else:
-            # Re-enable the spinbox when SAM polygons are disabled
-            self.imgsz_spinbox.setEnabled(True)
-            
-            # Disconnect the signal when SAM is disabled
-            try:
-                self.sam_dialog.imgsz_spinbox.valueChanged.disconnect(self.update_from_sam_imgsz)
-            except TypeError:
-                # No connection exists
-                pass
+
+        # SAM refines boxes into masks, so a Rectangle output would throw away
+        # the only thing SAM adds. Move to Polygon rather than running both.
+        if (self.use_sam_dropdown.currentText() == "True"
+                and self.get_output_type() == "Rectangle"):
+            self.output_type_dropdown.setCurrentText("Polygon")
 
         return True
-
-    def update_from_sam_imgsz(self, value):
-        """
-        Update the SeeAnything image size when SAM's image size changes.
-        Only takes effect when SAM polygons are enabled.
-        
-        Args:
-            value (int): The new image size value from SAM dialog
-        """
-        if self.use_sam_dropdown.currentText() == "True":
-            self.imgsz_spinbox.setValue(value)
 
     def load_model(self):
         """
@@ -361,7 +359,7 @@ class DeployPredictorDialog(QDialog):
     
         try:
             # Update the task
-            self.task = self.task_dropdown.currentText()
+            self.task = self.get_task()
             
             # Get model path - either from custom file or dropdown
             if self.model_edit.text().strip():
@@ -386,13 +384,17 @@ class DeployPredictorDialog(QDialog):
                 ),
             )
     
-            # Run a dummy prediction to load the model
+            # Run a dummy prediction to load the model. Warm up at the precision
+            # and with the predictor class the real calls use: ultralytics
+            # rebuilds the predictor when either changes between calls.
             self.loaded_model.predict(
                 np.zeros((640, 640, 3), dtype=np.uint8),
                 visual_prompts=visuals.copy(),  # This needs to happen to properly initialize the predictor
-                predictor=YOLOEVPSegPredictor,
+                predictor=self.get_predictor_class(),
                 imgsz=640,
                 conf=0.99,
+                device=self.main_window.device,
+                quantize=self.get_quantize(),
             )
             # Finish the progress bar
             progress_bar.finish_progress()
@@ -417,48 +419,78 @@ class DeployPredictorDialog(QDialog):
             progress_bar.close()
             progress_bar = None
             
-    def resize_image(self, image):
+    def get_output_type(self):
+        """Return the annotation format the tool should produce."""
+        return self.output_type_dropdown.currentText()
+
+    def get_task(self):
+        """Return the ultralytics task the current output type needs.
+
+        Rectangle output only needs boxes, so it runs the detection head and
+        skips mask prediction entirely. Polygon and Mask both need masks.
         """
-        Resize the image to the specified size.
+        return "detect" if self.get_output_type() == "Rectangle" else "segment"
+
+    def get_imgsz(self):
+        """Return the spinbox image size, rounded to a multiple of the model stride.
+
+        The spinbox is updated so it shows what is actually used.
         """
-        imgsz = self.imgsz_spinbox.value()
-        target_shape = self.get_target_shape(image, imgsz)
-        
-        # target_shape returns (height, width), but cv2.resize expects (width, height)
-        return cv2.resize(image, (target_shape[1], target_shape[0]))
+        low, high = self.imgsz_spinbox.minimum(), self.imgsz_spinbox.maximum()
 
-    def get_target_shape(self, image, imgsz):
+        value = self.imgsz_spinbox.value()
+        snapped = int(round(value / IMGSZ_STRIDE)) * IMGSZ_STRIDE
+        # Round inwards at the ends, so the result is a multiple of the stride
+        # rather than the range's own bound.
+        if snapped < low:
+            snapped = -(-low // IMGSZ_STRIDE) * IMGSZ_STRIDE
+        elif snapped > high:
+            snapped = (high // IMGSZ_STRIDE) * IMGSZ_STRIDE
+
+        if snapped != value:
+            self.imgsz_spinbox.setValue(snapped)
+        self.imgsz = snapped
+        return snapped
+
+    def get_quantize(self):
+        """Precision for model calls: 32 on the CPU, else 16.
+
+        FP16 on the CPU is slower than FP32, not faster. This is the rule the
+        SAM dialogs use, so the two stay comparable.
         """
-        Determine the target shape based on the long side.
-        Ensures the maximum dimension is a multiple of 32.
+        on_cpu = str(self.main_window.device).strip().lower() == "cpu"
+        return 32 if on_cpu else 16
+
+    def get_predictor_class(self):
+        """Return the visual-prompt predictor class to run with.
+
+        Always the segmentation predictor, including for Rectangle output.
+        Every YOLOE checkpoint offered here is a `-seg` model, and a `-seg`
+        model's raw output is nested one level deeper than the detection
+        predictor expects: `non_max_suppression` unwraps the outer tuple once
+        and then hits `prediction.shape[-1]` on the inner one, raising
+        "'tuple' object has no attribute 'shape'" before any result is built.
+        Only `SegmentationPredictor.postprocess` unpacks it correctly.
+
+        The mask head therefore runs whatever the output type is -- that is a
+        property of the checkpoint, not a choice. What Rectangle output does
+        save is `retina_masks`, which stays off for it (see predict_from_prompts).
         """
-        h, w = image.shape[:2]
-
-        # Round imgsz to the nearest multiple of 32
-        imgsz = round(imgsz / 32) * 32
-
-        if h > w:
-            # Height is the longer side
-            new_h = imgsz
-            new_w = int(w * (new_h / h))
-            # Make width a multiple of 32
-            new_w = round(new_w / 32) * 32
-        else:
-            # Width is the longer side
-            new_w = imgsz
-            new_h = int(h * (new_w / w))
-            # Make height a multiple of 32
-            new_h = round(new_h / 32) * 32
-
-        # Ensure neither dimension is zero
-        new_h = max(32, new_h)
-        new_w = max(32, new_w)
-
-        return new_h, new_w
+        return YOLOEVPSegPredictor
 
     def set_image(self, image, image_path):
         """
         Set the image in the predictor.
+
+        The array is kept exactly as it was read. It used to be pre-resized
+        here, with the prompts scaled to match. That saved nothing -- predict
+        mode already letterboxes to the long side with minimum padding, so
+        ultralytics would have scaled the crop to the same size by itself --
+        and it cost correctness: the two axes were scaled by slightly different
+        factors, each independently rounded to a multiple of 32, which every
+        ultralytics inverse transform then unwound as a single uniform gain. So
+        masks drifted further off the further they sat from the centre of the
+        work area. Predictions now run on the native crop.
         """
         if image is None:
             # There was a fallback here that read the image itself via
@@ -469,96 +501,120 @@ class DeployPredictorDialog(QDialog):
             # BGR ultralytics documents. Fail clearly instead of pretending.
             raise ValueError("set_image requires an image array; got None")
 
-        # Save the original image
         self.original_image = image
         self.image_path = image_path
 
-        # Resize the image if the checkbox is checked
-        if self.resize_image_dropdown.currentText() == "True":
-            self.resized_image = self.resize_image(image)
-        else:
-            self.resized_image = image
-            
-    def scale_prompts(self, bboxes, masks=None):
-        """
-        Scale the bounding boxes and masks to the resized image.
-        """
-        # Update the bbox coordinates to be relative to the resized image
-        bboxes = np.array(bboxes)
-        bboxes[:, 0] = (bboxes[:, 0] / self.original_image.shape[1]) * self.resized_image.shape[1]
-        bboxes[:, 1] = (bboxes[:, 1] / self.original_image.shape[0]) * self.resized_image.shape[0]
-        bboxes[:, 2] = (bboxes[:, 2] / self.original_image.shape[1]) * self.resized_image.shape[1]
-        bboxes[:, 3] = (bboxes[:, 3] / self.original_image.shape[0]) * self.resized_image.shape[0]
+    def build_prompts(self, bboxes, masks=None):
+        """Assemble the ultralytics visual-prompt dict from work-area coordinates.
 
-        # Set the predictor
-        self.task = self.task_dropdown.currentText()
+        No coordinate scaling happens here. `YOLOEVPDetectPredictor` rasterizes
+        these prompts against the letterboxed batch itself, applying the same
+        gain and padding it applied to the image, so prompts must arrive in the
+        source image's own pixels.
 
-        # Create a visual dictionary
+        `cls` is all zeros: See Anything is deliberately single-class.
+        """
+        bboxes = np.asarray(bboxes, dtype=np.float32)
+        if bboxes.ndim == 1:
+            bboxes = bboxes[None, :]
+
+        # Set the predictor task
+        self.task = self.get_task()
+
         visual_prompts = {
-            'bboxes': np.array(bboxes),
+            'bboxes': bboxes,
             'cls': np.zeros(len(bboxes))
         }
         if self.task == 'segment':
             if masks:
-                scaled_masks = []
-                for mask in masks:
-                    scaled_mask = np.array(mask, dtype=np.float32)
-                    scaled_mask[:, 0] = (scaled_mask[:, 0] / self.original_image.shape[1]) * self.resized_image.shape[1]
-                    scaled_mask[:, 1] = (scaled_mask[:, 1] / self.original_image.shape[0]) * self.resized_image.shape[0]
-                    scaled_masks.append(scaled_mask)
-                visual_prompts['masks'] = scaled_masks
+                visual_prompts['masks'] = [np.asarray(m, dtype=np.float32) for m in masks]
             else:  # Fallback to creating masks from bboxes if no masks are provided
                 fallback_masks = []
                 for bbox in bboxes:
                     x1, y1, x2, y2 = bbox
-                    fallback_masks.append(np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]]))
+                    fallback_masks.append(np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]],
+                                                   dtype=np.float32))
                 visual_prompts['masks'] = fallback_masks
-        
+
         return visual_prompts
+
+    def set_text_prompt(self, text):
+        """Set (or clear) the text prompt used in place of box prompts.
+
+        Ultralytics turns the phrase into a class embedding with
+        `YOLOE.get_text_pe`, which `set_classes` accepts exactly like a visual
+        prompt embedding. One phrase only: See Anything stays single-class.
+
+        Args:
+            text (str | None): The phrase, or None/empty to go back to boxes.
+
+        Returns:
+            bool: True if the model is now prompted by this text.
+        """
+        text = (text or "").strip()
+        self.text_prompt = text or None
+
+        if self.loaded_model is None or self.text_prompt is None:
+            return False
+
+        # A fused head cannot take new prompts; unfuse before setting classes,
+        # exactly as the Generator does for its VPEs.
+        self.loaded_model.is_fused = lambda: False
+        embeddings = self.loaded_model.get_text_pe([self.text_prompt])
+        self.loaded_model.set_classes([self.text_prompt], embeddings)
+        return True
 
     def predict_from_prompts(self, bboxes, masks=None):
         """
         Make predictions using the currently loaded model using prompts.
 
+        Runs on the native work-area crop, so ultralytics letterboxes it itself
+        and `scale_boxes`/`scale_masks` invert that transform exactly. Results
+        therefore come back in work-area pixels and need no rescaling by the
+        caller.
+
+        `rect=True` is passed explicitly even though predict mode already
+        defaults to it: minimum-padding letterboxing is what makes the geometry
+        above hold, so it is stated rather than inherited.
+
         Args:
-            bboxes (np.ndarray): The bounding boxes to use as prompts.
-            masks (list, optional): A list of polygons to use as prompts for segmentation.
+            bboxes (np.ndarray): The bounding boxes to use as prompts, in
+                work-area pixel coordinates.
+            masks (list, optional): A list of polygons to use as prompts for
+                segmentation, in the same coordinates.
 
         Returns:
             results (Results): Ultralytics Results object
         """
         if not self.loaded_model:
-            QMessageBox.critical(self.annotation_window, 
+            QMessageBox.critical(self.annotation_window,
                                  "Model Not Loaded",
                                  "Model not loaded, cannot make predictions")
+            return None
+
+        if self.original_image is None:
+            QMessageBox.critical(self.annotation_window,
+                                 "No Image Set",
+                                 "No image set for the See Anything predictor.")
             return None
 
         if not len(bboxes):
             return None
 
-        # Get the scaled visual prompts
-        visual_prompts = self.scale_prompts(bboxes, masks)
-        
-        if False:
-            # Debugging
-            import matplotlib.pyplot as plt
-            # Plot the resized image with the visual prompts
-            plt.imshow(cv2.cvtColor(self.resized_image, cv2.COLOR_BGR2RGB))
-            for bbox in visual_prompts['bboxes']:
-                x1, y1, x2, y2 = bbox
-                plt.gca().add_patch(plt.Rectangle((x1, y1), x2 - x1, y2 - y1,
-                                                  edgecolor='red', facecolor='none', linewidth=2))
-            plt.show()
+        visual_prompts = self.build_prompts(bboxes, masks)
 
-        try:            
+        try:
             # Make predictions
-            results = self.loaded_model.predict(self.resized_image,
+            results = self.loaded_model.predict(self.original_image,
                                                 visual_prompts=visual_prompts,
-                                                predictor=YOLOEVPSegPredictor,
-                                                imgsz=max(self.resized_image.shape[:2]),
+                                                predictor=self.get_predictor_class(),
+                                                imgsz=self.get_imgsz(),
+                                                rect=True,
                                                 conf=self.thresholds_widget.get_uncertainty_thresh(),
                                                 iou=self.thresholds_widget.get_iou_thresh(),
                                                 max_det=self.thresholds_widget.get_max_detections(),
+                                                device=self.main_window.device,
+                                                quantize=self.get_quantize(),
                                                 retina_masks=self.task == "segment")
 
         except Exception as e:
@@ -569,87 +625,43 @@ class DeployPredictorDialog(QDialog):
 
         return results
 
-    def predict_from_annotations(self, refer_image, refer_label, refer_bboxes, refer_masks, target_images):
-        """Make predictions using the currently loaded model and annotations."""
-        # Create a class mapping
-        class_mapping = {0: refer_label}
+    def predict_from_text(self):
+        """Predict from the current text prompt instead of drawn boxes.
 
-        # Create a results processor
-        results_processor = ResultsProcessor(
-            self.main_window,
-            class_mapping
-        )
+        `set_text_prompt` has already put the phrase's embedding on the model,
+        so this is a plain prompt-free forward pass.
 
-        # Get the scaled visual prompts
-        visual_prompts = self.scale_prompts(refer_bboxes, refer_masks)
+        Returns:
+            list | None: Ultralytics Results, or None if there is nothing to run.
+        """
+        if not self.loaded_model or self.text_prompt is None:
+            return None
 
-        # If VPEs are being used
-        if self.vpe is not None:
-            # Generate a new VPE from the current visual prompts
-            new_vpe = self.prompts_to_vpes(visual_prompts, self.resized_image)
-            
-            if new_vpe is not None:
-                # If we already have a VPE, average with the existing one
-                if self.vpe.shape == new_vpe.shape:
-                    self.vpe = (self.vpe + new_vpe) / 2
-                    # Re-normalize
-                    self.vpe = torch.nn.functional.normalize(self.vpe, p=2, dim=-1)
-                else:
-                    # Replace with the new VPE if shapes don't match
-                    self.vpe = new_vpe
-                
-                # Set the updated VPE in the model
-                self.loaded_model.is_fused = lambda: False
-                # Ensure underlying model.names is a dict mapping index->name
-                mdl = getattr(self.loaded_model, 'model', None)
-                if mdl is not None:
-                    names_attr_inner = getattr(mdl, 'names', None)
-                    if isinstance(names_attr_inner, list):
-                        try:
-                            mdl.names = {i: n for i, n in enumerate(names_attr_inner)}
-                        except Exception:
-                            pass
-                self.loaded_model.set_classes(["object0"], self.vpe)
-            
-            # Clear visual prompts since we're using VPE
-            visual_prompts = {}  # this is okay with a fused model
+        if self.original_image is None:
+            QMessageBox.critical(self.annotation_window,
+                                 "No Image Set",
+                                 "No image set for the See Anything predictor.")
+            return None
 
-        # Create a progress bar
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        progress_bar = ProgressBar(self.annotation_window, title="Making Predictions")
-        progress_bar.show()
-        progress_bar.start_progress(len(target_images))
+        self.task = self.get_task()
 
-        for target_image in target_images:
+        try:
+            results = self.loaded_model.predict(self.original_image,
+                                                imgsz=self.get_imgsz(),
+                                                rect=True,
+                                                conf=self.thresholds_widget.get_uncertainty_thresh(),
+                                                iou=self.thresholds_widget.get_iou_thresh(),
+                                                max_det=self.thresholds_widget.get_max_detections(),
+                                                device=self.main_window.device,
+                                                quantize=self.get_quantize(),
+                                                retina_masks=self.task == "segment")
+        except Exception as e:
+            QMessageBox.critical(self.annotation_window,
+                                 "Prediction Error",
+                                 f"Error predicting: {e}")
+            results = None
 
-            try:
-                # Make predictions
-                results = self.loaded_model.predict(target_image,
-                                                    refer_image=refer_image,
-                                                    visual_prompts=visual_prompts,
-                                                    predictor=YOLOEVPSegPredictor,
-                                                    imgsz=self.imgsz_spinbox.value(),
-                                                    conf=self.thresholds_widget.get_uncertainty_thresh(),
-                                                    iou=self.thresholds_widget.get_iou_thresh(),
-                                                    max_det=self.thresholds_widget.get_max_detections(),
-                                                    retina_masks=self.task == "segment")
-
-                results[0].names = {0: refer_label.short_label_code}
-
-                # Process the detections
-                if self.task == 'segment':
-                    results_processor.process_segmentation_results(results)
-                else:
-                    results_processor.process_detection_results(results)
-
-            except Exception as e:
-                print(f"Error predicting: {e}")
-
-        # Make cursor normal
-        QApplication.restoreOverrideCursor()
-        progress_bar.finish_progress()
-        progress_bar.stop_progress()
-        progress_bar.close()
+        return results
 
     def deactivate_model(self):
         """
@@ -660,7 +672,7 @@ class DeployPredictorDialog(QDialog):
         self.model_path = None
         self.image_path = None
         self.original_image = None
-        self.resized_image = None
+        self.text_prompt = None
         # Clear the cache
         gc.collect()
         empty_cache()

@@ -594,13 +594,19 @@ class DeployPredictorDialog(QDialog):
             for results in results_list:
                 original_image = results.orig_img
                 
-                # Fast shape check to avoid re-running the heavy ViT encoder
+                # Fast checks to avoid re-running the heavy ViT encoder.
+                # Identity first: callers that pre-encoded their own work area
+                # hand back the very array they encoded, and np.array_equal
+                # compares every pixel even then -- megabytes of memcmp per
+                # tile to learn what `is` answers for free.
                 image_changed = True
                 if self.original_image is not None:
-                    if self.original_image.shape == original_image.shape:
+                    if self.original_image is original_image:
+                        image_changed = False
+                    elif self.original_image.shape == original_image.shape:
                         if np.array_equal(self.original_image, original_image):
                             image_changed = False
-                            
+
                 if image_changed:
                     # set_image handles the heavy ViT backbone feature extraction
                     self.set_image(original_image, image_path or results.path)

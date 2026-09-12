@@ -34,10 +34,17 @@ from coralnet_toolbox.utilities import bgr_to_qimage, decode_video_frame
 
 from coralnet_toolbox.Common import ThresholdsWidget
 
-from coralnet_toolbox.Icons import get_icon, get_window_icon
+from coralnet_toolbox.Icons import get_window_icon
+
+# Both See Anything dialogs open on the same model
+from coralnet_toolbox.SeeAnything.QtDeployPredictor import DEFAULT_MODEL
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
+
+# Input-size granularity for YOLOE. Everything in the family is a stride-32
+# model, so the letterbox pads to a multiple of this.
+IMGSZ_STRIDE = 32
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -124,13 +131,22 @@ class DeployGeneratorDialog(QDialog):
         # Set up status layout
         self.setup_status_layout()
         
+        # Settings sit at their natural height at the top of the column rather
+        # than being stretched apart down the dialog's full height.
+        self.left_panel.addStretch(1)
+
         # Add layouts to the right panel
         self.setup_reference_layout()
 
         # # Add a full ImageWindow instance for target image selection
         self.image_selection_window = ImageWindow(self.main_window)
         self.right_panel.addWidget(self.image_selection_window)
-        
+
+        # No explicit column stretch: both panels size themselves from their
+        # contents. Forcing the image table to twice the settings column's
+        # width squeezed the form rows on the left, which read worse than the
+        # default -- so only the vertical top-alignment above is kept.
+
         # Setup the buttons layout at the bottom
         self.setup_buttons_layout()
 
@@ -387,13 +403,14 @@ class DeployGeneratorDialog(QDialog):
         for model_name in self.models:
             self.model_combo.addItem(model_name)
 
-        # Set the default model
-        self.model_combo.setCurrentIndex(self.models.index('yoloe-11s-seg.pt'))
+        # Set the default model (shared with the Predictor dialog)
+        self.model_combo.setCurrentIndex(self.models.index(DEFAULT_MODEL))
         model_select_layout.addRow("Model:", self.model_combo)
 
         # Add VPE file selection to the first tab
         self.vpe_path_edit = QLineEdit()
-        self.vpe_path_edit.setToolTip("Path to a saved Visual Prompt Encoding (VPE) file for reference-free predictions.")
+        self.vpe_path_edit.setToolTip("Path to a saved Visual Prompt Encoding file for reference-free predictions.\n"
+                                      "Reads .npz prompt embeddings and legacy .pt collections.")
         browse_button = QPushButton("Browse...")
         browse_button.clicked.connect(self.browse_vpe_file)
         browse_button.setToolTip("Browse for a VPE file to load.")
@@ -450,21 +467,29 @@ class DeployGeneratorDialog(QDialog):
         self.use_task_dropdown.setToolTip("Task mode for See Anything.\nDetect: Bounding boxes only.\nSegment: Full instance segmentation with masks.")
         layout.addRow("Task:", self.use_task_dropdown)
 
-        # Resize image dropdown
-        self.resize_image_dropdown = QComboBox()
-        self.resize_image_dropdown.addItems(["True", "False"])
-        self.resize_image_dropdown.setCurrentIndex(0)
-        self.resize_image_dropdown.setEnabled(False)  # Grey out the dropdown
-        self.resize_image_dropdown.setToolTip("(Automatic) Resize image to match model input requirements.")
-        layout.addRow("Resize Image:", self.resize_image_dropdown)
+        # The greyed-out "Resize Image" dropdown that used to sit here is gone:
+        # it was permanently disabled and described a manual resize the code no
+        # longer performs -- ultralytics letterboxes the input itself.
 
-        # Image size control
+        # Image size control. The old 1024-65536 range in steps of 1024 offered
+        # sizes no GPU can run; cost grows with the square of this.
         self.imgsz_spinbox = QSpinBox()
-        self.imgsz_spinbox.setRange(1024, 65536)
-        self.imgsz_spinbox.setSingleStep(1024)
+        self.imgsz_spinbox.setRange(512, 4096)
+        self.imgsz_spinbox.setSingleStep(IMGSZ_STRIDE)
         self.imgsz_spinbox.setValue(self.imgsz)
-        self.imgsz_spinbox.setToolTip("Input image size for the See Anything model.\nLarger sizes improve accuracy but increase processing time and memory usage.")
+        self.imgsz_spinbox.setToolTip("Input image size for the See Anything model.\n"
+                                      "Larger sizes improve accuracy but increase processing time and memory usage.\n"
+                                      f"Rounded to a multiple of {IMGSZ_STRIDE}.")
         layout.addRow("Image Size (imgsz):", self.imgsz_spinbox)
+
+        # A torch.compile toggle was offered here and has been removed. It never
+        # amortizes in this dialog: predict() rebuilds YOLOE from the weights
+        # file on every run, so each run starts with a cold compile cache, and
+        # set_classes re-parameterizes the promptable head on top of that. Work
+        # areas also vary in size, so each new tile shape recompiles again.
+        # Measured on an RTX 5090: one 576x1024 inference went from tens of
+        # milliseconds to 59.8 seconds, with dynamo emitting dynamic-shape
+        # failures throughout.
 
         group_box.setLayout(layout)
         self.left_panel.addWidget(group_box)  # Add to left panel
@@ -530,7 +555,9 @@ class DeployGeneratorDialog(QDialog):
 
         save_vpe_button = QPushButton("Save VPE")
         save_vpe_button.clicked.connect(self.save_vpe)
-        save_vpe_button.setToolTip("Save the generated or imported VPE(s) to a file for reuse.")
+        save_vpe_button.setToolTip("Save the generated or imported VPE(s) for reuse.\n"
+                                   ".npz is the ultralytics prompt-embedding format, bound to this model.\n"
+                                   ".pt is the legacy format, kept so older collections still load.")
         vpe_row.addWidget(save_vpe_button)
 
         show_vpe_button = QPushButton("Show VPE")
@@ -728,73 +755,137 @@ class DeployGeneratorDialog(QDialog):
 
         return np.array(reference_bboxes), reference_masks
     
+    def _prompt_embedding_stem(self):
+        """The checkpoint identifier ultralytics binds prompt embeddings to, or None.
+
+        Private in ultralytics, so this is best-effort: a missing or failing
+        method just means the architecture guard is skipped, not that loading
+        breaks.
+        """
+        model = self.loaded_model
+        if model is None:
+            return None
+        try:
+            return model._prompt_embedding_model()
+        except Exception:
+            return None
+
+    def load_vpe_npz(self, file_path):
+        """Read a NPZ prompt-embedding file into a list of per-prototype tensors.
+
+        This is the format `YOLOE.save_prompt_embeddings` writes: `embeddings`
+        of shape (1, classes, dim), the class `names`, and the `model` stem the
+        embeddings were produced from. It is read with `allow_pickle=False`, so
+        unlike the legacy `.pt` format it cannot execute anything.
+
+        A model does not have to be loaded to read one, but if one is, its stem
+        is checked -- embeddings from another YOLOE architecture are meaningless
+        against this one.
+
+        Args:
+            file_path (str): Path to the .npz file.
+
+        Returns:
+            list[torch.Tensor]: One (1, 1, dim) tensor per stored class.
+        """
+        with np.load(file_path, allow_pickle=False) as data:
+            missing = {"embeddings", "names", "model"} - set(data.files)
+            if missing:
+                raise ValueError(f"Not a prompt embedding file; missing {sorted(missing)}.")
+            embeddings, names, model_stem = data["embeddings"], data["names"], data["model"]
+
+        if embeddings.ndim != 3 or embeddings.shape[0] != 1:
+            raise ValueError("Prompt embeddings must have shape (1, classes, dimensions).")
+        if embeddings.shape[1] != len(names):
+            raise ValueError("Prompt embedding count does not match the stored class names.")
+        if not np.isfinite(embeddings).all():
+            raise ValueError("Prompt embeddings contain non-finite values.")
+
+        stem = self._prompt_embedding_stem()
+        stored_stem = str(model_stem.item()) if model_stem.ndim == 0 else str(model_stem)
+        if stem is not None and stored_stem != stem:
+            raise ValueError(
+                f"These embeddings were made with '{stored_stem}' and cannot be used with '{stem}'."
+            )
+
+        device = self.main_window.device
+        tensor = torch.from_numpy(embeddings.copy()).to(device)
+        # Split the (1, N, dim) block back into the per-prototype tensors the
+        # rest of the dialog works with.
+        return [tensor[:, i: i + 1, :] for i in range(tensor.shape[1])]
+
     def browse_vpe_file(self):
         """
         Open a file dialog to browse for a VPE file and load it.
         Stores imported VPEs separately from reference-generated VPEs.
+
+        NPZ is the current format (see `load_vpe_npz`). Legacy `.pt` files keep
+        loading so existing VPE collections are not stranded.
         """
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Select Visual Prompt Encoding (VPE) File",
             "",
-            "VPE Files (*.pt);;All Files (*)"
+            "VPE Files (*.npz *.pt);;Prompt Embeddings (*.npz);;Legacy VPE (*.pt);;All Files (*)"
         )
-        
+
         if not file_path:
             return
-            
+
         self.vpe_path_edit.setText(file_path)
         self.vpe_path = file_path
-        
-        try:
-            # Load the VPE file
-            loaded_data = torch.load(file_path)
 
-            # Move tensors to the appropriate device
+        try:
             device = self.main_window.device
-            
-            # Check format type and handle appropriately
-            if isinstance(loaded_data, list):
-                # New format: list of VPE tensors
-                self.imported_vpes = [vpe.to(device) for vpe in loaded_data]
-                vpe_count = len(self.imported_vpes)
-                self.status_bar.setText(f"Loaded {vpe_count} VPE tensors from file")
-                
-            elif isinstance(loaded_data, torch.Tensor):
-                # Legacy format: single tensor - convert to list for consistency
-                loaded_vpe = loaded_data.to(device)
-                # Store as a single-item list
-                self.imported_vpes = [loaded_vpe]
-                self.status_bar.setText("Loaded 1 VPE tensor from file (legacy format)")
-                
+
+            if file_path.lower().endswith(".npz"):
+                self.imported_vpes = self.load_vpe_npz(file_path)
+                self.status_bar.setText(
+                    f"Loaded {len(self.imported_vpes)} prompt embeddings from file")
             else:
-                # Invalid format
-                self.imported_vpes = []
-                self.status_bar.setText("Invalid VPE file format")
-                QMessageBox.warning(
-                    self, 
-                    "Invalid VPE", 
-                    "The file does not appear to be a valid VPE format."
-                )
-                # Clear the VPE path edit field
-                self.vpe_path_edit.clear()
-                    
+                # Legacy format. torch.load defaults to weights_only=True on
+                # current torch, which is what keeps this safe to read.
+                loaded_data = torch.load(file_path, weights_only=True)
+
+                if isinstance(loaded_data, list):
+                    # List of VPE tensors
+                    self.imported_vpes = [vpe.to(device) for vpe in loaded_data]
+                    vpe_count = len(self.imported_vpes)
+                    self.status_bar.setText(f"Loaded {vpe_count} VPE tensors from file (legacy format)")
+
+                elif isinstance(loaded_data, torch.Tensor):
+                    # Single tensor - convert to list for consistency
+                    self.imported_vpes = [loaded_data.to(device)]
+                    self.status_bar.setText("Loaded 1 VPE tensor from file (legacy format)")
+
+                else:
+                    # Invalid format
+                    self.imported_vpes = []
+                    self.status_bar.setText("Invalid VPE file format")
+                    QMessageBox.warning(
+                        self,
+                        "Invalid VPE",
+                        "The file does not appear to be a valid VPE format."
+                    )
+                    # Clear the VPE path edit field
+                    self.vpe_path_edit.clear()
+
             # For backward compatibility - set self.vpe to the average of imported VPEs
             # This ensures older code paths still work
             if self.imported_vpes:
                 combined_vpe = torch.cat(self.imported_vpes).mean(dim=0, keepdim=True)
                 self.vpe = torch.nn.functional.normalize(combined_vpe, p=2, dim=-1)
-                
+
         except Exception as e:
             self.imported_vpes = []
             self.vpe = None
             self.status_bar.setText(f"Error loading VPE: {str(e)}")
             QMessageBox.critical(
-                self, 
-                "Error Loading VPE", 
+                self,
+                "Error Loading VPE",
                 f"Failed to load VPE file: {str(e)}"
             )
-            
+
     def save_vpe(self):
         """
         Saves the combined collection of VPEs (imported and pre-generated from references) to disk.
@@ -825,35 +916,55 @@ class DeployGeneratorDialog(QDialog):
                 return
             
             QApplication.restoreOverrideCursor()
-            
+
             file_path, _ = QFileDialog.getSaveFileName(
                 self,
                 "Save VPE Collection",
                 "",
-                "PyTorch Tensor (*.pt);;All Files (*)"
+                "Prompt Embeddings (*.npz);;Legacy VPE (*.pt);;All Files (*)"
             )
-            
+
             if not file_path:
                 return
-            
+
             QApplication.setOverrideCursor(Qt.WaitCursor)
-            
-            if not file_path.endswith('.pt'):
-                file_path += '.pt'
-            
-            vpe_list_cpu = [vpe.cpu() for vpe in all_vpes]
-            
-            torch.save(vpe_list_cpu, file_path)
-            
+
+            if not file_path.lower().endswith(('.npz', '.pt')):
+                file_path += '.npz'
+
+            if file_path.lower().endswith('.npz'):
+                # Ultralytics writes this one: allow_pickle=False, validated
+                # dimensions, and a checkpoint stem that stops these embeddings
+                # being loaded into a different YOLOE architecture. It reads the
+                # embeddings off the model, so the prototypes have to be applied
+                # to it first.
+                if self.loaded_model is None:
+                    QApplication.restoreOverrideCursor()
+                    QMessageBox.warning(
+                        self,
+                        "No Model Loaded",
+                        "A model must be loaded to save prompt embeddings (.npz), because they "
+                        "are bound to the model they were made with.\nLoad a model, or save as "
+                        "a legacy .pt file instead."
+                    )
+                    return
+                if not self._setup_model_with_vpes():
+                    QApplication.restoreOverrideCursor()
+                    return
+                self.loaded_model.save_prompt_embeddings(file_path)
+            else:
+                vpe_list_cpu = [vpe.cpu() for vpe in all_vpes]
+                torch.save(vpe_list_cpu, file_path)
+
             self.status_bar.setText(f"Saved {len(all_vpes)} VPE tensors to {os.path.basename(file_path)}")
-            
+
             QApplication.restoreOverrideCursor()
             QMessageBox.information(
                 self,
                 "VPE Saved",
                 f"Saved {len(all_vpes)} VPE tensors to {file_path}"
             )
-            
+
         except Exception as e:
             QApplication.restoreOverrideCursor()
             QMessageBox.critical(
@@ -915,16 +1026,23 @@ class DeployGeneratorDialog(QDialog):
             progress_bar.close()
             progress_bar = None
             
-    def reload_model(self):
+    def reload_model(self, apply_vpe=True):
         """
-        Subset of the load_model method. This is needed when additional 
-        reference images and annotations (i.e., VPEs) are added (we have 
+        Subset of the load_model method. This is needed when additional
+        reference images and annotations (i.e., VPEs) are added (we have
         to re-load the model each time).
-        
+
         This method also ensures that we stash the currently highlighted reference
         image paths before reloading, so they're available for predictions
         even if the user switches the active image in the main window.
-        """        
+
+        Args:
+            apply_vpe (bool): Apply `self.vpe` to the fresh model. False when the
+                caller is about to *produce* VPEs rather than predict with them:
+                applying one costs a `set_classes`, which from ultralytics
+                8.4.148 destroys the predictor those callers need (see
+                `_ensure_vp_predictor`).
+        """
         self.loaded_model = None
         
         # Get model path - either from custom file or dropdown
@@ -960,7 +1078,7 @@ class DeployGeneratorDialog(QDialog):
         )
 
         # If a VPE file was loaded, use it with the model after the dummy prediction
-        if self.vpe is not None and isinstance(self.vpe, torch.Tensor):
+        if apply_vpe and self.vpe is not None and isinstance(self.vpe, torch.Tensor):
             # Directly set the final tensor as the prompt for the predictor
             self.loaded_model.is_fused = lambda: False
             # Ensure underlying model.names is a dict mapping index->name
@@ -1014,6 +1132,19 @@ class DeployGeneratorDialog(QDialog):
         # across the whole batch — peak RAM stays at one image's worth.
         processed_paths = []
 
+        # Set the model up once for the whole run. This used to sit inside the
+        # per-image loop, where it rebuilt YOLOE from the weights file, ran a
+        # warm-up prediction and re-applied set_classes for every image: a
+        # 500-image run paid for 500 model loads. Nothing in it varies per
+        # image — the task comes from the dropdown and the VPEs are fixed once
+        # the dialog is accepted.
+        self.task = self.use_task_dropdown.currentText()
+        if not self._setup_model_with_vpes():
+            print("SeeAnything.predict: model setup failed; nothing to run.")
+            progress_bar.close()
+            QApplication.restoreOverrideCursor()
+            return
+
         try:
             for img_idx, image_path in enumerate(image_paths):
 
@@ -1021,12 +1152,6 @@ class DeployGeneratorDialog(QDialog):
                 raster = self.image_window.raster_manager.get_raster(image_path)
                 if raster is None:
                     print(f"SeeAnything.predict: no raster for {image_path}, skipping.")
-                    continue
-
-                # Only VPE pathway is supported now; set up model before any inference
-                self.task = self.use_task_dropdown.currentText()
-                if not self._setup_model_with_vpes():
-                    print(f"SeeAnything.predict: model setup failed for {image_path}, skipping.")
                     continue
 
                 # Virtual video-frame paths (video.mp4::frame_N): decode the frame
@@ -1375,7 +1500,9 @@ class DeployGeneratorDialog(QDialog):
 
         try:
             progress_bar.set_busy_mode("Generating VPEs...")
-            self.reload_model()
+            # apply_vpe=False: this run produces VPEs, it does not predict with
+            # them, and applying one would only throw the predictor away.
+            self.reload_model(apply_vpe=False)
             new_vpes = self.references_to_vpe(references_dict, update_reference_vpes=True)
 
             if new_vpes:
@@ -1396,6 +1523,48 @@ class DeployGeneratorDialog(QDialog):
             QApplication.restoreOverrideCursor()
             progress_bar.stop_progress()
             progress_bar.close()
+    def _ensure_vp_predictor(self):
+        """Make sure `loaded_model.predictor` is a visual-prompt predictor.
+
+        From ultralytics 8.4.148, `YOLOE.set_classes` ends with
+        `self.predictor = None`; 8.4.129 only refreshed the predictor's class
+        names. So any code that reaches for `predictor.set_prompts` or
+        `predictor.get_vpe` after a VPE has been applied finds nothing there --
+        which is what made a second "Generate VPEs" fail with
+        "'NoneType' object has no attribute 'set_prompts'".
+
+        Running the one-box warm-up rebuilds it. That resets the head to a
+        single class, which is irrelevant here: VPE extraction uses the encoder,
+        not the class embeddings.
+
+        Returns:
+            bool: True if a visual-prompt predictor is now in place.
+        """
+        model = self.loaded_model
+        if model is None:
+            return False
+
+        def usable(predictor):
+            # Tested by capability rather than class: these two methods are all
+            # VPE generation needs, and a plain SegmentationPredictor -- what a
+            # prompt-free predict() leaves behind -- has neither.
+            return (hasattr(predictor, 'set_prompts')
+                    and hasattr(predictor, 'get_vpe'))
+
+        if usable(getattr(model, 'predictor', None)):
+            return True
+
+        model.predict(
+            np.zeros((640, 640, 3), dtype=np.uint8),
+            visual_prompts=dict(bboxes=np.array([[120, 425, 160, 445]]),
+                                cls=np.zeros(1)),
+            predictor=YOLOEVPSegPredictor,
+            imgsz=640,
+            conf=0.99,
+            verbose=False,
+        )
+        return usable(getattr(model, 'predictor', None))
+
     def references_to_vpe(self, reference_dict, update_reference_vpes=True):
         """
         Converts the contents of a reference dictionary to VPEs (Visual Prompt Embeddings).
@@ -1403,6 +1572,12 @@ class DeployGeneratorDialog(QDialog):
         Returns a list of normalized VPE tensors or None if none could be produced.
         """
         if not reference_dict:
+            return None
+
+        # The predictor may have been thrown away by an earlier set_classes;
+        # rebuild it rather than failing once per reference image.
+        if not self._ensure_vp_predictor():
+            print("Warning: no visual-prompt predictor available; cannot generate VPEs.")
             return None
 
         vpe_list = []
@@ -1457,6 +1632,16 @@ class DeployGeneratorDialog(QDialog):
         averaged_prototype = torch.cat(prototype_vpes).mean(dim=0, keepdim=True)
         self.vpe = torch.nn.functional.normalize(averaged_prototype, p=2, dim=-1)
 
+        # One ultralytics "class" per prototype. These are an implementation
+        # detail, never shown to the user: predict() collapses every class ID
+        # back to 0 and names it after the reference label, because See Anything
+        # is single-class by design.
+        #
+        # YOLOE.predict sets overrides["agnostic_nms"] = True unconditionally,
+        # so NMS runs across all of these prototype classes at once. Two
+        # prototypes that fire on the same object therefore yield one detection,
+        # not two -- adding prototypes broadens what is found without inflating
+        # the count.
         num_prototypes = len(prototype_vpes)
         proto_class_names = [f"object{i}" for i in range(num_prototypes)]
         stacked_vpes = torch.cat(prototype_vpes, dim=1)
@@ -1482,21 +1667,62 @@ class DeployGeneratorDialog(QDialog):
 
         return True
 
+    def get_imgsz(self):
+        """Return the spinbox image size, rounded to a multiple of the model stride.
+
+        The spinbox is updated so it shows what is actually used.
+        """
+        low, high = self.imgsz_spinbox.minimum(), self.imgsz_spinbox.maximum()
+
+        value = self.imgsz_spinbox.value()
+        snapped = int(round(value / IMGSZ_STRIDE)) * IMGSZ_STRIDE
+        # Round inwards at the ends, so the result is a multiple of the stride
+        # rather than the range's own bound.
+        if snapped < low:
+            snapped = -(-low // IMGSZ_STRIDE) * IMGSZ_STRIDE
+        elif snapped > high:
+            snapped = (high // IMGSZ_STRIDE) * IMGSZ_STRIDE
+
+        if snapped != value:
+            self.imgsz_spinbox.setValue(snapped)
+        self.imgsz = snapped
+        return snapped
+
+    def get_quantize(self):
+        """Precision for model calls: 32 on the CPU, else 16.
+
+        FP16 on the CPU is slower than FP32, not faster. Same rule as the SAM
+        dialogs, so the two stay comparable.
+        """
+        on_cpu = str(self.main_window.device).strip().lower() == "cpu"
+        return 32 if on_cpu else 16
+
+
     def _apply_model(self, inputs):
         """
         Apply the model (which is already set up) to the inputs.
         """
-        # The model is ALREADY configured by _setup_model_with_vpes/images.
+        # The model is ALREADY configured by _setup_model_with_vpes.
         # We just need to run prediction on the batch.
-        
+        #
+        # quantize is the change here: nothing was passed before, so every
+        # generator run was FP32 even on a GPU. rect=True only states the
+        # minimum-padding letterboxing predict mode already defaults to, so the
+        # geometry this depends on does not rest on an ultralytics default.
+        #
+        # compile is deliberately NOT passed: see setup_parameters_layout for
+        # why torch.compile makes this dialog dramatically slower, not faster.
         results_generator = self.loaded_model.predict(inputs,
                                                       visual_prompts=[],  # Prompts are already in the model
-                                                      imgsz=self.imgsz_spinbox.value(),
+                                                      imgsz=self.get_imgsz(),
+                                                      rect=True,
                                                       conf=self.thresholds_widget.get_uncertainty_thresh(),
                                                       iou=self.thresholds_widget.get_iou_thresh(),
                                                       max_det=self.thresholds_widget.get_max_detections(),
+                                                      device=self.main_window.device,
+                                                      quantize=self.get_quantize(),
                                                       retina_masks=self.task == "segment")
-        
+
         results_list = []
         for results in results_generator:
             # Append the object directly, not a list
@@ -1790,15 +2016,24 @@ class VPEVisualizationDialog(QDialog):
         self.info_label.setText(info_text)
     
     def generate_distinct_colors(self, num_colors):
-        """Generates visually distinct colors."""
-        import random
+        """Generates visually distinct colors.
+
+        Deterministic: saturation and value used to come from `random.uniform`,
+        so the same VPE was drawn in a different colour every time the dialog
+        was opened and the plot could not be compared with itself. The golden-
+        ratio hue step already separates the colours; cycling saturation and
+        value over three fixed steps separates neighbouring hues further.
+        """
         from colorsys import hsv_to_rgb
-        
+
+        saturations = (1.0, 0.75, 0.6)
+        values = (0.95, 0.8, 0.7)
+
         colors = []
         for i in range(num_colors):
             hue = (i * 0.618033988749895) % 1.0
-            saturation = random.uniform(0.6, 1.0)
-            value = random.uniform(0.7, 1.0)
+            saturation = saturations[i % len(saturations)]
+            value = values[(i // len(saturations)) % len(values)]
             r, g, b = hsv_to_rgb(hue, saturation, value)
             hex_color = f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
             colors.append(hex_color)
