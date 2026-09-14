@@ -126,6 +126,10 @@ launch.json
 *.onnx
 # TorchScript text encoder ultralytics downloads for YOLOE text prompts
 mobileclip_blt.ts
+# Prompt-free checkpoint, downloaded only to read its 4,585-name vocabulary
+*-seg-pf.pt
+# That vocabulary encoded for one checkpoint; regenerable, and per-model
+*-vocabulary.npz
 *__pycache__/
 *.amltmp
 *.amlignore

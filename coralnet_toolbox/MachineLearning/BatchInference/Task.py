@@ -126,6 +126,16 @@ class BatchInferenceTask(ABC):
         """Names dict stamped onto each Results object after inference."""
         return None
 
+    def positive_class_limit(self) -> int | None:
+        """Class ids at or above this are dropped before anything else happens.
+
+        See Anything prompts can carry decoy classes (negative examples) after the
+        real ones. Their detections must go before `collapse_classes` sets every id
+        to 0, after which a decoy's detection is indistinguishable from a real one.
+        None drops nothing.
+        """
+        return None
+
     def supports_tensor_input(self) -> bool:
         """Whether the model accepts the preprocessed BCHW video tensor path."""
         return True
@@ -152,6 +162,7 @@ class BatchInferenceTask(ABC):
             "live_preview": self.live_preview(),
             "model_call_overrides": self.model_call_overrides(),
             "collapse_classes": self.collapse_classes(),
+            "positive_class_limit": self.positive_class_limit(),
             "result_names": self.result_names(),
             "supports_tensor_input": self.supports_tensor_input(),
         }
@@ -573,20 +584,21 @@ class SeeAnythingBatchInferenceTask(AsyncYoloBatchInferenceTask):
         from PyQt5.QtWidgets import QMessageBox
 
         md = self.model_dialog
-        # Resolve the reference (output) label.
-        ref = getattr(md, "reference_label", None)
-        if ref is None:
+        # Resolve the output label: what detections are saved as, which is no
+        # longer the label of the annotations used as examples.
+        label = getattr(md, "output_label", None)
+        if label is None:
             try:
-                ref = md.reference_label_combo_box.currentData()
-                md.reference_label = ref
+                label = md.output_label_combo.currentData()
+                md.output_label = label
             except Exception:
-                ref = None
-        if ref is None:
+                label = None
+        if label is None:
             QMessageBox.warning(
                 self.dialog, "See Anything",
-                "Select a reference label in the See Anything dialog first.")
+                "Choose a label under 'Save detections as' in the See Anything Generator first.")
             return False
-        md.class_mapping = {0: ref}
+        md.class_mapping = {0: label}
 
         # Resolve the task, honouring the SAM-polygon override.
         try:
@@ -608,18 +620,24 @@ class SeeAnythingBatchInferenceTask(AsyncYoloBatchInferenceTask):
         except Exception:
             pass
 
-        # Sync imgsz from the spinbox.
+        # Sync imgsz from the spinbox, snapped to the stride exactly as the
+        # Generator embeds at -- the worker predicts at this size.
         try:
-            md.imgsz = md.imgsz_spinbox.value()
+            md.imgsz = md.get_imgsz()
         except Exception:
-            pass
+            try:
+                md.imgsz = md.imgsz_spinbox.value()
+            except Exception:
+                pass
 
-        # Configure the model with the available VPEs (heavy, main thread).
+        # Configure the model with the prompt (heavy, main thread). Examples from
+        # annotations embedded at another image size are embedded again at this
+        # one first, before the worker starts.
         try:
             ok = md._setup_model_with_vpes()
         except Exception as e:
             QMessageBox.critical(
-                self.dialog, "See Anything", f"VPE setup failed: {e}")
+                self.dialog, "See Anything", f"Prompt setup failed: {e}")
             return False
         return bool(ok)
 
@@ -629,10 +647,14 @@ class SeeAnythingBatchInferenceTask(AsyncYoloBatchInferenceTask):
     def collapse_classes(self) -> bool:
         return True
 
+    def positive_class_limit(self) -> int | None:
+        # Set by the Generator's _setup_model_with_vpes when its prompt has decoys.
+        return getattr(self.model_dialog, "n_positive_classes", None)
+
     def result_names(self) -> dict | None:
-        ref = getattr(self.model_dialog, "reference_label", None)
+        label = getattr(self.model_dialog, "output_label", None)
         try:
-            return {0: ref.short_label_code}
+            return {0: label.short_label_code}
         except Exception:
             return None
 

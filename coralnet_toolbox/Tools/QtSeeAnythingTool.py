@@ -1,18 +1,19 @@
+import os
 import warnings
 
 import cv2
 import numpy as np
+import torch
 
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush
-from PyQt5.QtWidgets import QGraphicsRectItem, QApplication, QInputDialog
+from PyQt5.QtWidgets import QGraphicsRectItem, QApplication
 
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.Annotations.QtAnnotation import RenderMode
 from coralnet_toolbox.QtActions import MaskEditAction
 
 from coralnet_toolbox.Results import ResultsProcessor
-from coralnet_toolbox.Results import CombineResults
 from coralnet_toolbox.Results import MapResults
 
 from coralnet_toolbox.Common import get_area_mode
@@ -26,10 +27,65 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.WorkArea import WorkArea
 
 from coralnet_toolbox.SeeAnything.QtDeployPredictor import DEFAULT_OUTPUT_TYPE
+from coralnet_toolbox.SeeAnything.QtPromptAlignment import (TextPromptDialog,
+                                                            ensure_vocabulary,
+                                                            project_label_names)
+from coralnet_toolbox.SeeAnything.PromptSession import (KIND_BOXES,
+                                                        KIND_DETECTION,
+                                                        collapse_to_one_class)
 
 from coralnet_toolbox.utilities import work_area_to_numpy_bgr
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+
+# Predictions are fetched down to this confidence and filtered for display, so
+# Ctrl+wheel can lower the threshold without a new prediction. Lowering it past
+# the floor fetches again.
+PREDICT_CONFIDENCE_FLOOR = 0.05
+
+# Ctrl+wheel moves the threshold this far per notch; Ctrl+Shift+wheel, the finer step.
+THRESHOLD_STEP = 0.05
+THRESHOLD_FINE_STEP = 0.01
+
+# A right-button press and release closer than this (in screen pixels) is a click.
+# Right-drag pans and Ctrl+right-drag rotates the canvas, and the annotation
+# window hands the press to the tool before the canvas starts either, so acting on
+# the press would remove a detection every time a pan began over one.
+CLICK_SLOP_PX = 4
+
+# A removed detection stays removed across re-runs if a new one overlaps it this much.
+DROP_MATCH_IOU = 0.7
+
+
+class PreviewDetection:
+    """One detection from the cached prediction, whether or not it is on screen.
+
+    The preview annotation is created the first time the detection is shown, so a
+    prediction fetched down to the confidence floor does not pay for drawing
+    detections the threshold hides.
+    """
+
+    __slots__ = ("index", "confidence", "box_work", "box_image", "polygon_image",
+                 "annotation", "dropped")
+
+    def __init__(self, index, confidence, box_work, box_image, polygon_image=None):
+        self.index = index
+        self.confidence = confidence
+        self.box_work = box_work
+        self.box_image = box_image
+        self.polygon_image = polygon_image
+        self.annotation = None
+        self.dropped = False
+
+
+def _box_iou(a, b):
+    """IoU of two (x1, y1, x2, y2) boxes."""
+    x1, y1 = max(a[0], b[0]), max(a[1], b[1])
+    x2, y2 = min(a[2], b[2]), min(a[3], b[3])
+    inter = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union > 0 else 0.0
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -84,8 +140,37 @@ class SeeAnythingTool(Tool):
         # Output settings - synced from the dialog, as the SAM tool does
         self.output_type = DEFAULT_OUTPUT_TYPE
 
-        # Text prompt (Ctrl+T) standing in for drawn boxes, or None
+        # Text prompt (Ctrl+T) standing in for drawn boxes, or None. A mirror of
+        # the phrase held in the dialog's prompt session.
         self.text_prompt = None
+        # Whether the session has already been run on this work area. Mirrors
+        # `rectangles_processed`: without it, a prompt that finds nothing traps
+        # Space on the predict branch and the work area cannot be closed.
+        self.session_processed = False
+        # Set when a run came back empty, so the status bar can keep saying so
+        # rather than flashing it once and reverting.
+        self.session_found_nothing = False
+
+        # The last prediction, unfiltered by confidence, and every detection in it.
+        # `self.annotations` and `self.results` are the filtered view of these that
+        # is on screen; Ctrl+wheel and removals re-derive the view without a model call.
+        self.raw_results = None
+        self.raw_floor = None
+        self.previews = []
+        self.dropped_area = 0
+        self._applied_threshold = None
+        # Image-coordinate boxes the user removed, matched onto the next prediction
+        # so a removal survives adding an example.
+        self.dropped_boxes = []
+
+        # Ctrl+Shift held: removed detections are revealed so they can be restored,
+        # the way the Work Area tool reveals its remove buttons.
+        self.revealing_dropped = False
+        self.dropped_graphics = []
+        self.hover_graphics = None
+        # (screen position, modifiers) of a right-button press awaiting its release
+        self._right_press = None
+        self._signals_connected = False
 
     def activate(self):
         """
@@ -96,7 +181,59 @@ class SeeAnythingTool(Tool):
         self.see_anything_dialog = self.main_window.see_anything_deploy_predictor_dialog
         # Sync settings from dialog when the tool is activated
         self.sync_settings_from_dialog()
+        # The session outlives the tool; pick its phrase back up
+        session = self._session()
+        if session is not None:
+            self.text_prompt = session.text_phrase()
+        self._connect_signals()
         self.report_state()
+
+    def _connect_signals(self):
+        """Follow the global threshold slider and edits made in the session panel."""
+        if self._signals_connected:
+            return
+        try:
+            self.main_window.uncertaintyChanged.connect(self.on_uncertainty_changed)
+        except (AttributeError, TypeError):
+            pass
+        edited = getattr(self.see_anything_dialog, 'sessionEdited', None)
+        if edited is not None:
+            edited.connect(self.on_session_edited)
+        self._signals_connected = True
+
+    def _disconnect_signals(self):
+        if not self._signals_connected:
+            return
+        for signal, slot in ((getattr(self.main_window, 'uncertaintyChanged', None), self.on_uncertainty_changed),
+                             (getattr(self.see_anything_dialog, 'sessionEdited', None), self.on_session_edited)):
+            if signal is None:
+                continue
+            try:
+                signal.disconnect(slot)
+            except (TypeError, RuntimeError):
+                pass
+        self._signals_connected = False
+
+    def _session(self):
+        """The dialog's prompt session, or None."""
+        return getattr(self.see_anything_dialog, 'session', None)
+
+    def _has_prompt(self):
+        """Whether there is anything to predict from without drawing a box."""
+        session = self._session()
+        return bool(self.text_prompt) or bool(session is not None and session.has_positives())
+
+    def _prompt_label(self):
+        """How to name the prompt in the status bar: the phrase, when that is all it is."""
+        session = self._session()
+        text_only = session is None or not session.has_positives() or session.modalities() == {"text"}
+        if self.text_prompt and text_only:
+            return f"'{self.text_prompt}'"
+        return "The prompt session"
+
+    def _threshold(self):
+        """The global confidence threshold -- the one the Generator will run with."""
+        return self.main_window.get_uncertainty_thresh()
 
     def sync_settings_from_dialog(self):
         """Copy the output type from the dialog to this tool."""
@@ -120,11 +257,16 @@ class SeeAnythingTool(Tool):
         self.cancel_working_area()
         # Cancel working area creation if in progress
         self.cancel_working_area_creation()
-        # Clear detection data
+        # Clear detection data. The prompt session is deliberately kept: it is
+        # built here to be used elsewhere -- in the Generator, or back in this
+        # tool after a detour to another one. Ctrl+Shift+Backspace clears it.
         self.results = None
-        self.text_prompt = None
-        if self.see_anything_dialog is not None:
-            self.see_anything_dialog.set_text_prompt(None)
+        self.session_processed = False
+        self.session_found_nothing = False
+        self._set_revealing_dropped(False)
+        self._clear_hover()
+        self._right_press = None
+        self._disconnect_signals()
 
         # If output type was Mask, unrasterize annotations to remove lock
         # protection, exactly as the SAM tool does.
@@ -160,10 +302,16 @@ class SeeAnythingTool(Tool):
         if not self.active:
             return
 
+        session = self._session()
+        session_note = ""
+        if session is not None and not session.is_empty():
+            session_note = f"  |  Session: {session.summary()}  (Ctrl+Shift+Backspace: clear)"
+
         if self.creating_working_area:
             message = "Space: finish the work area  |  Backspace: cancel it"
         elif not self.working_area:
-            message = "Space: use the current view as the work area, or drag one out"
+            message = ("Space: use the current view as the work area, or left-click, move, "
+                       "left-click to draw one" + session_note)
         elif self.drawing_rectangle:
             message = "Click to finish the box  |  Backspace: cancel it"
         elif self.rectangles and not self.rectangles_processed:
@@ -175,14 +323,36 @@ class SeeAnythingTool(Tool):
             count = len(self.annotations)
             confirm = "refine with SAM and confirm" if self._sam_enabled() else "confirm"
             message = (f"Space: {confirm} {count} detection{'s' if count != 1 else ''}"
+                       "  |  Ctrl+click: more like this"
+                       "  |  Ctrl+right-click: fewer like this"
+                       "  |  Ctrl+Shift+right-click: remove one"
+                       f"  |  Ctrl+wheel: threshold {self._threshold():.2f}"
                        "  |  Draw another box to find more"
                        "  |  Backspace: discard them")
+        elif self._has_prompt() and self.session_found_nothing:
+            # The dead end that used to trap the tool: Space kept re-running the
+            # same empty prediction and Backspace had nothing to clear. Both do
+            # something now, and both are named.
+            message = (f"{self._prompt_label()} matched nothing here"
+                       f"  |  Ctrl+wheel: lower the threshold ({self._threshold():.2f})"
+                       "  |  Ctrl+T: try another word"
+                       "  |  Backspace or Space: close the work area")
+        elif self._has_prompt() and self.session_processed:
+            message = (f"{self._prompt_label()} has already run"
+                       "  |  Ctrl+T: try another word"
+                       "  |  Backspace or Space: close the work area")
         elif self.text_prompt:
             message = (f"Space: predict from text prompt '{self.text_prompt}'"
-                       "  |  Ctrl+T: change it  |  Or draw a box instead")
+                       "  |  Ctrl+T: change it  |  Backspace: close the work area"
+                       "  |  Or draw a box instead" + session_note)
+        elif self._has_prompt():
+            message = ("Space: predict from the prompt session"
+                       "  |  Draw a box to add an example"
+                       "  |  Ctrl+T: add a phrase"
+                       "  |  Backspace: close the work area" + session_note)
         else:
             message = ("Draw a box around an example, or Ctrl+T for a text prompt"
-                       "  |  Space: close the work area")
+                       "  |  Backspace or Space: close the work area")
 
         self.main_window.status_bar.showMessage(message, 6000)
 
@@ -487,7 +657,27 @@ class SeeAnythingTool(Tool):
 
         # Get position in scene coordinates
         scene_pos = self.annotation_window.mapToScene(event.pos())
-        
+
+        # Right button: remember the press and decide on release. The canvas pans
+        # on right-drag and rotates on Ctrl+right-drag, and it sees this same press
+        # right after the tool does -- only a release without movement is a click.
+        if event.button() == Qt.RightButton:
+            self._right_press = (event.pos(), event.modifiers())
+            return
+
+        # Ctrl+click on a detection: more like this. Anywhere else, Ctrl+click
+        # draws a box as a plain click does.
+        modifiers = event.modifiers()
+        if (event.button() == Qt.LeftButton
+                and modifiers & Qt.ControlModifier
+                and not modifiers & Qt.ShiftModifier
+                and self.working_area is not None
+                and not self.drawing_rectangle
+                and self.detection_at(scene_pos) is not None):
+            self.add_positive_at(scene_pos)
+            self.report_state()
+            return
+
         # Handle working area creation mode
         if not self.working_area and event.button() == Qt.LeftButton:
             if not self.creating_working_area:
@@ -558,7 +748,55 @@ class SeeAnythingTool(Tool):
             self.end_point = self.annotation_window.mapToScene(event.pos())
             self.update_rectangle_graphics()
 
+        self.update_hover(scene_pos, event.modifiers())
+
         self.annotation_window.scene.update()
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        """Act on a right-click once it is known not to be the start of a pan.
+
+        Ctrl+right-click: fewer like this. Ctrl+Shift+right-click: remove or
+        restore one detection.
+        """
+        if event.button() != Qt.RightButton or self._right_press is None:
+            return
+        press_pos, modifiers = self._right_press
+        self._right_press = None
+        if not self.is_click(press_pos, event.pos()):
+            return
+
+        scene_pos = self.annotation_window.mapToScene(event.pos())
+        if modifiers & Qt.ControlModifier and modifiers & Qt.ShiftModifier:
+            self.toggle_drop_at(scene_pos)
+        elif modifiers & Qt.ControlModifier:
+            self.add_negative_at(scene_pos)
+        else:
+            return
+        self.report_state()
+
+    @staticmethod
+    def is_click(press_pos, release_pos):
+        """True when a press and release are close enough to be a click, not a drag."""
+        delta = release_pos - press_pos
+        return abs(delta.x()) + abs(delta.y()) <= CLICK_SLOP_PX
+
+    def wheelEvent(self, event):
+        """Ctrl+wheel: the confidence threshold, live. Ctrl+Shift+wheel: finer steps.
+
+        The annotation window routes Ctrl+wheel here instead of zooming. The
+        threshold changed is the global one, so the value that works here is the
+        one the Generator runs with.
+        """
+        if not event.modifiers() & Qt.ControlModifier:
+            return
+        # Shift+wheel is horizontal scrolling on some platforms, so the delta can
+        # arrive on either axis.
+        delta = event.angleDelta().y() or event.angleDelta().x()
+        if not delta:
+            return
+        step = THRESHOLD_FINE_STEP if event.modifiers() & Qt.ShiftModifier else THRESHOLD_STEP
+        self.nudge_threshold(step if delta > 0 else -step)
+        event.accept()
 
     def keyPressEvent(self, event: QKeyEvent):
         """
@@ -569,6 +807,21 @@ class SeeAnythingTool(Tool):
         """
         if event.key() == Qt.Key_T and event.modifiers() == Qt.ControlModifier:
             self.prompt_for_text()
+            return
+
+        # Ctrl+Shift held: reveal removed detections so they can be restored, as
+        # the Work Area tool reveals its remove buttons. With Backspace or Delete,
+        # clear the whole prompt session -- the Work Area tool's clear-all chord.
+        modifiers = event.modifiers()
+        if modifiers & Qt.ControlModifier and modifiers & Qt.ShiftModifier:
+            self._set_revealing_dropped(True)
+            if event.key() in (Qt.Key_Backspace, Qt.Key_Delete):
+                self.clear_session()
+            elif self.previews:
+                self.main_window.status_bar.showMessage(
+                    "Ctrl+Shift+right-click a detection to remove it, or a dotted red outline to "
+                    "restore it  |  Ctrl+Shift+Backspace: clear the prompt session", 4000)
+            self.annotation_window.scene.update()
             return
 
         if event.key() == Qt.Key_Space:
@@ -592,9 +845,15 @@ class SeeAnythingTool(Tool):
                 # Mark rectangles as processed for this cycle
                 self.rectangles_processed = True
 
-            # No boxes drawn, but a text prompt is standing in for them
-            elif not self.annotations and self.text_prompt:
-                self.create_annotations_from_text()
+            # No boxes drawn, but the session already holds a prompt -- a phrase,
+            # or examples carried over from another work area. `session_processed`
+            # matters when the prompt finds nothing: without it this branch matches
+            # again on every Space -- annotations stay empty, so the prediction
+            # re-runs forever and the work area can never be closed. One attempt
+            # per work area, then Space means what it means everywhere else.
+            elif not self.annotations and self._has_prompt() and not self.session_processed:
+                self.create_annotations_from_session()
+                self.session_processed = True
 
             else:
                 # If there's a working area but no new user rectangles,
@@ -615,18 +874,63 @@ class SeeAnythingTool(Tool):
                 self.report_state()
                 return
 
-            # Cancel current rectangle being drawn
+            # Backspace undoes one layer at a time, and the last layer is the work
+            # area itself -- the same order as the SAM tool. A loaded phrase is not a
+            # layer: it belongs to the prompt session, which outlives the work area,
+            # so it must never stand between the user and closing it. (It used to:
+            # Backspace cleared the phrase, then did nothing, and the only ways out
+            # were Space -- which confirms -- or switching tools or images.)
+            # Clear the phrase with an empty Ctrl+T, or the whole session with
+            # Ctrl+Shift+Backspace.
             if self.drawing_rectangle:
                 self.cancel_rectangle_drawing()
             # If we have a working area and accumulated annotations, clear them
             elif self.working_area and len(self.annotations) > 0:
                 self.clear_annotations()  # Clears unconfirmed annotations
-            # If not drawing and no annotations to clear, clear any pending user-drawn rectangles
-            else:
+                # Cleared detections mean the prompt can be tried again.
+                self.session_processed = False
+            elif self.rectangles:
                 self.clear_all_rectangles()  # Clears user input rectangles
+            elif self.working_area:
+                self.cancel_working_area()
 
         self.annotation_window.scene.update()
         self.report_state()
+
+    def keyReleaseEvent(self, event: QKeyEvent):
+        """Hide removed detections again once Ctrl+Shift is let go."""
+        modifiers = event.modifiers()
+        if self.revealing_dropped and not (modifiers & Qt.ControlModifier and modifiers & Qt.ShiftModifier):
+            self._set_revealing_dropped(False)
+        if not modifiers & Qt.ControlModifier:
+            self._clear_hover()
+        self.annotation_window.scene.update()
+
+    def clear_session(self):
+        """Forget every example in the prompt session (Ctrl+Shift+Backspace)."""
+        if self.see_anything_dialog is not None and hasattr(self.see_anything_dialog, 'clear_session'):
+            self.see_anything_dialog.clear_session()
+        self.text_prompt = None
+        self.session_processed = False
+        self.session_found_nothing = False
+        self.main_window.status_bar.showMessage(
+            "Prompt session cleared. Draw a box or Ctrl+T to start a new one.", 5000)
+
+    def clear_text_prompt(self):
+        """Drop the current phrase and go back to box prompting.
+
+        Clears it on the dialog too, so the model is not left with a phrase's
+        class embedding standing where the next visual prompt expects its own.
+        """
+        self.text_prompt = None
+        self.session_processed = False
+        self.session_found_nothing = False
+        if self.see_anything_dialog is not None:
+            try:
+                self.see_anything_dialog.set_text_prompt(None)
+            except Exception:
+                pass
+        self.main_window.status_bar.showMessage("Text prompt cleared.", 3000)
 
     def cancel_rectangle_drawing(self):
         """Discard the rectangle currently being dragged out."""
@@ -639,27 +943,74 @@ class SeeAnythingTool(Tool):
         self.end_point = None
         self.annotation_window.scene.update()
 
+    def suggestion_candidates(self):
+        """Phrases worth ranking against a drawn box.
+
+        Every word the model knows, plus the project's own labels. The point of
+        suggesting is to find a phrase the user would not have thought of, so
+        restricting it to labels they already hand-picked would defeat it: a box
+        around a bus should be able to come back "vehicle".
+
+        The word list is built once per checkpoint, behind a confirmation, and
+        cached. Declining leaves the project labels, which still work.
+
+        Returns:
+            list[str]: De-duplicated candidate phrases.
+        """
+        names = []
+        try:
+            names = ensure_vocabulary(self.annotation_window,
+                                      self.see_anything_dialog.text_embedder()) or []
+        except Exception as e:
+            self.main_window.status_bar.showMessage(
+                f"Could not load the model's word list: {e}", 5000)
+
+        names = names + project_label_names(getattr(self.main_window, 'label_window', None))
+        return list(dict.fromkeys(names))
+
+    def suggest_text_for_rectangles(self):
+        """Rank phrases against the boxes currently drawn in the work area.
+
+        Returns:
+            list[dict]: As `PromptAlignment.rank` returns, or empty if nothing
+            is drawn or there is nothing to rank against.
+        """
+        # Rectangles first: gathering candidates can ask the user to build the
+        # word list, which would be an odd thing to offer with nothing to rank.
+        if not self.rectangles:
+            return []
+        candidates = self.suggestion_candidates()
+        if not candidates:
+            return []
+        return self.see_anything_dialog.suggest_text_prompts(self.rectangles,
+                                                             candidates=candidates)
+
     def prompt_for_text(self):
         """Ask for a text prompt (Ctrl+T) to use in place of drawn boxes.
 
         Ultralytics turns the phrase into a class embedding via
         `YOLOE.get_text_pe`, so no reference boxes are needed at all. An empty
         entry clears the prompt and returns to box prompting.
+
+        A box already drawn is worth more than a guess, so the dialog can rank
+        candidate phrases against it: the model's own embedding space knows what
+        would find that object again, even when the user does not know what it
+        is called.
         """
         if self.see_anything_dialog is None or self.see_anything_dialog.loaded_model is None:
             self.main_window.status_bar.showMessage(
                 "Load a See Anything model before using a text prompt.", 4000)
             return
 
-        text, accepted = QInputDialog.getText(
-            self.annotation_window,
-            "Text Prompt",
-            "Describe what to find (leave empty to go back to box prompts):",
-            text=self.text_prompt or "")
-        if not accepted:
+        suggest = self.suggest_text_for_rectangles if self.rectangles else None
+
+        dialog = TextPromptDialog(current_text=self.text_prompt or "",
+                                  suggest=suggest,
+                                  parent=self.annotation_window)
+        if dialog.exec_() != dialog.Accepted:
             return
 
-        text = text.strip()
+        text = dialog.value()
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             applied = self.see_anything_dialog.set_text_prompt(text)
@@ -670,6 +1021,9 @@ class SeeAnythingTool(Tool):
             QApplication.restoreOverrideCursor()
 
         self.text_prompt = text if (text and applied) else None
+        # A new phrase has not been run yet, whatever the last one did.
+        self.session_processed = False
+        self.session_found_nothing = False
         if self.text_prompt:
             self.main_window.status_bar.showMessage(
                 f"Text prompt set to '{self.text_prompt}'. Press Space to predict.", 5000)
@@ -678,12 +1032,14 @@ class SeeAnythingTool(Tool):
         self.report_state()
 
     def create_annotations_from_rectangles(self):
-        """
-        Create annotations based on the user-drawn rectangles.
-        """
-        if not self.annotation_window.active_image:
-            return None
+        """Turn the boxes just drawn into one example, then predict from the session.
 
+        The boxes share `cls=0` and merge into a single embedding, exactly as a box
+        prompt always has; that embedding joins the session as a positive example.
+        Predicting from the session afterwards was measured to give the same
+        detections as predicting with the boxes in-image, to the last digit -- and it
+        is the path the Generator runs, which is what makes the session portable.
+        """
         if not self.annotation_window.active_image:
             return None
 
@@ -693,9 +1049,6 @@ class SeeAnythingTool(Tool):
         if len(self.rectangles) == 0:  # Check specifically for user-drawn rectangles
             return None
 
-        # Make cursor busy
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-
         masks = None
         # Create masks from the rectangles (these are not polygons)
         if self.see_anything_dialog.get_task() == 'segment':
@@ -704,61 +1057,121 @@ class SeeAnythingTool(Tool):
                 x1, y1, x2, y2 = r
                 masks.append(np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]]))
 
-        # Predict from prompts, providing masks if the task is segmentation.
         # The rectangles are in work-area pixels and are handed over unscaled:
         # ultralytics rasterizes them against its own letterbox (see
         # DeployPredictorDialog.build_prompts).
-        results = self.see_anything_dialog.predict_from_prompts(self.rectangles, masks=masks)
-
-        if not results:
-            # Make cursor normal
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            embedding = self.see_anything_dialog.embed_boxes(self.rectangles, masks=masks)
+        except Exception as e:
+            embedding = None
+            self.main_window.status_bar.showMessage(f"Could not read those reference boxes: {e}", 5000)
+        finally:
             QApplication.restoreOverrideCursor()
+
+        if embedding is None:
             self.main_window.status_bar.showMessage(
                 "See Anything returned nothing for those reference boxes.", 5000)
             return None
 
-        self._build_annotations_from_results(results)
+        count = len(self.rectangles)
+        self.see_anything_dialog.add_session_positive(
+            KIND_BOXES, embedding,
+            f"{count} box{'es' if count != 1 else ''} on {self._image_name()}")
+        return self.run_session()
 
-    def create_annotations_from_text(self):
-        """Predict from the current text prompt (Ctrl+T) instead of drawn boxes."""
+    def create_annotations_from_session(self):
+        """Predict from the prompt session without drawing anything new.
+
+        Covers a phrase set with Ctrl+T and examples carried over from another work
+        area. An empty result is the normal outcome of a prompt that does not
+        describe anything here, so it is reported as a state rather than a
+        five-second flash -- `report_state` keeps saying it until the prompt changes
+        or the work area closes.
+        """
         if not self.annotation_window.active_image or not self.working_area:
             return None
-        if not self.text_prompt:
+        if not self._has_prompt():
             return None
+        return self.run_session()
+
+    def _image_name(self):
+        return os.path.basename(str(self.image_path or self.annotation_window.current_image_path or "image"))
+
+    def run_session(self):
+        """Predict on this work area from every enabled example, and show the result.
+
+        The prediction is fetched down to `PREDICT_CONFIDENCE_FLOOR` and cached raw;
+        what is shown is filtered from that cache, which is what lets Ctrl+wheel
+        move the threshold without predicting again.
+
+        Returns:
+            int: The number of detections now shown.
+        """
+        if not self.working_area or self.see_anything_dialog is None:
+            return 0
+
+        floor = min(self._threshold(), PREDICT_CONFIDENCE_FLOOR)
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        results = self.see_anything_dialog.predict_from_text()
-
-        if not results:
+        try:
+            results = self.see_anything_dialog.predict_from_session(conf=floor)
+        finally:
             QApplication.restoreOverrideCursor()
-            self.main_window.status_bar.showMessage(
-                f"See Anything found nothing matching '{self.text_prompt}'.", 5000)
-            return None
 
-        self._build_annotations_from_results(results)
+        self.session_processed = True
+        self.session_found_nothing = False
+        self.raw_floor = floor
 
-    def _build_annotations_from_results(self, results):
-        """Filter a prediction and turn what survives into preview annotations.
+        result = results[0] if results else None
+        if result is None or result.boxes is None or len(result.boxes) == 0:
+            self._set_raw_results(None)
+            self.session_found_nothing = True
+            self.report_nothing_found()
+            return 0
 
-        Shared by the box-prompt and text-prompt paths. Restores the cursor and
-        reports how many detections were kept and how many the confidence and
-        area thresholds dropped -- an empty result used to be silent, which read
-        as a crash.
+        self._set_raw_results(result)
+        shown = self.apply_visibility(report=True)
+        if not shown:
+            self.session_found_nothing = True
+            self.report_nothing_found()
+        return shown
 
-        Args:
-            results (list): Ultralytics Results, as returned by the dialog.
+    def report_nothing_found(self):
+        """Say that the prompt matched nothing, and what to do about it.
+
+        A high alignment score does not promise a detection -- alignment compares
+        a phrase against your reference crops, while detection compares that same
+        phrase against regions of *this* image -- so "nothing found" needs to name
+        the ways out rather than read as a failure.
         """
-        # Move the points back to the original image space
-        working_area_top_left = self.working_area.rect.topLeft()
+        threshold = f" at confidence {self._threshold():.2f}"
+        if self.text_prompt and self._prompt_label().startswith("'"):
+            subject = f"'{self.text_prompt}'"
+        else:
+            subject = "the prompt session"
 
-        # Get the first result from the list
-        results = results[0]
+        self.main_window.status_bar.showMessage(
+            f"Nothing in this work area matched {subject}{threshold}. "
+            f"Ctrl+wheel: lower the confidence threshold  |  Ctrl+T: try another word  |  "
+            f"Backspace or Space: close the work area",
+            10000)
 
-        # Create a results processor to merge and filter results
-        results_processor = ResultsProcessor(self.main_window, {})
-        # Merge
-        if self.results:
-            results = CombineResults().combine_results([self.results, results])
+    # --- The cached prediction and its on-screen view ---------------------------------------------------------------
+
+    def _set_raw_results(self, result):
+        """Replace the cached prediction and rebuild the list of detections in it.
+
+        IoU and area filters run once, here: neither changes when the threshold
+        does. Confidence is left to `apply_visibility`. Detections the user removed
+        from the previous prediction stay removed if a new one lands on them.
+        """
+        self._discard_previews()
+
+        if result is None:
+            return
+
+        collapse_to_one_class(result, self._label_name())
 
         # The model ran on the work-area crop, a numpy array, so Ultralytics
         # named the result after the array ("image0.jpg"). The area filter
@@ -770,17 +1183,29 @@ class SeeAnythingTool(Tool):
         # for an 800x600 work area on a 4000x3000 raster, enough to reject
         # objects the same threshold keeps when the work area is not used.
         # Naming the raster is what makes both bounds whole-image.
-        results.path = self.image_path
+        result.path = self.image_path
 
-        # Filter
-        self.results = results_processor.apply_filters_to_results(results)
+        results_processor = ResultsProcessor(self.main_window, {})
+        result = results_processor.filter_by_iou(result)
+        result = results_processor.filter_by_area(result)
 
-        # Resolved through the same helper ResultsProcessor uses, so both filters
-        # agree. Bounds are relative to the WHOLE image: scaling by the work-area
-        # crop made the same threshold mean a different real size depending on how
-        # far the view happened to be zoomed. `None` means the threshold cannot be
-        # judged for this raster (a real-world bound with no scale), in which case
-        # every detection is kept rather than silently dropped.
+        self.raw_results = result
+        self.previews = self._build_previews(result)
+
+    def _label_name(self):
+        label = self.annotation_window.selected_label
+        return getattr(label, 'short_label_code', None) or "object"
+
+    def _area_bounds(self):
+        """Area bounds in pixels, relative to the WHOLE image.
+
+        Resolved through the same helper ResultsProcessor uses, so both filters
+        agree. Scaling by the work-area crop made the same threshold mean a
+        different real size depending on how far the view happened to be zoomed.
+        `None` means the threshold cannot be judged for this raster (a real-world
+        bound with no scale), in which case every detection is kept rather than
+        silently dropped.
+        """
         try:
             _raster = self.main_window.image_window.raster_manager.get_raster(self.image_path)
         except Exception:
@@ -792,83 +1217,389 @@ class SeeAnythingTool(Tool):
         if not image_area:
             image_area = self.work_area_image.shape[0] * self.work_area_image.shape[1]
 
-        area_bounds = resolve_area_bounds_px(
+        return resolve_area_bounds_px(
             self.main_window.get_area_thresh_min(),
             self.main_window.get_area_thresh_max(),
             get_area_mode(self.main_window),
             image_area, m2_per_px)
 
-        # Clear previous annotations if any
-        self.clear_annotations()
+    def _build_previews(self, result):
+        """One `PreviewDetection` per detection in the cached prediction."""
+        previews = []
+        self.dropped_area = 0
+        if result is None or result.boxes is None:
+            return previews
 
-        # Counted so the result can be reported rather than left to guess at
-        dropped_confidence = 0
-        dropped_area = 0
+        offset = self.working_area.rect.topLeft()
+        dx, dy = offset.x(), offset.y()
+        height, width = self.work_area_image.shape[:2]
+        area_bounds = self._area_bounds()
+        segment = self.see_anything_dialog.get_task() == "segment" and result.masks is not None
 
-        # Process results based on the task type (creates polygons or rectangle annotations)
-        if self.see_anything_dialog.get_task() == "segment":
-            if self.results.masks:
-                for i, polygon in enumerate(self.results.masks.xyn):
-                    confidence = self.results.boxes.conf[i].item()
-                    if confidence < self.main_window.get_uncertainty_thresh():
-                        dropped_confidence += 1
-                        continue
+        boxes = result.boxes.xyxy.detach().cpu().numpy()
+        confidences = result.boxes.conf.detach().cpu().numpy()
+        polygons = result.masks.xyn if segment else None
 
-                    # Get absolute bounding box for area check (relative to work area)
-                    box_work_area = self.results.boxes.xyxy[i].detach().cpu().numpy()
-                    box_area = (box_work_area[2] - box_work_area[0]) * (box_work_area[3] - box_work_area[1])
+        for i, (box_work, confidence) in enumerate(zip(boxes, confidences)):
+            box_area = (box_work[2] - box_work[0]) * (box_work[3] - box_work[1])
+            if area_bounds and not (area_bounds[0] <= box_area <= area_bounds[1]):
+                self.dropped_area += 1
+                continue
 
-                    # Area filtering
-                    if area_bounds and not (area_bounds[0] <= box_area <= area_bounds[1]):
-                        dropped_area += 1
-                        continue
+            box_image = box_work + np.array([dx, dy, dx, dy], dtype=box_work.dtype)
+            polygon_image = None
+            if polygons is not None:
+                # Normalized to the work-area crop; scale and offset into the image.
+                polygon_image = polygons[i].copy()
+                polygon_image[:, 0] = polygon_image[:, 0] * width + dx
+                polygon_image[:, 1] = polygon_image[:, 1] * height + dy
 
-                    # Convert normalized polygon points to absolute coordinates in the whole image
-                    polygon_abs = polygon.copy()
-                    polygon_abs[:, 0] = polygon_abs[:, 0] * self.work_area_image.shape[1] + working_area_top_left.x()
-                    polygon_abs[:, 1] = polygon_abs[:, 1] * self.work_area_image.shape[0] + working_area_top_left.y()
+            entry = PreviewDetection(i, float(confidence), box_work.copy(), box_image, polygon_image)
+            entry.dropped = any(_box_iou(box_image, gone) >= DROP_MATCH_IOU for gone in self.dropped_boxes)
+            previews.append(entry)
 
-                    # No automatic simplification - preserve full precision
-                    self.create_polygon_annotation(polygon_abs, confidence)
+        return previews
 
-        else:  # Task is 'detect'
-            if self.results.boxes:
-                for i, box_norm in enumerate(self.results.boxes.xyxyn):
-                    confidence = self.results.boxes.conf[i].item()
-                    if confidence < self.main_window.get_uncertainty_thresh():
-                        dropped_confidence += 1
-                        continue
+    def _entry_visible(self, entry, threshold=None):
+        threshold = self._threshold() if threshold is None else threshold
+        return entry.confidence >= threshold and not entry.dropped
 
-                    # Convert normalized box to absolute coordinates in the work area
-                    box_abs_work_area = box_norm.detach().cpu().numpy() * np.array(
-                        [self.work_area_image.shape[1], self.work_area_image.shape[0],
-                         self.work_area_image.shape[1], self.work_area_image.shape[0]])
-                    # Calculate the area of the bounding box
-                    box_area = (box_abs_work_area[2] - box_abs_work_area[0]) * \
-                               (box_abs_work_area[3] - box_abs_work_area[1])
+    def apply_visibility(self, report=False):
+        """Show the detections that pass the threshold and were not removed.
 
-                    # Area filtering
-                    if area_bounds and not (area_bounds[0] <= box_area <= area_bounds[1]):
-                        dropped_area += 1
-                        continue
+        Re-derives `self.annotations` (what Space confirms) and `self.results` (what
+        SAM refines) from the cache. No model call.
 
-                    # Add working area offset to get coordinates in the whole image
-                    box_abs_full = box_abs_work_area.copy()
-                    box_abs_full[0] += working_area_top_left.x()
-                    box_abs_full[1] += working_area_top_left.y()
-                    box_abs_full[2] += working_area_top_left.x()
-                    box_abs_full[3] += working_area_top_left.y()
-                    self.create_rectangle_annotation(box_abs_full, confidence)
+        Returns:
+            int: The number of detections now shown.
+        """
+        threshold = self._threshold()
+        shown_indices = []
+        self.annotations = []
+        below_threshold = 0
+        removed = 0
 
+        for entry in self.previews:
+            if entry.confidence < threshold:
+                below_threshold += 1
+            elif entry.dropped:
+                removed += 1
+
+            if self._entry_visible(entry, threshold):
+                if entry.annotation is None:
+                    entry.annotation = self._make_preview_annotation(entry)
+                if entry.annotation is None:
+                    continue
+                entry.annotation.set_visibility(True)
+                self.annotations.append(entry.annotation)
+                shown_indices.append(entry.index)
+            elif entry.annotation is not None:
+                entry.annotation.set_visibility(False)
+
+        if shown_indices and self.raw_results is not None:
+            self.results = self.raw_results[torch.as_tensor(shown_indices, dtype=torch.long)]
+        else:
+            self.results = None
+
+        self._applied_threshold = threshold
+        self._refresh_dropped_graphics()
         self.annotation_window.scene.update()
 
-        # Make cursor normal
-        QApplication.restoreOverrideCursor()
-
-        self.report_detection_counts(dropped_confidence, dropped_area)
+        if report:
+            self.report_detection_counts(below_threshold, self.dropped_area, removed=removed)
         return len(self.annotations)
 
-    def report_detection_counts(self, dropped_confidence, dropped_area):
+    def _make_preview_annotation(self, entry):
+        if entry.polygon_image is not None:
+            return self.create_polygon_annotation(entry.polygon_image, entry.confidence)
+        return self.create_rectangle_annotation(entry.box_image, entry.confidence)
+
+    def _discard_previews(self, keep=()):
+        """Delete preview graphics, shown or hidden, except annotations in `keep`."""
+        keep_ids = {id(a) for a in keep}
+        doomed = [e.annotation for e in self.previews if e.annotation is not None]
+        doomed += [a for a in self.annotations if all(a is not d for d in doomed)]
+        for annotation in doomed:
+            if id(annotation) in keep_ids:
+                continue
+            try:
+                annotation.delete()
+            except Exception:
+                pass
+
+        self.previews = []
+        self.annotations = []
+        self.raw_results = None
+        self.results = None
+        self._clear_dropped_graphics()
+
+    # --- Threshold -----------------------------------------------------------------------------------------------------
+
+    def nudge_threshold(self, delta):
+        """Move the global confidence threshold and refilter what is shown.
+
+        Returns:
+            float: The threshold now in force.
+        """
+        current = self._threshold()
+        new = round(min(1.0, max(0.0, current + delta)), 2)
+        if new == round(current, 2):
+            self.main_window.status_bar.showMessage(
+                f"Confidence threshold is already {new:.2f}.", 2000)
+            return current
+
+        self.main_window.update_uncertainty_thresh(new)
+        if self._applied_threshold is None or abs(self._applied_threshold - new) > 1e-9:
+            self.apply_threshold(new)
+        return new
+
+    def on_uncertainty_changed(self, value):
+        """Follow the main window's threshold slider as well as Ctrl+wheel."""
+        if not self.active:
+            return
+        if self._applied_threshold is not None and abs(self._applied_threshold - value) <= 1e-9:
+            return
+        self.apply_threshold(value)
+
+    def apply_threshold(self, value):
+        """Refilter from the cache, or fetch again if the threshold went below the floor."""
+        needs_fetch = (self.session_processed
+                       and self.working_area is not None
+                       and self._has_prompt()
+                       and self.raw_floor is not None
+                       and value < self.raw_floor - 1e-9)
+        if needs_fetch:
+            self.run_session()
+        elif self.previews or self.raw_results is not None:
+            self.apply_visibility()
+        else:
+            self._applied_threshold = value
+
+        self.main_window.status_bar.showMessage(
+            f"Confidence threshold {value:.2f}: {len(self.annotations)} "
+            f"detection{'s' if len(self.annotations) != 1 else ''} shown"
+            "  |  Ctrl+Shift+wheel: finer steps", 4000)
+
+    # --- Examples and removals -----------------------------------------------------------------------------------------
+
+    def detection_at(self, scene_pos, include_dropped=False):
+        """The detection under a point, preferring the smallest when they overlap.
+
+        Args:
+            scene_pos (QPointF): Point in image coordinates.
+            include_dropped (bool): Also consider removed detections, for restoring.
+
+        Returns:
+            PreviewDetection | None
+        """
+        x, y = scene_pos.x(), scene_pos.y()
+        threshold = self._threshold()
+        best, best_area = None, None
+        for entry in self.previews:
+            shown = self._entry_visible(entry, threshold) and entry.annotation is not None
+            if not (shown or (include_dropped and entry.dropped)):
+                continue
+            x1, y1, x2, y2 = entry.box_image
+            if not (x1 <= x <= x2 and y1 <= y <= y2):
+                continue
+            area = (x2 - x1) * (y2 - y1)
+            if best is None or area < best_area:
+                best, best_area = entry, area
+        return best
+
+    def toggle_drop_at(self, scene_pos):
+        """Remove the detection under the point, or restore a removed one.
+
+        Local to this work area: it changes what gets confirmed, not the prompt.
+
+        Returns:
+            bool: True if a detection was removed or restored.
+        """
+        entry = self.detection_at(scene_pos, include_dropped=True)
+        if entry is None:
+            self.main_window.status_bar.showMessage("No detection there to remove.", 3000)
+            return False
+
+        self._set_dropped(entry, not entry.dropped)
+        self.apply_visibility()
+        if entry.dropped:
+            message = "Removed one detection. Ctrl+Shift+right-click it again to restore it."
+        else:
+            message = "Restored the detection."
+        self.main_window.status_bar.showMessage(message, 4000)
+        return True
+
+    def _set_dropped(self, entry, dropped):
+        entry.dropped = dropped
+        if dropped:
+            self.dropped_boxes.append(entry.box_image.copy())
+        else:
+            self.dropped_boxes = [b for b in self.dropped_boxes
+                                  if _box_iou(b, entry.box_image) < DROP_MATCH_IOU]
+
+    def _embed_entry(self, entry):
+        """One embedding for a detection on this work area, or None."""
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            vectors = self.see_anything_dialog.embed_detections([entry.box_work])
+        except Exception as e:
+            vectors = []
+            self.main_window.status_bar.showMessage(f"Could not read that detection: {e}", 5000)
+        finally:
+            QApplication.restoreOverrideCursor()
+        return vectors[0] if vectors else None
+
+    def add_positive_at(self, scene_pos):
+        """More like this: add the detection under the point as a positive example.
+
+        Each such example is its own class. Measured, a separate class adds its own
+        kind of object and leaves the rest alone -- and it can be switched off by
+        itself in the session panel to see whether it was helping.
+
+        Returns:
+            bool: True if the example was added.
+        """
+        entry = self.detection_at(scene_pos)
+        if entry is None:
+            return False
+
+        embedding = self._embed_entry(entry)
+        if embedding is None:
+            return False
+
+        self.see_anything_dialog.add_session_positive(
+            KIND_DETECTION, embedding, f"detection on {self._image_name()}")
+        shown = self.run_session()
+        self.main_window.status_bar.showMessage(
+            f"Added as a positive example; now showing {shown} "
+            f"detection{'s' if shown != 1 else ''}.", 5000)
+        return True
+
+    def add_negative_at(self, scene_pos):
+        """Fewer like this: remove the detection under the point AND add it as a negative.
+
+        One gesture does both. The negative teaches the prompt -- it becomes a decoy
+        class whose detections are thrown away -- but a decoy only wins objects that
+        look more like it than like any positive, so the detection clicked is not
+        guaranteed to vanish on its own. It is removed outright as well, and stays
+        removed across the re-run.
+
+        A decoy only competes against visual positives -- a phrase outscores an
+        example crop of the same object by far (0.95 against 0.34) -- so with a
+        text-only prompt the negative is kept in the session but has no effect yet,
+        and the user is told what would make it count.
+
+        Returns:
+            bool: True if the detection was removed and kept as a negative example.
+        """
+        entry = self.detection_at(scene_pos)
+        if entry is None:
+            return False
+
+        # Removed whatever else happens, so the click always does what it says.
+        self._set_dropped(entry, True)
+
+        embedding = self._embed_entry(entry)
+        if embedding is None:
+            self.apply_visibility()
+            self.main_window.status_bar.showMessage(
+                "Removed that detection, but could not read it as a negative example.", 6000)
+            return False
+
+        self.see_anything_dialog.add_session_negative(
+            embedding, f"detection on {self._image_name()}")
+
+        session = self._session()
+        if session is not None and session.decoys_can_compete():
+            shown = self.run_session()
+            self.main_window.status_bar.showMessage(
+                f"Removed and added as a negative example; now showing {shown} "
+                f"detection{'s' if shown != 1 else ''}.", 5000)
+        else:
+            # Nothing a decoy can change yet, so no re-run -- just hide it.
+            self.apply_visibility()
+            self.main_window.status_bar.showMessage(
+                "Removed and kept as a negative example. Negatives only take effect once the prompt "
+                "has a visual example -- Ctrl+click a good detection to add one.", 8000)
+        return True
+
+    def on_session_edited(self):
+        """An example was toggled or removed in the session panel: re-run the work area."""
+        if not self.active or self.working_area is None:
+            return
+        session = self._session()
+        self.text_prompt = session.text_phrase() if session is not None else None
+        if self._has_prompt():
+            self.run_session()
+        else:
+            self._set_raw_results(None)
+            self.session_processed = False
+        self.report_state()
+
+    # --- Graphics for removals and hover -------------------------------------------------------------------------------
+
+    def _set_revealing_dropped(self, revealing):
+        if revealing == self.revealing_dropped:
+            return
+        self.revealing_dropped = revealing
+        self.annotation_window.setCursor(Qt.PointingHandCursor if revealing else self.cursor)
+        self._refresh_dropped_graphics()
+
+    def _clear_dropped_graphics(self):
+        for item in self.dropped_graphics:
+            try:
+                self.annotation_window.scene.removeItem(item)
+            except Exception:
+                pass
+        self.dropped_graphics = []
+
+    def _refresh_dropped_graphics(self):
+        """Faint outlines on removed detections, only while Ctrl+Shift is held."""
+        self._clear_dropped_graphics()
+        if not self.revealing_dropped:
+            return
+
+        pen = QPen(QColor(230, 60, 60))
+        pen.setCosmetic(True)
+        pen.setWidth(2)
+        pen.setStyle(Qt.DotLine)
+        for entry in self.previews:
+            if not entry.dropped:
+                continue
+            x1, y1, x2, y2 = entry.box_image
+            item = QGraphicsRectItem(QRectF(x1, y1, x2 - x1, y2 - y1))
+            item.setPen(pen)
+            self.annotation_window.scene.addItem(item)
+            self.dropped_graphics.append(item)
+
+    def _clear_hover(self):
+        if self.hover_graphics is not None:
+            try:
+                self.annotation_window.scene.removeItem(self.hover_graphics)
+            except Exception:
+                pass
+            self.hover_graphics = None
+
+    def update_hover(self, scene_pos, modifiers):
+        """Outline the detection a Ctrl-click would act on, so it is never a guess."""
+        self._clear_hover()
+        if not self.previews or not modifiers & Qt.ControlModifier:
+            return
+
+        removing = bool(modifiers & Qt.ShiftModifier)
+        entry = self.detection_at(scene_pos, include_dropped=removing)
+        if entry is None:
+            return
+
+        pen = QPen(QColor(230, 60, 60) if removing else QColor(255, 215, 0))
+        pen.setCosmetic(True)
+        pen.setWidth(3)
+        x1, y1, x2, y2 = entry.box_image
+        self.hover_graphics = QGraphicsRectItem(QRectF(x1, y1, x2 - x1, y2 - y1))
+        self.hover_graphics.setPen(pen)
+        self.annotation_window.scene.addItem(self.hover_graphics)
+
+    def report_detection_counts(self, dropped_confidence, dropped_area, removed=0):
         """Say how many detections were kept, and what the thresholds removed."""
         kept = len(self.annotations)
         message = f"{kept} detection{'s' if kept != 1 else ''} found"
@@ -878,6 +1609,8 @@ class SeeAnythingTool(Tool):
             dropped.append(f"{dropped_confidence} below the uncertainty threshold")
         if dropped_area:
             dropped.append(f"{dropped_area} outside the area thresholds")
+        if removed:
+            dropped.append(f"{removed} removed by you")
         if dropped:
             message += " (" + ", ".join(dropped) + " discarded)"
 
@@ -895,11 +1628,14 @@ class SeeAnythingTool(Tool):
 
     def create_rectangle_annotation(self, box, confidence):
         """
-        Create rectangle annotations based on the given box coordinates.
+        Create a preview rectangle annotation from image-coordinate box corners.
 
         Args:
             box (np.ndarray): The bounding box coordinates.
             confidence (float): The confidence score for the annotation.
+
+        Returns:
+            RectangleAnnotation | None: The preview, already in the scene.
         """
         if len(box):
             # Convert to QPointF
@@ -922,9 +1658,9 @@ class SeeAnythingTool(Tool):
             # Ensure the annotation is added to the scene after creation (but not saved yet)
             # Force hydrate so these tool-generated previews behave like normal Qt objects
             annotation.create_graphics_item(self.annotation_window.scene, force_hydrate=True)
-            
-            self.annotations.append(annotation)
-            
+            return annotation
+        return None
+
     def refresh_label_preview(self):
         """Recolor the prompt rectangles and unconfirmed predictions for the new label.
 
@@ -947,7 +1683,8 @@ class SeeAnythingTool(Tool):
         if self.current_rect_graphics is not None:
             self.current_rect_graphics.setPen(pen)
 
-        for annotation in self.annotations:
+        # Hidden previews too: the threshold can bring them back on screen.
+        for annotation in self._preview_annotations():
             confidence = None
             if annotation.machine_confidence:
                 confidence = max(annotation.machine_confidence.values())
@@ -961,17 +1698,21 @@ class SeeAnythingTool(Tool):
         """
         Update the transparency of all unconfirmed annotations in this tool.
         """
-        for annotation in self.annotations:
+        for annotation in self._preview_annotations():
             annotation.update_transparency(value)
         self.annotation_window.scene.update()
 
     def create_polygon_annotation(self, points, confidence):
         """
-        Create polygon annotations based on the given points.
+        Create a preview polygon annotation from image-coordinate points.
 
         Args:
             points (np.ndarray): The polygon points.
             confidence (float): The confidence score for the annotation.
+
+        Returns:
+            PolygonAnnotation | None: The preview, already in the scene, or None
+            for a polygon too small to draw.
         """
         if len(points) > 3:
             # Convert to QPointF
@@ -991,13 +1732,21 @@ class SeeAnythingTool(Tool):
             # Ensure the annotation is added to the scene after creation (but not saved yet)
             # Force hydrate so these tool-generated previews behave like normal Qt objects
             annotation.create_graphics_item(self.annotation_window.scene, force_hydrate=True)
-            
-            self.annotations.append(annotation)
+            return annotation
+        return None
+
+    def _preview_annotations(self):
+        """Every preview annotation drawn so far, shown or hidden by the threshold."""
+        annotations = [e.annotation for e in self.previews if e.annotation is not None]
+        annotations += [a for a in self.annotations if all(a is not b for b in annotations)]
+        return annotations
 
     def confirm_annotations(self, crop_annotations=False):
         """
         Confirm the annotations and clear the working area.
         """
+        # Only what is on screen is confirmed; captured before any cleanup runs.
+        confirmed = list(self.annotations)
         # Sync the latest output type from the dialog before committing
         self.sync_settings_from_dialog()
 
@@ -1083,6 +1832,10 @@ class SeeAnythingTool(Tool):
         finally:
             # Ensure cleanup happens regardless of the path taken
             QApplication.restoreOverrideCursor()
+
+            # The confirmed annotations now belong to the annotation window; the
+            # previews the threshold or a removal hid do not, and are deleted.
+            self._discard_previews(keep=confirmed)
 
             # Clear all rectangles explicitly before clearing the working area
             self.clear_all_rectangles()
@@ -1298,11 +2051,10 @@ class SeeAnythingTool(Tool):
         """
         Clear all *unconfirmed* annotations created by this tool from the scene.
         """
-        for annotation in self.annotations:
-            annotation.delete()  # Let the annotation handle all graphics cleanup
-            annotation = None
-
-        self.annotations = []
+        # Hidden previews included: the threshold hides them, it does not delete them.
+        self._discard_previews()
+        # Removals belong to the detections just discarded.
+        self.dropped_boxes = []
         self.annotation_window.scene.update()
 
     def clear_rectangle_graphics(self):
@@ -1371,9 +2123,17 @@ class SeeAnythingTool(Tool):
         # Clear all rectangles when canceling the working area
         self.clear_all_rectangles()
         self.rectangles_processed = False
+        # The prompt session survives so the next work area can reuse it, but its
+        # per-work-area run state does not.
+        self.session_processed = False
+        self.session_found_nothing = False
+        self._set_revealing_dropped(False)
+        self._clear_hover()
 
-        self.annotations = []
-        self.results = None
+        # Hidden previews would otherwise stay in the scene with no owner.
+        self._discard_previews()
+        self.dropped_boxes = []
+        self.raw_floor = None
 
         # Force update to ensure graphics are removed visually
         self.annotation_window.scene.update()
