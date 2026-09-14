@@ -3250,14 +3250,30 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
         label_locked = self.main_window.label_window.label_locked
         locked_label_id = self.main_window.label_window.locked_label.id if label_locked else None
 
+        eligible = [a for a in annotations
+                    if not (label_locked and a.label.id != locked_label_id)]
+        self.select_annotations_bulk(eligible)
+
+    def select_annotations_bulk(self, annotations):
+        """Add many annotations to the selection in one pass.
+
+        Only the ones inside the viewport get Qt items now; the rest are
+        selected in the phantom layer and hydrated as they scroll into view
+        (see _selection_materialization_split). Anything already selected is
+        skipped, since select_annotation would toggle it off.
+        """
+        if self.selected_annotations:
+            already = {a.id for a in self.selected_annotations}
+            annotations = [a for a in annotations if a.id not in already]
+        if not annotations:
+            return
+
         self._syncing_selection = True
         if self.scene:
             self.scene.setItemIndexMethod(QGraphicsScene.NoIndex)
         self.blockSignals(True)
 
-        eligible = [a for a in annotations
-                    if not (label_locked and a.label.id != locked_label_id)]
-        near, far = self._selection_materialization_split(eligible)
+        near, far = self._selection_materialization_split(annotations)
 
         for annotation in near:
             # bulk_mode=True and quiet_mode=True suppress per-item UI updates.
@@ -3266,8 +3282,8 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
 
         for annotation in far:
             # Selected, drawn selected, but no Qt items until it comes into
-            # view. Appended without a membership test: unselect_annotations()
-            # emptied the list above and `near` is disjoint from `far`, so a
+            # view. Appended without a membership test: already-selected ones
+            # were filtered out above and `near` is disjoint from `far`, so a
             # duplicate is impossible -- and `x not in list` here would make
             # selecting 15k annotations quadratic.
             self.selected_annotations.append(annotation)

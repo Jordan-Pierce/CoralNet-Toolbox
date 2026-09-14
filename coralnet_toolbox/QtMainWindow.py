@@ -897,7 +897,8 @@ class MainWindow(QMainWindow):
                        "• Ctrl+click and drag to create a selection rectangle.\n"
                        "• Ctrl+Shift to show resize handles for a selected Rectangle and Polygon annotations.\n"
                        "• Ctrl+X to cut a selected annotation along a drawn line.\n"
-                       "• Ctrl+C to combine multiple selected annotations.\n"
+                       "• Ctrl+C to combine overlapping clusters of selected annotations "
+                       "(Ctrl+Shift+C to combine the whole selection into one).\n"
                        "• Ctrl+Space to confirm selected annotations with top predictions.\n"
                        "• Ctrl+Shift+mouse wheel to adjust polygon complexity.\n"
                        "• Ctrl+Delete to remove selected annotations."),

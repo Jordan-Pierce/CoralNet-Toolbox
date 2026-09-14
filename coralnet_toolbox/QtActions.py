@@ -353,26 +353,30 @@ class CutAnnotationAction(Action):
 
 
 class MergeAnnotationsAction(Action):
-    """Merge multiple annotations into one (undo restores originals)."""
+    """Replace annotations with what merging them produced (undo restores originals).
 
-    def __init__(self, annotation_window, original_annotations, merged_annotation):
+    Both sides are lists and are swapped in bulk, so one combine that merged
+    thousands of clusters is still a single delete and a single add.
+    """
+
+    def __init__(self, annotation_window, original_annotations, merged_annotations):
         self.annotation_window = annotation_window
-        self.original_annotations = original_annotations
-        self.merged_annotation = merged_annotation
+        self.original_annotations = list(original_annotations)
+        self.merged_annotations = list(merged_annotations)
 
     def do(self):
-        try:
-            # Delete originals and add merged
-            self.annotation_window.delete_annotations(self.original_annotations)
-            self.annotation_window.add_annotation(self.merged_annotation, record_action=False)
-        except Exception:
-            pass
+        self._swap(remove=self.original_annotations, add=self.merged_annotations)
 
     def undo(self):
+        self._swap(remove=self.merged_annotations, add=self.original_annotations)
+
+    def _swap(self, remove, add):
         try:
-            # Remove merged and restore originals
-            self.annotation_window.delete_annotation(self.merged_annotation.id, record_action=False)
-            self.annotation_window.add_annotations(self.original_annotations, record_action=False)
+            # Bulk delete leaves the selection alone, so a removed annotation
+            # would otherwise linger in selected_annotations.
+            self.annotation_window.unselect_annotations()
+            self.annotation_window.delete_annotations(remove, record_action=False)
+            self.annotation_window.add_annotations(add, record_action=False)
         except Exception:
             pass
 

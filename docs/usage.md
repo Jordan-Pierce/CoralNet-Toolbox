@@ -629,14 +629,15 @@ The Explorer automatically caches extracted features to accelerate re-loading th
      - **Subtraction Rules**:
          - Multiple overlapping annotations must be selected one-by-one
          - The first annotations will be used as the cutters, the last polygon will be used as the base   
-  - <kbd>Ctrl</kbd> + <kbd>C</kbd>: Combine multiple selected annotations (if same type and label)
+  - <kbd>Ctrl</kbd> + <kbd>C</kbd>: Combine each overlapping cluster of selected annotations; anything that doesn't overlap another selected annotation is left alone
     - **Combining Rules**: 
-      - All selected annotations must have the same label
-      - All selected annotations must be verified (not machine predictions)
+      - Only annotations within the same overlapping cluster need the same label and to be verified (not machine predictions) -- a cluster that fails this check is left untouched rather than blocking the rest
       - RectangleAnnotations can only be combined with other rectangles
-      - PatchAnnotations can be combined with other patches or polygons to create polygons
-      - PolygonAnnotations can be combined with other overlapping polygons to create a polygon
-      - MultiPolygonAnnotations can be made with multiple non-overlapping polygons
+      - A MultiPolygonAnnotation is only broken apart if one of its islands actually overlaps something outside it; otherwise it's left intact
+      - PatchAnnotations always combine with the full selection at once (same as <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>C</kbd> below), since they can be combined with other patches or polygons to create a polygon
+  - <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>C</kbd>: Combine the *entire* selection into a single result, regardless of overlap
+    - Same label/verified requirement, but applied to the whole selection at once
+    - Use this to deliberately build a MultiPolygonAnnotation out of several non-overlapping polygons
 
 - **Scale Tool**: Provide scale to the image(s), and measure distances on the current image.
   - <kbd>Left-Click</kbd> to set the starting point.
@@ -981,7 +982,8 @@ Multi-select filters and search bars to control which images are displayed:
 - <kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd>: Resize selected annotation or patch preview
 - <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Mouse Wheel</kbd>: Change polygon vertex count
 - <kbd>Ctrl</kbd> + <kbd>X</kbd>: Cut a polygon annotation, explode a multi-polygon, or subtract polygons
-- <kbd>Ctrl</kbd> + <kbd>C</kbd>: Combine multiple selected annotations (if same type and label)
+- <kbd>Ctrl</kbd> + <kbd>C</kbd>: Combine each overlapping cluster of selected annotations (same type and label); non-overlapping ones are left alone
+- <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>C</kbd>: Combine the entire selection into a single result regardless of overlap (e.g. to build a MultiPolygonAnnotation)
 - <kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show every vertex handle at full strength (handles themselves appear on selection)
 - <kbd>Ctrl</kbd> + <kbd>R</kbd>: Bake or unbake annotations (opens dialog to choose between baking vectors into mask or unbaking mask into vectors; Select tool must be active)
 - <kbd>Backspace</kbd> / <kbd>Delete</kbd>: Cancel current drawing (rectangle, polygon, work area, cutting line)
