@@ -339,11 +339,25 @@ All dock windows (Annotation Window, Labels Window, Rasters Window, Confidence W
 - **See Anything (YOLOE)**:
   - **Train Model**: Train a custom See Anything (YOLOE) model from annotations
   - **Deploy Predictor**: Deploy a YOLOE model to use interactively within the same image
-  - **Deploy Generator**: Deploy a YOLOE model to use like a detector / segmentor, referencing other images' annotations
-    - Select the YOLOE model and parameters
-    - Choose a reference label, then select image(s) with reference annotations (rectangles or polygons)
-    - Generate visual prompt encodings (VPEs) from reference images / annotations
-    - Use the loaded model with VPEs on new images or work areas
+    - Use the See Anything Tool to draw boxes, type a phrase (<kbd>Ctrl</kbd> + <kbd>T</kbd>), or click detections to find more / fewer like them
+    - Everything added is listed in the **Prompt Session** panel, grouped by where it came from; untick an example to try the prompt without it
+    - **Save** / **Load** a session (`.npz`), or **Inspect** it to plot the examples and rank phrases against them (Text Alignment)
+    - **Send to Generator** adds the session, with its confidence threshold and image size, to the Generator's prompt
+    - The Status box shows the loaded model, where the session's examples came from, and the last action
+  - **Deploy Generator**: Deploy a YOLOE model to use like a detector / segmentor across many images
+    - Select the YOLOE model and parameters, then load the model
+    - Build the prompt from any of:
+      - **Add from annotations**: choose a label, highlight image(s) with rectangles or polygons, then press **Add highlighted** (one example per image)
+        - Images already in the prompt are skipped unless their annotations changed
+        - **Remove all images from the prompt** removes examples added from annotations, keeping tool examples and phrases
+      - **Add from Tool**: the prompt built with the See Anything Tool (adding it twice is harmless)
+      - **Add phrase**: a text prompt
+    - **Save detections as**: the label detections are saved under; it can differ from the label of the annotations used as examples
+    - The prompt list groups examples by source (annotations, tool, phrases, files); untick an example to leave it out
+    - **Save** / **Load** the prompt (`.npz` only; legacy `.pt` VPE files are no longer supported)
+    - Examples from annotations are re-embedded automatically when the image size changes; examples from the tool cannot be, and the panel warns
+    - **OK** is enabled once a model is loaded, an output label is chosen, and the prompt has at least one enabled example
+    - Use the loaded model with the prompt on new images or work areas
 
 - **Feature Selector**:
   - **Deploy Model**: Deploy a dense feature extraction model for semantic similarity queries
@@ -701,6 +715,12 @@ The Explorer automatically caches extracted features to accelerate re-loading th
   - <kbd>Space</kbd>: Create a work area from the current view
     - <kbd>Space</kbd>: Set working area run prediction finalize predictions and exit working area
     - <kbd>Left-Click</kbd>: Start a box press again to end a box
+    - <kbd>Ctrl</kbd> + <kbd>T</kbd>: Set a text prompt (leave empty to clear it)
+    - <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add the detection under the cursor as a positive example (more like this)
+    - <kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Remove the detection and add it as a negative example (fewer like this)
+    - <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Right-Click</kbd>: Drop / restore a single detection (hold <kbd>Ctrl</kbd> + <kbd>Shift</kbd> to reveal dropped ones)
+    - <kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd>: Adjust the confidence threshold (add <kbd>Shift</kbd> for finer steps)
+    - <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Backspace</kbd>: Clear the prompt session
     - <kbd>Backspace</kbd>: Discard unfinalized predictions
 
 - **Feature Select Tool**: After a feature model is deployed
@@ -1009,8 +1029,12 @@ Multi-select filters and search bars to control which images are displayed:
 ### SAM / YOLOE Tools
 - <kbd>Space</kbd>: Set work area, run prediction, finalize, and exit
 - <kbd>Backspace</kbd>: Discard unfinalized predictions
-- <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add positive point (SAM Tool)
-- <kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Add negative point (SAM Tool)
+- <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add positive point (SAM Tool) / add detection as a positive example (YOLOE Tool)
+- <kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Add negative point (SAM Tool) / remove detection and add it as a negative example (YOLOE Tool)
+- <kbd>Ctrl</kbd> + <kbd>T</kbd>: Set a text prompt (YOLOE Tool)
+- <kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd>: Adjust the confidence threshold (YOLOE Tool)
+- <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Right-Click</kbd>: Drop / restore a single detection (YOLOE Tool)
+- <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Backspace</kbd>: Clear the prompt session (YOLOE Tool)
 
 ### Feature Select Tool
 - <kbd>Space</kbd> (or <kbd>Left-Click</kbd>, <kbd>Left-Click</kbd>): Define work area first
