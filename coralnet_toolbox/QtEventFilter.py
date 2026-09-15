@@ -4,7 +4,9 @@ from PyQt5.QtCore import Qt, QObject, QEvent
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QLineEdit, QAbstractSpinBox,
                              QPlainTextEdit, QTextEdit, QComboBox)
 
-from coralnet_toolbox.Icons import get_icon, get_window_icon
+from coralnet_toolbox.IO.QtCaptureView import capture_high_res_pixmap, clear_transient_overlays
+
+from coralnet_toolbox.Icons import get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -52,12 +54,33 @@ class GlobalEventFilter(QObject):
         else:
             verb = "Redid" if redo else "Undid"
             self._status(f"{verb} {action.label}.")
-        
+
+    def capture_high_res_screenshot(self):
+        """Grab a supersampled screenshot of the app window and copy it to the clipboard."""
+        clear_transient_overlays(self.annotation_window)
+        QApplication.processEvents()
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            scale = self.main_window.capture_view_dialog.get_scale()
+            pixmap = capture_high_res_pixmap(self.main_window, scale=scale)
+            QApplication.clipboard().setPixmap(pixmap)
+            self._status(f"Captured Application Window ({pixmap.width()}x{pixmap.height()}) — Copied to Clipboard",
+                         5000)
+        except Exception as e:
+            self._status(f"Screenshot failed: {e}")
+        finally:
+            QApplication.restoreOverrideCursor()
+
     def eventFilter(self, obj, event):
         try:
             # Handle keyboard events
             if event.type() == QEvent.KeyPress:
                 if event.modifiers() & Qt.ControlModifier and not (event.modifiers() & Qt.ShiftModifier):
+
+                    # Handle hotkey for high-res app screenshot to clipboard
+                    if event.key() == Qt.Key_F1:
+                        self.capture_high_res_screenshot()
+                        return True
 
                     # Handle Ctrl+Up and Ctrl+Down for cycling labels
                     if event.key() == Qt.Key_Up:

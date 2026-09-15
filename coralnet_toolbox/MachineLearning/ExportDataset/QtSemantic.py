@@ -12,8 +12,8 @@ from shapely.geometry import Polygon
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor
-from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QLabel, QApplication, QCheckBox, 
-                             QWidget, QHBoxLayout, QRadioButton)
+from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QLabel, QApplication, QCheckBox,
+                             QRadioButton)
 
 from coralnet_toolbox.MachineLearning.ExportDataset.QtBase import Base
 from coralnet_toolbox.MachineLearning.ExportDataset.export_dataset_utils import (
@@ -383,18 +383,14 @@ class Semantic(Base):
                                                                    "Images"])
                 self.label_counts_table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
 
+                # Labels hidden in the Label Window start unchecked, the same way
+                # the Image Source defaults to the filtered table.
+                hidden_codes = self.get_hidden_label_codes()
+
                 self.label_counts_table.setUpdatesEnabled(False)
                 row = 0
                 for label, count in sorted_label_counts:
-                    include_checkbox = QCheckBox()
-                    include_checkbox.setChecked(True)
-                    include_checkbox.stateChanged.connect(self.update_summary_statistics)
-                    container = QWidget()
-                    layout = QHBoxLayout(container)
-                    layout.setContentsMargins(0, 0, 0, 0)
-                    layout.addStretch()
-                    layout.addWidget(include_checkbox)
-                    layout.addStretch()
+                    container = self.create_include_checkbox_cell(label, hidden_codes)
 
                     # Create centered table items using helper function from Base class
                     label_item = self.create_centered_item(label)

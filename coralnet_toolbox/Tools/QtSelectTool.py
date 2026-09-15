@@ -1,8 +1,10 @@
 import warnings
 
+from shapely import STRtree
+
 from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush
-from PyQt5.QtWidgets import QGraphicsItemGroup, QGraphicsPathItem
+from PyQt5.QtWidgets import QApplication, QGraphicsItemGroup, QGraphicsPathItem
 
 from coralnet_toolbox.Tools.QtTool import Tool
 
@@ -367,9 +369,13 @@ class SelectTool(Tool):
                     # If only one is selected, start cutting mode.
                     self.set_active_subtool(self.cut_subtool, event, annotation=self.selected_annotations[0])
 
-            # Ctrl+C: Combine selected annotations
+            # Ctrl+C: Combine overlapping clusters, leave the rest alone.
+            # Ctrl+Shift+C: old all-at-once combine (always makes one result).
             elif event.key() == Qt.Key_C and len(self.selected_annotations) > 1:
-                self.combine_selected_annotations()
+                if modifiers & Qt.ShiftModifier:
+                    self.combine_selected_annotations_full()
+                else:
+                    self.combine_selected_annotations()
 
             # Ctrl+Space: Update with top machine confidence
             elif event.key() == Qt.Key_Space:
@@ -677,14 +683,172 @@ class SelectTool(Tool):
         )
 
     def combine_selected_annotations(self):
-        """Combine multiple selected annotations of the same type."""
+        """Ctrl+C: merge each cluster of overlapping, same-label, verified
+        annotations into one shape. Anything with nothing to merge into --
+        because it doesn't overlap anything, or its would-be group fails the
+        label/verified check -- is left exactly as it was.
+
+        Ctrl+Shift+C (combine_selected_annotations_full) keeps the old
+        behavior of always producing a single result from the whole selection.
+        """
+        selected_annotations = self.annotation_window.selected_annotations.copy()
+
+        if len(selected_annotations) <= 1:
+            self.show_status("Cannot combine: select at least 2 annotations.")
+            return
+
+        has_patches = any(isinstance(a, PatchAnnotation) for a in selected_annotations)
+        has_rectangles = any(isinstance(a, RectangleAnnotation) for a in selected_annotations)
+        has_polygon_family = any(
+            isinstance(a, (PolygonAnnotation, MultiPolygonAnnotation)) for a in selected_annotations)
+
+        if has_patches:
+            # Patch combining folds patches into a polygon regardless of
+            # overlap -- that semantics predates this feature, so route it
+            # through the old all-at-once path rather than reinterpreting it.
+            self.combine_selected_annotations_full()
+            return
+
+        if has_rectangles and has_polygon_family:
+            self.show_status(
+                "Cannot combine: rectangle annotations can only be combined with other rectangles.", 5000)
+            return
+
+        if has_rectangles:
+            units = [(anno, None) for anno in selected_annotations]
+            combine = RectangleAnnotation.combine
+        else:
+            # A MultiPolygonAnnotation takes part island by island, each
+            # remembering its parent so the multi is only broken apart if one
+            # of its islands actually merges with something.
+            units = []
+            for anno in selected_annotations:
+                if isinstance(anno, MultiPolygonAnnotation):
+                    units.extend((poly, anno) for poly in anno.polygons)
+                else:
+                    units.append((anno, None))
+            combine = PolygonAnnotation.combine
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            self._combine_overlapping_clusters(selected_annotations, units, combine)
+        finally:
+            QApplication.restoreOverrideCursor()
+
+    @staticmethod
+    def _group_by_overlap(geoms):
+        """Group indices of geometries that overlap, directly or through a
+        chain of overlaps. ``None`` or empty geometries end up alone.
+        """
+        n = len(geoms)
+        parent = list(range(n))
+
+        def find(i):
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+
+        # The tree only tests pairs whose bounding boxes meet; testing every
+        # pair took ~15 s for 3,000 polygons against ~10 ms this way.
+        left, right = STRtree(geoms).query(geoms, predicate='intersects')
+        for i, j in zip(left.tolist(), right.tolist()):
+            if i < j:
+                ri, rj = find(i), find(j)
+                if ri != rj:
+                    parent[ri] = rj
+
+        groups = {}
+        for i in range(n):
+            groups.setdefault(find(i), []).append(i)
+        return list(groups.values())
+
+    def _combine_overlapping_clusters(self, selected_annotations, units, combine):
+        """Merge every overlapping cluster in ``units`` and swap the results in.
+
+        ``units`` pairs each mergeable shape with the MultiPolygonAnnotation it
+        came from, or None. All merges are worked out first, then applied as a
+        single bulk delete, add and select: per-annotation adds and deletes
+        each repaint and rebuild the phantom layer, which is quadratic across
+        thousands of annotations.
+        """
+        geoms = [anno.get_rasterization_geometry() for anno, _ in units]
+
+        removed = []
+        merged = []
+        consumed = set()
+        broken_parents = {}
+        skipped = 0
+
+        for group in self._group_by_overlap(geoms):
+            if len(group) < 2:
+                continue
+
+            members = [units[i][0] for i in group]
+            label_id = members[0].label.id
+            if not all(m.verified and m.label.id == label_id for m in members):
+                skipped += 1
+                continue
+
+            combined = combine(members)
+            if not combined:
+                skipped += 1
+                continue
+
+            merged.append(combined)
+            for i in group:
+                anno, parent = units[i]
+                consumed.add(id(anno))
+                if parent is None:
+                    removed.append(anno)
+                else:
+                    broken_parents[id(parent)] = parent
+
+        if not merged:
+            if skipped:
+                self.show_status(
+                    "No annotations combined: overlapping annotations need the same "
+                    "verified label to merge.", 5000)
+            else:
+                self.show_status("No overlapping annotations to combine.", 4000)
+            return
+
+        # A multi-polygon that gave up an island can't stay intact, so its
+        # remaining islands become annotations of their own.
+        added = list(merged)
+        for parent in broken_parents.values():
+            removed.append(parent)
+            added.extend(poly for poly in parent.polygons if id(poly) not in consumed)
+
+        removed_ids = {anno.id for anno in removed}
+        kept = [anno for anno in selected_annotations if anno.id not in removed_ids]
+
+        window = self.annotation_window
+        window.unselect_annotations()
+        window.delete_annotations(removed, record_action=False)
+        window.add_annotations(added, record_action=False)
+        window.select_annotations_bulk(kept + added)
+        window.action_stack.push(MergeAnnotationsAction(window, removed, added))
+
+        message = f"Combined {len(merged)} overlapping group{'s' if len(merged) != 1 else ''}."
+        if skipped:
+            message += f" Skipped {skipped} with mismatched labels or unverified annotations."
+        self.show_status(message, 5000)
+
+    def combine_selected_annotations_full(self):
+        """Ctrl+Shift+C: combine the whole selection into a single result,
+        same as combine_selected_annotations used to before it learned to
+        leave non-overlapping annotations alone. Disjoint polygons still end
+        up bundled into one MultiPolygonAnnotation -- this is the hotkey for
+        deliberately building one of those.
+        """
         # Work on a shallow copy to avoid mutations while deleting originals
         selected_annotations = self.annotation_window.selected_annotations.copy()
-        
+
         if len(selected_annotations) <= 1:
             self.show_status("Cannot combine: select at least 2 annotations.")
             return  # Need at least 2 annotations to combine
-        
+
         # Check if any annotations have machine confidence
         if any(not annotation.verified for annotation in selected_annotations):
             self.show_status(
@@ -699,13 +863,13 @@ class SelectTool(Tool):
             self.show_status(
                 "Cannot combine annotations with different labels. Select annotations with the same label.", 5000)
             return
-        
+
         # Identify the types of annotations being combined
         has_patches = any(isinstance(annotation, PatchAnnotation) for annotation in selected_annotations)
         has_polygons = any(isinstance(annotation, PolygonAnnotation) for annotation in selected_annotations)
         has_multi_polygons = any(isinstance(annotation, MultiPolygonAnnotation) for annotation in selected_annotations)
         has_rectangles = any(isinstance(annotation, RectangleAnnotation) for annotation in selected_annotations)
-        
+
         # Handle cases where we can't combine different types
         if has_rectangles and (has_patches or has_polygons or has_multi_polygons):
             self.show_status(
@@ -719,7 +883,7 @@ class SelectTool(Tool):
                 self.show_status(
                     "Cannot combine: can only combine rectangles with other rectangles.", 5000)
                 return
-        
+
         # Handle different annotation type combinations
         if has_patches:
             # PatchAnnotation.combine can handle both patches and polygons
@@ -736,40 +900,28 @@ class SelectTool(Tool):
                     annotations_to_combine.extend(individual_polygons)
                 else:
                     annotations_to_combine.append(annotation)
-            
+
             # Now combine all the polygons
             combined_annotation = PolygonAnnotation.combine(annotations_to_combine)
         else:
             self.show_status("Cannot combine: unsupported annotation type.")
             return  # Unsupported annotation type
-        
+
         if not combined_annotation:
             self.show_status(
                 "Failed to combine annotations -- check that the selected shapes overlap "
                 "or are otherwise combinable."
             )
             return  # Failed to combine annotations
-        
-        # Add the new combined annotation to the scene
-        # Add the new combined annotation to the scene WITHOUT recording (we'll record a single merge action)
-        self.annotation_window.add_annotation_from_tool(combined_annotation, record_action=False)
 
-        # Push a MergeAnnotationsAction and perform deletions without recording
-        try:
-            action = MergeAnnotationsAction(self.annotation_window, selected_annotations.copy(), combined_annotation)
-            self.annotation_window.action_stack.push(action)
-        except Exception:
-            pass
-
-        # Delete originals without recording separate actions
-        for ann in selected_annotations:
-            try:
-                self.annotation_window.delete_annotation(ann.id, record_action=False)
-            except Exception:
-                pass
-
-        # Select the new combined annotation
-        self.annotation_window.select_annotation(combined_annotation)
+        # Swap originals for the result in bulk; deleting one at a time
+        # repaints and rebuilds the phantom layer per annotation.
+        window = self.annotation_window
+        window.unselect_annotations()
+        window.delete_annotations(selected_annotations, record_action=False)
+        window.add_annotation_from_tool(combined_annotation, record_action=False)
+        window.select_annotation(combined_annotation)
+        window.action_stack.push(MergeAnnotationsAction(window, selected_annotations, [combined_annotation]))
         
     def cut_selected_annotation(self, cutting_points):
         """
