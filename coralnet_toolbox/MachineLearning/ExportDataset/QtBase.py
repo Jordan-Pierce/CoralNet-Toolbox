@@ -571,6 +571,53 @@ class Base(QDialog):
             and frame_matches_stride(annotation.image_path, frame_stride)
         ]
 
+    def get_hidden_label_codes(self):
+        """
+        Return the label codes the user has hidden in the Label Window.
+
+        Returns an empty set when every label is hidden: hiding everything is a
+        view gesture, not an export filter, and an all-unchecked table would
+        export nothing.
+
+        Returns:
+            set: Short label codes currently hidden in the Label Window.
+        """
+        labels = self.main_window.label_window.labels
+        hidden = {label.short_label_code for label in labels if not label.is_visible}
+        return set() if len(hidden) == len(labels) else hidden
+
+    def create_include_checkbox_cell(self, label_code, hidden_codes):
+        """
+        Build the centered "Include" checkbox cell for one label row.
+
+        Label visibility is read here and never written back - nothing in this
+        dialog touches the Label Window - so re-checking a hidden label exports
+        it without making it visible again. Keep it one-way.
+
+        Args:
+            label_code (str): Short label code for this row.
+            hidden_codes (set): Label codes hidden in the Label Window.
+
+        Returns:
+            QWidget: Container widget holding the checkbox.
+        """
+        is_hidden = label_code in hidden_codes
+
+        include_checkbox = QCheckBox()
+        include_checkbox.setChecked(not is_hidden)
+        if is_hidden:
+            include_checkbox.setToolTip("Hidden in the Label Window, so unchecked by default.\n"
+                                        "Re-check to export it; that does not unhide it.")
+        include_checkbox.stateChanged.connect(self.update_summary_statistics)
+
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addStretch()
+        layout.addWidget(include_checkbox)
+        layout.addStretch()
+        return container
+
     def populate_class_filter_list(self):
         """
         Populate the class filter list with labels and their counts.
@@ -619,18 +666,14 @@ class Base(QDialog):
                                                                    "Images"])
 
                 # Populate the label counts table with labels and their counts
+                # Labels hidden in the Label Window start unchecked, the same way
+                # the Image Source defaults to the filtered table.
+                hidden_codes = self.get_hidden_label_codes()
+
                 self.label_counts_table.setUpdatesEnabled(False)
                 row = 0
                 for label, count in sorted_label_counts:
-                    include_checkbox = QCheckBox()
-                    include_checkbox.setChecked(True)
-                    include_checkbox.stateChanged.connect(self.update_summary_statistics)
-                    container = QWidget()
-                    layout = QHBoxLayout(container)
-                    layout.setContentsMargins(0, 0, 0, 0)
-                    layout.addStretch()
-                    layout.addWidget(include_checkbox)
-                    layout.addStretch()
+                    container = self.create_include_checkbox_cell(label, hidden_codes)
 
                     # Create centered table items using helper function
                     label_item = self.create_centered_item(label)

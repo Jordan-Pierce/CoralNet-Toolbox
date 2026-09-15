@@ -24,6 +24,7 @@ from coralnet_toolbox.MachineLearning.BatchInference.Contracts import (
 )
 from coralnet_toolbox.MachineLearning.BatchInference.ItemBuilder import build_inference_items
 from coralnet_toolbox.MachineLearning.BatchInference.Task import make_batch_inference_task
+from coralnet_toolbox.SeeAnything.PromptSession import keep_positive_detections
 from coralnet_toolbox.MachineLearning.BatchInference.Timing import (
     BatchInferenceTiming,
     BatchTimingRecord,
@@ -63,7 +64,7 @@ class BatchInferenceWorker(QThread):
                  is_semantic=False, sam_enabled=False, live_preview=True,
                  model_call_overrides=None, collapse_classes=False,
                  result_names=None, supports_tensor_input=True,
-                 parent=None):
+                 positive_class_limit=None, parent=None):
         super().__init__(parent)
         self.model = model
         self.items = list(items)
@@ -84,6 +85,10 @@ class BatchInferenceWorker(QThread):
         #     live-preview video path builds for plain YOLO.
         self._model_call_overrides = dict(model_call_overrides or {})
         self._collapse_classes = bool(collapse_classes)
+        #   - positive_class_limit: class ids at or above this are decoys (a See
+        #     Anything prompt's negative examples) and are dropped before the
+        #     collapse, which would otherwise turn them into real detections.
+        self._positive_class_limit = positive_class_limit
         self._result_names = dict(result_names) if result_names else None
         self._supports_tensor_input = bool(supports_tensor_input)
         # When SAM is enabled, skip tile→full-image remap in the worker so
@@ -477,6 +482,13 @@ class BatchInferenceWorker(QThread):
                 for j, (item, result) in enumerate(zip(batch, results)):
                     try:
                         result.path = item.image_path
+
+                        # Decoy classes are part of a See Anything prompt, never its
+                        # output. Drop what they won first: once ids are collapsed
+                        # to 0 below, a decoy's detection looks like a real one.
+                        if self._positive_class_limit is not None:
+                            result = keep_positive_detections(result, self._positive_class_limit)
+                            result.path = item.image_path
 
                         # Single-class generators (SAM, See Anything) emit one
                         # logical class; collapse every detected class id to 0

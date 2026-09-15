@@ -897,7 +897,8 @@ class MainWindow(QMainWindow):
                        "• Ctrl+click and drag to create a selection rectangle.\n"
                        "• Ctrl+Shift to show resize handles for a selected Rectangle and Polygon annotations.\n"
                        "• Ctrl+X to cut a selected annotation along a drawn line.\n"
-                       "• Ctrl+C to combine multiple selected annotations.\n"
+                       "• Ctrl+C to combine overlapping clusters of selected annotations "
+                       "(Ctrl+Shift+C to combine the whole selection into one).\n"
                        "• Ctrl+Space to confirm selected annotations with top predictions.\n"
                        "• Ctrl+Shift+mouse wheel to adjust polygon complexity.\n"
                        "• Ctrl+Delete to remove selected annotations."),
@@ -955,7 +956,7 @@ class MainWindow(QMainWindow):
                     "\t• Or, press Spacebar to create a working area for the current view.\n"
                     "• Ctrl+Left-click to add positive points (foreground).\n"
                     "• Ctrl+Right-click to add negative points (background).\n"
-                    "• Left-click and drag to create a bounding box for prompting.\n"
+                    "• Left-click, move, then left-click again to draw a bounding box for prompting.\n"
                     "• Press Spacebar to generate and confirm the segmentation.\n"
                     "• Press Backspace to cancel the current operation.\n"
                     "• Uncertainty can be adjusted in Parameters section.\n"
