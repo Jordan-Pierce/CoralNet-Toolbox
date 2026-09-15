@@ -564,7 +564,7 @@ class DeployGeneratorDialog(QDialog):
                 self.loaded_model.predictor(blank, point_grids=[np.array([[0.5, 0.5]])])
 
             progress_bar.finish_progress()
-            self.status_bar.setText(f"Model loaded: {self.model_path}"
+            self.status_bar.setText(f"Model loaded: {os.path.basename(self.model_path)}"
                                     + (" (weights shared with SAM Predictor)" if shared else ""))
             QMessageBox.information(self, "Model Loaded", "Model loaded successfully")
             # Close on success, as the Predictor dialog does; a failed load

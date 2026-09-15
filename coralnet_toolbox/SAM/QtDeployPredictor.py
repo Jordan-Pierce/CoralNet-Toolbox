@@ -10,9 +10,9 @@ from torch.cuda import empty_cache
 from torch.cuda import is_available as cuda_is_available
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFormLayout,
-                             QHBoxLayout, QLabel, QMessageBox, QPushButton,
-                             QSpinBox, QVBoxLayout, QGroupBox)
+from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QFileDialog,
+                             QFormLayout, QHBoxLayout, QLabel, QMessageBox,
+                             QPushButton, QSpinBox, QVBoxLayout, QGroupBox)
 
 from ultralytics.models.sam import Predictor as SAMPredictor
 from ultralytics.models.sam import SAM2Predictor, SAM3Predictor
@@ -153,11 +153,78 @@ class DeployPredictorDialog(QDialog):
         self.model_combo.setCurrentIndex(models.index("SAM 2.1 Tiny"))
         self.model_combo.setToolTip("Choose a SAM variant for interactive segmentation.\nTiny/Small: Faster, less memory.\nBase/Large: Higher accuracy, more resources.")
 
+        # The combo keeps every built-in choice; Browse only adds to it.
+        browse_button = QPushButton("Browse...")
+        browse_button.clicked.connect(self.browse_model_file)
+        browse_button.setToolTip("Select a local SAM weights file (.pt) to add to the list.")
+
+        selection_layout = QHBoxLayout()
+        selection_layout.addWidget(self.model_combo, 1)
+        selection_layout.addWidget(browse_button)
+
         layout.addWidget(QLabel("Select Model:"))
-        layout.addWidget(self.model_combo)
+        layout.addLayout(selection_layout)
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
+
+    def browse_model_file(self):
+        """Add a local weights file to the model list and select it.
+
+        The built-in choices stay in the combo; a browsed file is just one
+        more entry, so switching back to them needs no re-browse.
+        """
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open SAM Model File", "",
+            "Model Files (*.pt *.pth);;All Files (*)"
+        )
+        if not file_path:
+            return
+
+        file_path = os.path.normpath(file_path).replace("\\", "/")
+        # Name the entry by its file, but keep the full path in the tooltip and
+        # fall back to the path itself if two directories hold the same name.
+        name = os.path.basename(file_path)
+        if self.models.get(name, file_path) != file_path:
+            name = file_path
+
+        if name not in self.models:
+            self.models[name] = file_path
+            self.model_combo.addItem(name)
+        index = self.model_combo.findText(name)
+        self.model_combo.setItemData(index, file_path, Qt.ToolTipRole)
+        self.model_combo.setCurrentIndex(index)
+
+    def _selected_model_path(self):
+        """The weights file for the current selection.
+
+        The combo is editable, so an unknown entry is taken as a path (or as a
+        name ultralytics can download) rather than a missing key.
+        """
+        name = self.model_combo.currentText().strip()
+        return self.models.get(name, name)
+
+    def _model_tag(self):
+        """The selection's name and weights file, squashed for family matching.
+
+        A browsed file is only identified by its filename, so "sam2.1_t.pt"
+        and "SAM 2.1 Tiny" both have to resolve to the same family.
+        """
+        name = self.model_combo.currentText()
+        tag = f"{name} {self._selected_model_path()}".lower()
+        for char in " _-":
+            tag = tag.replace(char, "")
+        return tag
+
+    def _model_family(self):
+        """'sam3', 'sam2' or 'sam' for the current selection."""
+        tag = self._model_tag()
+        if "sam3" in tag:
+            return "sam3"
+        if "sam2" in tag:
+            return "sam2"
+        return "sam"
 
     def setup_parameters_layout(self):
         """
@@ -269,7 +336,7 @@ class DeployPredictorDialog(QDialog):
         set_image on sizes that aren't a multiple of 32 (1000 and 688, both
         reachable with the old 24-px step), and 32 suits SAM and MobileSAM too.
         """
-        return 14 if "SAM 3" in self.model_combo.currentText() else 32
+        return 14 if self._model_family() == "sam3" else 32
 
     def _snapped_imgsz(self):
         """Return the spinbox image size rounded to a multiple of the model's stride.
@@ -308,9 +375,12 @@ class DeployPredictorDialog(QDialog):
         progress_bar.show()
 
         try:
-            # Get selected model path and name
-            selected_model_name = self.model_combo.currentText()
-            self.model_path = self.models[selected_model_name]
+            # Get selected model path and family (a browsed file is an entry
+            # in self.models like any other; an edited one is taken as a path)
+            self.model_path = self._selected_model_path()
+            if not self.model_path:
+                raise ValueError("No model selected")
+            family = self._model_family()
             
             # Get imgsz and confidence from UI
             imgsz = self._snapped_imgsz()
@@ -319,7 +389,7 @@ class DeployPredictorDialog(QDialog):
             # FP16 only off the CPU: MobileSAM doesn't support it, and on the CPU
             # SAM's .half() cast is ~15x slower than FP32 (sam2.1_t encodes in
             # 17 s vs 1.1 s).
-            use_fp16 = selected_model_name != "MobileSAM" and not self._on_cpu()
+            use_fp16 = "mobilesam" not in self._model_tag() and not self._on_cpu()
 
             # Create overrides dictionary
             overrides = dict(
@@ -337,10 +407,10 @@ class DeployPredictorDialog(QDialog):
             )
             
             # Select the appropriate predictor class based on model
-            if "SAM 2" in selected_model_name:
+            if family == "sam2":
                 # SAM 2 and SAM 2.1 models use SAM2Predictor
                 self.loaded_model = SAM2Predictor(overrides=overrides)
-            elif "SAM 3" in selected_model_name:
+            elif family == "sam3":
                 # SAM 3 models use SAM3Predictor
                 self.loaded_model = SAM3Predictor(overrides=overrides)
             else:
@@ -353,7 +423,9 @@ class DeployPredictorDialog(QDialog):
             shared = self._adopt_shared_weights()
 
             progress_bar.finish_progress()
-            self.status_bar.setText(f"Model loaded: {self.model_path}"
+            # The file name alone: a browsed path is absolute and blew the
+            # status box out to the dialog's width.
+            self.status_bar.setText(f"Model loaded: {os.path.basename(self.model_path)}"
                                     + (" (weights shared with SAM Generator)" if shared else ""))
             QMessageBox.information(self, "Model Loaded", "Model loaded successfully")
             # The dialog has done its job; leaving it up meant it reappeared
@@ -429,7 +501,8 @@ class DeployPredictorDialog(QDialog):
         # Ultralytics will download the model for the user
         if not os.path.exists(self.model_path):
             # Inform the user that the model is being downloaded via main window status bar
-            self.main_window.status_bar.showMessage(f"Downloading model weights for {self.model_path}...", 5000)
+            self.main_window.status_bar.showMessage(
+                f"Downloading model weights for {os.path.basename(self.model_path)}...", 5000)
         else:
             # Indicate that the image is being set for the predictor
             self.main_window.status_bar.showMessage("Setting image for predictor...", 2000)
