@@ -2275,14 +2275,32 @@ This guide provides instructions on how to use the application, including key fu
 <p><strong>See Anything (YOLOE)</strong>:</p>
 </li>
 <li><strong>Train Model</strong>: Train a custom See Anything (YOLOE) model from annotations</li>
-<li><strong>Deploy Predictor</strong>: Deploy a YOLOE model to use interactively within the same image</li>
+<li><strong>Deploy Predictor</strong>: Deploy a YOLOE model to use interactively within the same image<ul>
+<li>Use the See Anything Tool to draw boxes, type a phrase (<kbd>Ctrl</kbd> + <kbd>T</kbd>), or click detections to find more / fewer like them</li>
+<li>Everything added is listed in the <strong>Prompt Session</strong> panel, grouped by where it came from; untick an example to try the prompt without it</li>
+<li><strong>Save</strong> / <strong>Load</strong> a session (<code>.npz</code>), or <strong>Inspect</strong> it to plot the examples and rank phrases against them (Text Alignment)</li>
+<li><strong>Send to Generator</strong> adds the session, with its confidence threshold and image size, to the Generator's prompt</li>
+<li>The Status box shows the loaded model, where the session's examples came from, and the last action</li>
+</ul>
+</li>
 <li>
-<p><strong>Deploy Generator</strong>: Deploy a YOLOE model to use like a detector / segmentor, referencing other images' annotations</p>
+<p><strong>Deploy Generator</strong>: Deploy a YOLOE model to use like a detector / segmentor across many images</p>
 <ul>
-<li>Select the YOLOE model and parameters</li>
-<li>Choose a reference label, then select image(s) with reference annotations (rectangles or polygons)</li>
-<li>Generate visual prompt encodings (VPEs) from reference images / annotations</li>
-<li>Use the loaded model with VPEs on new images or work areas</li>
+<li>Select the YOLOE model and parameters, then load the model</li>
+<li>Build the prompt from any of:</li>
+<li><strong>Add from annotations</strong>: choose a label, highlight image(s) with rectangles or polygons, then press <strong>Add highlighted</strong> (one example per image)<ul>
+<li>Images already in the prompt are skipped unless their annotations changed</li>
+<li><strong>Remove all images from the prompt</strong> removes examples added from annotations, keeping tool examples and phrases</li>
+</ul>
+</li>
+<li><strong>Add from Tool</strong>: the prompt built with the See Anything Tool (adding it twice is harmless)</li>
+<li><strong>Add phrase</strong>: a text prompt</li>
+<li><strong>Save detections as</strong>: the label detections are saved under; it can differ from the label of the annotations used as examples</li>
+<li>The prompt list groups examples by source (annotations, tool, phrases, files); untick an example to leave it out</li>
+<li><strong>Save</strong> / <strong>Load</strong> the prompt (<code>.npz</code> only; legacy <code>.pt</code> VPE files are no longer supported)</li>
+<li>Examples from annotations are re-embedded automatically when the image size changes; examples from the tool cannot be, and the panel warns</li>
+<li><strong>OK</strong> is enabled once a model is loaded, an output label is chosen, and the prompt has at least one enabled example</li>
+<li>Use the loaded model with the prompt on new images or work areas</li>
 </ul>
 </li>
 <li>
@@ -2586,16 +2604,19 @@ This guide provides instructions on how to use the application, including key fu
 </li>
 </ul>
 </li>
-<li>
-<p><kbd>Ctrl</kbd> + <kbd>C</kbd>: Combine multiple selected annotations (if same type and label)</p>
-<ul>
+<li><kbd>Ctrl</kbd> + <kbd>C</kbd>: Combine each overlapping cluster of selected annotations; anything that doesn't overlap another selected annotation is left alone<ul>
 <li><strong>Combining Rules</strong>: </li>
-<li>All selected annotations must have the same label</li>
-<li>All selected annotations must be verified (not machine predictions)</li>
+<li>Only annotations within the same overlapping cluster need the same label and to be verified (not machine predictions) -- a cluster that fails this check is left untouched rather than blocking the rest</li>
 <li>RectangleAnnotations can only be combined with other rectangles</li>
-<li>PatchAnnotations can be combined with other patches or polygons to create polygons</li>
-<li>PolygonAnnotations can be combined with other overlapping polygons to create a polygon</li>
-<li>MultiPolygonAnnotations can be made with multiple non-overlapping polygons</li>
+<li>A MultiPolygonAnnotation is only broken apart if one of its islands actually overlaps something outside it; otherwise it's left intact</li>
+<li>PatchAnnotations always combine with the full selection at once (same as <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>C</kbd> below), since they can be combined with other patches or polygons to create a polygon</li>
+</ul>
+</li>
+<li>
+<p><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>C</kbd>: Combine the <em>entire</em> selection into a single result, regardless of overlap</p>
+<ul>
+<li>Same label/verified requirement, but applied to the whole selection at once</li>
+<li>Use this to deliberately build a MultiPolygonAnnotation out of several non-overlapping polygons</li>
 </ul>
 </li>
 <li>
@@ -2695,6 +2716,12 @@ This guide provides instructions on how to use the application, including key fu
 <ul>
 <li><kbd>Space</kbd>: Set working area run prediction finalize predictions and exit working area</li>
 <li><kbd>Left-Click</kbd>: Start a box press again to end a box</li>
+<li><kbd>Ctrl</kbd> + <kbd>T</kbd>: Set a text prompt (leave empty to clear it)</li>
+<li><kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add the detection under the cursor as a positive example (more like this)</li>
+<li><kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Remove the detection and add it as a negative example (fewer like this)</li>
+<li><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Right-Click</kbd>: Drop / restore a single detection (hold <kbd>Ctrl</kbd> + <kbd>Shift</kbd> to reveal dropped ones)</li>
+<li><kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd>: Adjust the confidence threshold (add <kbd>Shift</kbd> for finer steps)</li>
+<li><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Backspace</kbd>: Clear the prompt session</li>
 <li><kbd>Backspace</kbd>: Discard unfinalized predictions</li>
 </ul>
 </li>
@@ -2996,7 +3023,8 @@ This guide provides instructions on how to use the application, including key fu
 <li><kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd>: Resize selected annotation or patch preview</li>
 <li><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Mouse Wheel</kbd>: Change polygon vertex count</li>
 <li><kbd>Ctrl</kbd> + <kbd>X</kbd>: Cut a polygon annotation, explode a multi-polygon, or subtract polygons</li>
-<li><kbd>Ctrl</kbd> + <kbd>C</kbd>: Combine multiple selected annotations (if same type and label)</li>
+<li><kbd>Ctrl</kbd> + <kbd>C</kbd>: Combine each overlapping cluster of selected annotations (same type and label); non-overlapping ones are left alone</li>
+<li><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>C</kbd>: Combine the entire selection into a single result regardless of overlap (e.g. to build a MultiPolygonAnnotation)</li>
 <li><kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show every vertex handle at full strength (handles themselves appear on selection)</li>
 <li><kbd>Ctrl</kbd> + <kbd>R</kbd>: Bake or unbake annotations (opens dialog to choose between baking vectors into mask or unbaking mask into vectors; Select tool must be active)</li>
 <li><kbd>Backspace</kbd> / <kbd>Delete</kbd>: Cancel current drawing (rectangle, polygon, work area, cutting line)</li>
@@ -3026,8 +3054,12 @@ This guide provides instructions on how to use the application, including key fu
 <ul>
 <li><kbd>Space</kbd>: Set work area, run prediction, finalize, and exit</li>
 <li><kbd>Backspace</kbd>: Discard unfinalized predictions</li>
-<li><kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add positive point (SAM Tool)</li>
-<li><kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Add negative point (SAM Tool)</li>
+<li><kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add positive point (SAM Tool) / add detection as a positive example (YOLOE Tool)</li>
+<li><kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Add negative point (SAM Tool) / remove detection and add it as a negative example (YOLOE Tool)</li>
+<li><kbd>Ctrl</kbd> + <kbd>T</kbd>: Set a text prompt (YOLOE Tool)</li>
+<li><kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd>: Adjust the confidence threshold (YOLOE Tool)</li>
+<li><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Right-Click</kbd>: Drop / restore a single detection (YOLOE Tool)</li>
+<li><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Backspace</kbd>: Clear the prompt session (YOLOE Tool)</li>
 </ul>
 <h3 id="feature-select-tool">Feature Select Tool<a class="headerlink" href="#feature-select-tool" title="Permanent link">&para;</a></h3>
 <ul>
@@ -3095,7 +3127,7 @@ This guide provides instructions on how to use the application, including key fu
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="September 9, 2026 23:37:46 UTC"><span class="timeago" datetime="2026-09-09T23:37:46+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="September 9, 2026 23:37:46 UTC">2026-09-09</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="September 15, 2026 19:00:38 UTC"><span class="timeago" datetime="2026-09-15T19:00:38+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="September 15, 2026 19:00:38 UTC">2026-09-15</span>
   </span>
 
     
