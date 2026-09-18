@@ -91,11 +91,18 @@ class ImportImages:
         progress_bar.show()
         progress_bar.start_progress(len(file_names))
 
+        # (path, reason) for every file that did not make it in. The add methods
+        # return False and print; collecting the reasons here is what stops a
+        # part-way failure -- running out of file descriptors, say -- from
+        # looking like a clean import that was simply short. Declared outside the
+        # try so the report below is reachable however the loop ends.
+        failures = []
+
         try:
             imported_paths = []
             progress_batch = 0
             PROGRESS_BATCH_SIZE = 50  # Update UI every 50 images instead of every image
-            
+
             # Add images directly to the manager without emitting signals
             for file_name in file_names:
                 try:
@@ -103,16 +110,22 @@ class ImportImages:
                         # Call the manager directly to add the raster silently,
                         # bypassing ImageWindow.add_image and its signal handlers.
                         if raster_type == 'OrthoRaster':
-                            if self.image_window.raster_manager.add_ortho_raster(file_name, emit_signal=False):
-                                imported_paths.append(file_name)
+                            added = self.image_window.raster_manager.add_ortho_raster(file_name,
+                                                                                      emit_signal=False)
                         else:
-                            if self.image_window.raster_manager.add_raster(file_name, emit_signal=False):
-                                imported_paths.append(file_name)
+                            added = self.image_window.raster_manager.add_raster(file_name,
+                                                                               emit_signal=False)
+                        if added:
+                            imported_paths.append(file_name)
+                        else:
+                            reason = self.image_window.raster_manager.last_error
+                            failures.append((file_name, reason or "Unknown error"))
                     else:
                         imported_paths.append(file_name)
-                except Exception:
+                except Exception as e:
                     if not suppress_errors:
                         raise
+                    failures.append((file_name, str(e)))
 
                 # Batch progress updates to reduce UI thread load
                 progress_batch += 1
@@ -136,6 +149,40 @@ class ImportImages:
             QApplication.restoreOverrideCursor()
             progress_bar.stop_progress()
             progress_bar.close()
+
+        # Reported after the progress bar is down, and reported even when
+        # `suppress_errors` is set: that flag exists to keep a drag-and-drop
+        # from raising, not to hide files the user asked for and did not get.
+        if failures:
+            self._show_import_failures(failures)
+
+    def _show_import_failures(self, failures):
+        """Report the files that did not import, once, with the reason for each.
+
+        Args:
+            failures (list): (file path, reason) pairs.
+        """
+        # Grouped by reason rather than listed per file. A cause that is really
+        # about the process and not the file -- descriptor exhaustion, a missing
+        # drive -- produces an identical message for every file after the first,
+        # and thousands of copies of it would bury anything else.
+        by_reason = {}
+        for file_name, reason in failures:
+            by_reason.setdefault(reason, []).append(file_name)
+
+        blocks = []
+        for reason, names in list(by_reason.items())[:3]:
+            if len(names) == 1:
+                blocks.append(f"{os.path.basename(names[0])}:\n{reason}")
+            else:
+                blocks.append(f"{len(names)} files, including {os.path.basename(names[0])}:\n{reason}")
+
+        if len(by_reason) > 3:
+            blocks.append(f"...and {len(by_reason) - 3} further distinct error(s); see the console.")
+
+        QMessageBox.warning(self.image_window,
+                            "Error Importing Image(s)",
+                            f"{len(failures)} file(s) could not be imported.\n\n" + "\n\n".join(blocks))
     
     def _show_success_message(self):
         """Display a success message after importing images."""

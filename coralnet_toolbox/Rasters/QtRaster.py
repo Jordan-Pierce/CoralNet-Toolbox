@@ -116,6 +116,10 @@ class Raster(QObject):
         
         # Initialize properties
         self._rasterio_src = None
+        # Why load_rasterio() last failed, kept so whoever constructed this can
+        # tell the user. Without it the reason dies in a print and the import
+        # reports nothing beyond "failed".
+        self.load_error = None
         self._q_image = None
         self._thumbnail = None  # Single thumbnail cache
         self._thumbnail_edge = None  # Longest edge the cached thumbnail was built for
@@ -388,6 +392,7 @@ class Raster(QObject):
             return True
             
         except Exception as e:
+            self.load_error = str(e)
             print(f"Error loading rasterio image {self.image_path}: {str(e)}")
             return False
             

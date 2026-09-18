@@ -949,7 +949,9 @@ class ImageWindow(QWidget):
             # Add the raster to the manager
             result = self.raster_manager.add_raster(image_path)
             if not result:
-                raise ValueError("Failed to load the image")
+                # The manager records why; without it this reports "failed" and
+                # nothing the user can act on.
+                raise ValueError(self.raster_manager.last_error or "Failed to load the image")
                 
             # Immediately update filtered paths to include the new image
             # This ensures the image will be visible in the table right away
