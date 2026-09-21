@@ -65,6 +65,18 @@ class FeaturesDeployModelDialog(QDialog):
 
         layout = QVBoxLayout()
 
+        # Information group
+        info_group = QGroupBox("Information")
+        info_layout = QVBoxLayout()
+        info_label = QLabel(
+            "Choose a dense feature extraction model to deploy and use interactively "
+            "with the Feature Select tool and others."
+        )
+        info_label.setWordWrap(True)
+        info_layout.addWidget(info_label)
+        info_group.setLayout(info_layout)
+        layout.addWidget(info_group)
+
         # Model selection group
         model_group = QGroupBox("Model Selection")
         model_layout = QFormLayout()
@@ -284,6 +296,9 @@ class FeaturesDeployModelDialog(QDialog):
 
             progress_bar.finish_progress()
             QMessageBox.information(self, "Model Loaded", "Feature model loaded successfully")
+            # Job done; leaving it up meant it reappeared behind the message
+            # box. A failed load keeps it open instead, so it can be retried.
+            self.accept()
 
         except Exception as e:
             self.status_label.setText("Model loading failed")

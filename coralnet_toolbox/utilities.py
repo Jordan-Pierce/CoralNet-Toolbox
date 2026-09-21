@@ -4,6 +4,7 @@ import warnings
 import os
 import gc
 import math
+import errno
 import sys
 import requests
 import traceback
@@ -51,6 +52,97 @@ def configure_gdal():
     os.environ.setdefault("GDAL_TIFF_INTERNAL_MASK", "YES")
 
 
+def configure_file_limit(target: int = 65536):
+    """Raise this process's open-file soft limit, once, before any raster is opened.
+
+    Every `Raster` holds its rasterio dataset open for as long as it lives, so
+    importing N images costs at least N file descriptors. The POSIX default soft
+    limit is 1024, which a routine import passes long before memory becomes the
+    constraint; GDAL then fails with EMFILE and every file after that is dropped.
+
+    A process may raise its own soft limit up to the hard limit without
+    privileges, and hard limits are commonly around a million, so this needs no
+    administrator involvement. It only moves the ceiling -- the descriptors are
+    still held for the whole session, so this is a stopgap for imports large
+    enough to reach 1024, not a fix for holding them in the first place.
+
+    Returns the soft limit in effect afterwards, or None on platforms with no
+    RLIMIT_NOFILE (Windows, where descriptors are not the constraint).
+    """
+    try:
+        import resource
+    except ImportError:
+        return None
+
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    except (ValueError, OSError) as e:
+        print(f"Could not read the open-file limit: {e}")
+        return None
+
+    if soft == resource.RLIM_INFINITY or soft >= target:
+        return soft
+
+    # macOS reports an unlimited hard limit but refuses any value above
+    # kern.maxfilesperproc, so step down rather than give up on the first
+    # EINVAL.
+    ceiling = target if hard == resource.RLIM_INFINITY else min(hard, target)
+    for candidate in (ceiling, 24576, 10240, 4096):
+        if candidate <= soft:
+            break
+        try:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (candidate, hard))
+            return candidate
+        except (ValueError, OSError):
+            continue
+
+    print(f"Could not raise the open-file soft limit above {soft}. Importing more "
+          f"than roughly that many images will fail with 'Too many open files'.")
+    return soft
+
+
+TOO_MANY_FILES_HINT = (
+    "The process ran out of file descriptors. This is a limit on how many images "
+    "can be held open at once, not a problem with this particular file.\n"
+    "On Linux/macOS, check the limit with `ulimit -Sn` and raise it with "
+    "`ulimit -Sn 65536` before launching."
+)
+
+
+def describe_raster_open_failure(image_path, exc):
+    """Explain why `rasterio.open` failed, without guessing at a cause.
+
+    This used to end in an `else` branch that blamed file corruption for every
+    error that was not a missing or unreadable file. Descriptor exhaustion
+    (EMFILE) landed there, which sent a user hunting for a corrupt image that
+    opened fine in every other viewer, so nothing here claims a cause it has not
+    established.
+
+    GDAL does not populate `errno` on `RasterioIOError` -- it subclasses
+    `OSError` but leaves `errno` as None -- so the descriptor case has to be
+    recognised from the message text as well.
+    """
+    reason = f"{type(exc).__name__}: {exc}"
+    header = f"Could not open {image_path}\n{reason}"
+
+    if (getattr(exc, 'errno', None) in (errno.EMFILE, errno.ENFILE)
+            or "too many open files" in str(exc).lower()):
+        return f"{header}\n\n{TOO_MANY_FILES_HINT}"
+
+    # Checked only after the descriptor case: with no descriptors left, these
+    # are answering about a file that is perfectly fine, and would mislead.
+    if not os.path.exists(image_path):
+        return f"{header}\n\nNo file exists at that path."
+    if not os.path.isfile(image_path):
+        return f"{header}\n\nThat path is not a file."
+    if not os.access(image_path, os.R_OK):
+        return f"{header}\n\nThe file exists but is not readable; check its permissions."
+
+    return (f"{header}\n\nThe file exists and is readable, so this is most likely an "
+            f"unsupported format or a damaged file -- but the message above is what "
+            f"GDAL actually reported.")
+
+
 @lru_cache(maxsize=32)
 def rasterio_open(image_path):
     """
@@ -60,7 +152,15 @@ def rasterio_open(image_path):
         image_path (str): Path to the image file
 
     Returns:
-        rasterio.DatasetReader: Opened rasterio dataset or None if error
+        rasterio.DatasetReader: Opened rasterio dataset
+
+    Raises:
+        RuntimeError: carrying an explanation of what actually went wrong.
+
+    Reports by raising rather than by showing a dialog. This is library code: it
+    is called in a loop during an import, where one modal per file made a failed
+    import unusable, and it is called off the GUI thread, where putting a widget
+    on screen is not safe in the first place.
     """
     try:
         # Use a local variable rather than instance attribute to avoid thread issues
@@ -76,31 +176,9 @@ def rasterio_open(image_path):
 
         return src
     except Exception as e:
-        error_msg = f"Error opening image with rasterio: {image_path}\nException: {str(e)}"
-
-        # Try to inspect file existence and permissions for more detailed error info
-        if not os.path.exists(image_path):
-            error_msg += f"\nFile does not exist: {image_path}"
-        elif not os.path.isfile(image_path):
-            error_msg += f"\nPath is not a file: {image_path}"
-        elif not os.access(image_path, os.R_OK):
-            error_msg += f"\nFile is not readable: {image_path}"
-        else:
-            error_msg += f"\nFile appears to be corrupted or in an unsupported format"
-
-        # Show critical message dialog if Qt application is available
-        if QApplication.instance() is not None:
-            QMessageBox.critical(
-                None,
-                "Image Loading Error",
-                f"Failed to open image file:\n\n{error_msg}\n\nThis file may be corrupted or in an unsupported format."
-            )
-
-        # Print to console for logging
+        error_msg = describe_raster_open_failure(image_path, e)
         print(error_msg)
-
-        # Raise a custom exception with detailed information
-        raise RuntimeError(f"Failed to open rasterio image: {image_path}. {error_msg}")
+        raise RuntimeError(error_msg) from e
 
 
 def rasterio_to_qimage(rasterio_src, longest_edge=None):

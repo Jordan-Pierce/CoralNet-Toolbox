@@ -8,6 +8,7 @@ from coralnet_toolbox.QtMainWindow import MainWindow
 from coralnet_toolbox.theme import apply_theme
 
 from coralnet_toolbox.utilities import configure_gdal
+from coralnet_toolbox.utilities import configure_file_limit
 from coralnet_toolbox.utilities import console_user
 from coralnet_toolbox.utilities import except_hook
 
@@ -32,6 +33,11 @@ def run():
         
         # Before any raster is opened: GDAL reads this from the environment.
         configure_gdal()
+
+        # Also before any raster is opened: each one holds a file descriptor for
+        # its lifetime, and the POSIX default of 1024 is well under the number of
+        # images a project routinely contains.
+        configure_file_limit()
 
         app = QApplication(sys.argv)
 

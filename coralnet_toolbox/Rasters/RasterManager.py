@@ -32,6 +32,11 @@ class RasterManager(QObject):
         super().__init__()
         self.rasters: Dict[str, Raster] = {}
         self.image_paths: List[str] = []
+        # Why the most recent add_raster/add_ortho_raster returned False. The
+        # add methods report success as a bool, which on its own tells a caller
+        # nothing it can show a user, and an import that fails part way through
+        # needs to say why.
+        self.last_error: Optional[str] = None
         
     def add_raster(self, image_path: str, emit_signal: bool = True) -> bool:
         """
@@ -67,6 +72,7 @@ class RasterManager(QObject):
         try:
             raster = Raster(image_path)
             if raster.rasterio_src is None:
+                self.last_error = raster.load_error or "rasterio did not return a dataset"
                 return False
 
             self.rasters[image_path] = raster
@@ -83,6 +89,7 @@ class RasterManager(QObject):
             return True
 
         except Exception as e:
+            self.last_error = str(e)
             print(f"Error adding raster {image_path}: {str(e)}")
             return False
     
@@ -192,6 +199,7 @@ class RasterManager(QObject):
             return True
 
         except Exception as e:
+            self.last_error = str(e)
             print(f"Error adding ortho raster {ortho_path}: {str(e)}")
             return False
     
