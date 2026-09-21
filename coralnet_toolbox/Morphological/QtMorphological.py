@@ -2,10 +2,10 @@ import warnings
 
 import numpy as np
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtWidgets import (
     QApplication, QDialog, QMessageBox, QLabel, QVBoxLayout,
-    QHBoxLayout, QPushButton, QGroupBox,
+    QHBoxLayout, QPushButton, QGroupBox, QSizePolicy, QTabWidget, QWidget,
 )
 
 from coralnet_toolbox.QtActions import (
@@ -13,7 +13,22 @@ from coralnet_toolbox.QtActions import (
     DeleteAnnotationsAction,
     CompoundAction,
     MaskEditAction,
+    MergeAnnotationsAction,
 )
+
+from coralnet_toolbox.Annotations import MultiPolygonAnnotation, PolygonAnnotation
+
+from coralnet_toolbox.Morphological.overlap_ops import (
+    MERGE,
+    SUBTRACT,
+    ImagePlan,
+    clean_geometry,
+    plan_merge,
+    plan_remove,
+    plan_subtract,
+    polygon_parts,
+)
+from coralnet_toolbox.Morphological.QtOverlapOperations import OverlapOperationsTab
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
@@ -27,10 +42,12 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class BakeUnbakeDialog(QDialog):
-    """Modeless dialog for baking vector annotations into the mask, or unbaking the mask into vectors.
+class AnnotationOperationsDialog(QDialog):
+    """Modeless dialog for whole-image annotation operations.
 
-    Operates on whichever image rows are highlighted in the ImageWindow, matching the
+    The Bake / Unbake tab converts between vector annotations and the mask; the
+    Overlaps tab subtracts, removes or merges vector annotations by label. Both
+    operate on whichever image rows are highlighted in the ImageWindow, matching the
     multi-image workflow used by PatchSamplingDialog. Defaults to the current image only.
     """
 
@@ -43,26 +60,31 @@ class BakeUnbakeDialog(QDialog):
         self.main_window = annotation_window.main_window
         self.image_window = annotation_window.main_window.image_window
 
-        self.setWindowTitle("Bake / Unbake Annotations")
+        self.setWindowTitle("Annotation Operations")
         self.setWindowIcon(get_window_icon("coralnet.svg"))
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
         self.setMinimumWidth(340)
 
         self.layout = QVBoxLayout(self)
 
-        self.setup_info_layout()
-        self.setup_buttons_layout()
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self.build_bake_tab(), "Bake / Unbake")
+        self.overlap_tab = OverlapOperationsTab(self)
+        self.tabs.addTab(self.overlap_tab, "Overlaps")
+        self.tabs.currentChanged.connect(self.on_tab_changed)
+        self.layout.addWidget(self.tabs)
 
-        # Status label showing the number of highlighted images
-        self.status_label = QLabel("No images highlighted")
-        self.status_label.setAlignment(Qt.AlignLeft)
-        self.layout.addWidget(self.status_label)
+        self.setup_footer_layout()
+        self.on_tab_changed(self.tabs.currentIndex())
 
         # Keep the status label in sync with row highlighting in the ImageWindow
         self.image_window.table_model.rowsChanged.connect(self.update_status_label)
 
-    def setup_info_layout(self):
-        """Set up the info layout with explanatory text."""
+    def build_bake_tab(self):
+        """Build the Bake / Unbake tab's explanatory text, and its buttons for the bottom row."""
+        tab = QWidget()
+        tab_layout = QVBoxLayout(tab)
+
         group_box = QGroupBox("Information")
         layout = QVBoxLayout(group_box)
 
@@ -75,11 +97,13 @@ class BakeUnbakeDialog(QDialog):
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
 
-        self.layout.addWidget(group_box)
+        tab_layout.addWidget(group_box)
+        tab_layout.addStretch()
 
-    def setup_buttons_layout(self):
-        """Set up the bottom button controls."""
-        button_layout = QHBoxLayout()
+        # Shown in the dialog's bottom row while this tab is current
+        self.bake_actions = QWidget()
+        button_layout = QHBoxLayout(self.bake_actions)
+        button_layout.setContentsMargins(0, 0, 0, 0)
 
         self.bake_button = QPushButton("Bake")
         self.bake_button.setToolTip("Rasterize vector annotations into the mask on the applicable images.")
@@ -91,11 +115,40 @@ class BakeUnbakeDialog(QDialog):
         self.unbake_button.clicked.connect(lambda: self.run_bulk_operation("unbake"))
         button_layout.addWidget(self.unbake_button)
 
+        return tab
+
+    def setup_footer_layout(self):
+        """The one bottom row: highlighted image count, the current tab's buttons, and Close."""
+        footer_layout = QHBoxLayout()
+
+        # Status label showing the number of highlighted images
+        self.status_label = QLabel("No images highlighted")
+        self.status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        footer_layout.addWidget(self.status_label)
+        footer_layout.addStretch()
+
+        footer_layout.addWidget(self.bake_actions)
+        footer_layout.addWidget(self.overlap_tab.action_widget)
+
         close_button = QPushButton("Close")
         close_button.clicked.connect(self.reject)
-        button_layout.addWidget(close_button)
+        footer_layout.addWidget(close_button)
 
-        self.layout.addLayout(button_layout)
+        self.layout.addLayout(footer_layout)
+
+    def on_tab_changed(self, index):
+        """Show the current tab's buttons and size the dialog to it; QTabWidget
+        otherwise sizes every tab to the largest."""
+        self.bake_actions.setVisible(self.tabs.widget(index) is not self.overlap_tab)
+        self.overlap_tab.action_widget.setVisible(self.tabs.widget(index) is self.overlap_tab)
+
+        for i in range(self.tabs.count()):
+            policy = QSizePolicy.Preferred if i == index else QSizePolicy.Ignored
+            self.tabs.widget(i).setSizePolicy(policy, policy)
+        # The tab widget caches its size hint; drop it so adjustSize sees the new policies.
+        self.tabs.updateGeometry()
+        self.layout.activate()
+        self.adjustSize()
 
     def showEvent(self, event):
         """Handle dialog show event."""
@@ -108,6 +161,8 @@ class BakeUnbakeDialog(QDialog):
             if current_image_path not in highlighted_paths:
                 self.image_window.table_model.set_highlighted_paths([current_image_path])
 
+        # Labels may have been added, removed or recoloured since the last show
+        self.overlap_tab.refresh_labels()
         self.update_status_label()
 
     def update_status_label(self):
@@ -203,15 +258,15 @@ class BakeUnbakeDialog(QDialog):
 
 
 class MorphologicalMixin:
-    """Mixin class providing bake/unbake annotation operations for AnnotationWindow."""
+    """Mixin class providing bake/unbake and overlap annotation operations for AnnotationWindow."""
 
     def prompt_bake_or_unbake_annotations(self):
-        """Show the modeless Bake/Unbake dialog for converting annotations."""
+        """Show the modeless Annotation Operations dialog."""
         if not self.current_image_path:
             return False
 
         if getattr(self, '_bake_unbake_dialog', None) is None:
-            self._bake_unbake_dialog = BakeUnbakeDialog(self)
+            self._bake_unbake_dialog = AnnotationOperationsDialog(self)
 
         dialog = self._bake_unbake_dialog
         dialog.show()
@@ -516,3 +571,152 @@ class MorphologicalMixin:
             return {"vectorized": len(vector_annotations), "skipped": len(rejected_indices)}
         finally:
             QApplication.restoreOverrideCursor()
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Overlap operations
+    # ------------------------------------------------------------------------------------------------------------------
+
+    # Overlap operations are polygon-only on both sides; rectangles, patches and
+    # masks are left alone.
+    _OVERLAP_TYPES = (PolygonAnnotation, MultiPolygonAnnotation)
+
+    def _overlap_candidates(self, image_path, label_ids, include_unverified):
+        """Return [(annotation, cleaned geometry)] for polygons on image_path matching the filters."""
+        candidates = []
+        for annotation in self.get_image_annotations(image_path):
+            if not isinstance(annotation, self._OVERLAP_TYPES):
+                continue
+            if annotation.label.id not in label_ids:
+                continue
+            if not include_unverified and not annotation.verified:
+                continue
+            try:
+                geometry = clean_geometry(annotation.get_rasterization_geometry())
+            except Exception:
+                geometry = None
+            if geometry is not None:
+                candidates.append((annotation, geometry))
+        return candidates
+
+    def plan_overlap_operation(self, image_path, spec):
+        """Work out what an OverlapSpec would change on image_path, changing nothing.
+
+        Returns:
+            ImagePlan: the annotations to delete and the geometry replacing them.
+        """
+        plan = ImagePlan(image_path)
+        targets = self._overlap_candidates(image_path, spec.target_label_ids, spec.include_unverified)
+        plan.checked = len(targets)
+        if not targets:
+            return plan
+
+        target_geoms = [geometry for _annotation, geometry in targets]
+
+        if spec.operation == MERGE:
+            keys = [annotation.label.id for annotation, _geometry in targets]
+            for indices, geometry in plan_merge(target_geoms, keys):
+                members = [targets[i][0] for i in indices]
+                # Take confidence from the biggest member, and from an unverified one
+                # if there is any, so a merge never quietly verifies a prediction.
+                pool = [i for i in indices if not targets[i][0].verified] or indices
+                template = targets[max(pool, key=lambda i: target_geoms[i].area)][0]
+                plan.replaced.append((members, geometry, template))
+            return plan
+
+        references = self._overlap_candidates(image_path, spec.reference_label_ids, spec.include_unverified)
+        if not references:
+            return plan
+        reference_geoms = [geometry for _annotation, geometry in references]
+
+        if spec.operation == SUBTRACT:
+            for index, geometry in plan_subtract(
+                    target_geoms, reference_geoms, spec.min_overlap, spec.min_piece_area):
+                annotation = targets[index][0]
+                if geometry is None:
+                    plan.removed.append(annotation)
+                else:
+                    plan.replaced.append(([annotation], geometry, annotation))
+        else:
+            for index in plan_remove(target_geoms, reference_geoms, spec.min_overlap):
+                plan.removed.append(targets[index][0])
+
+        return plan
+
+    @staticmethod
+    def _copy_annotation_state(template, annotation):
+        """Carry label confidence and metadata over from the annotation being replaced.
+
+        New annotations start verified with no machine confidence, so without this
+        a clipped prediction would come back looking like a verified annotation.
+        """
+        annotation.verified = template.verified
+        annotation.user_confidence = dict(template.user_confidence)
+        annotation.machine_confidence = dict(template.machine_confidence)
+        annotation.data = dict(template.data)
+        annotation.metadata = dict(template.metadata)
+
+    def _annotation_from_geometry(self, geometry, template):
+        """Build a Polygon or MultiPolygon annotation from shapely geometry, styled after template."""
+        parts = polygon_parts(geometry)
+        if not parts:
+            return None
+
+        common_args = {
+            "label": template.label,
+            "image_path": template.image_path,
+            "transparency": template.transparency,
+            "show_confidence": template.show_confidence,
+        }
+
+        polygons = []
+        for part in parts:
+            # Shapely rings repeat their first point at the end; annotations don't.
+            polygon = PolygonAnnotation(
+                points=[QPointF(x, y) for x, y in part.exterior.coords[:-1]],
+                holes=[[QPointF(x, y) for x, y in ring.coords[:-1]] for ring in part.interiors],
+                simplify=False,
+                **common_args,
+            )
+            self._copy_annotation_state(template, polygon)
+            polygons.append(polygon)
+
+        if len(polygons) == 1:
+            return polygons[0]
+
+        annotation = MultiPolygonAnnotation(polygons=polygons, **common_args)
+        self._copy_annotation_state(template, annotation)
+        return annotation
+
+    def apply_overlap_plans(self, plans):
+        """Make the changes in plans across all their images as a single undo step.
+
+        Returns:
+            tuple | None: (removed, added) annotation lists, or None if nothing changed.
+        """
+        removed = []
+        added = []
+        for plan in plans:
+            removed.extend(plan.removed)
+            for sources, geometry, template in plan.replaced:
+                annotation = self._annotation_from_geometry(geometry, template)
+                if annotation is None:
+                    # Leave the sources alone rather than delete them for nothing.
+                    continue
+                removed.extend(sources)
+                added.append(annotation)
+
+        if not removed and not added:
+            return None
+
+        # One bulk delete and add for every image: per-annotation calls repaint and
+        # rebuild the phantom layer each time.
+        self.unselect_annotations()
+        self.delete_annotations(removed, record_action=False)
+        self.add_annotations(added, record_action=False)
+        self.action_stack.push(MergeAnnotationsAction(self, removed, added))
+
+        current = [a for a in added if a.image_path == self.current_image_path]
+        if current:
+            self.select_annotations_bulk(current)
+
+        return removed, added
