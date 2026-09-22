@@ -135,6 +135,10 @@ class OverlapOperationsTab(QWidget):
         self.main_window = dialog.main_window
         self.image_window = dialog.image_window
 
+        # Plans behind the rows of the results table, so a double click can reselect
+        self.result_plans = {}
+        self.results_applied = False
+
         self.layout = QVBoxLayout(self)
 
         self.setup_operation_layout()
@@ -192,6 +196,7 @@ class OverlapOperationsTab(QWidget):
         self.results_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.results_table.setSelectionMode(QTableWidget.NoSelection)
         self.results_table.verticalHeader().setVisible(False)
+        self.results_table.doubleClicked.connect(self.on_results_double_clicked)
         self.results_table.setMinimumHeight(150)
         self.results_table.setMaximumHeight(240)
         layout.addWidget(self.results_table)
@@ -242,6 +247,9 @@ class OverlapOperationsTab(QWidget):
 
     def clear_results(self):
         """Drop results that no longer match the settings."""
+        self.result_plans = {}
+        self.results_applied = False
+
         _key, _text, _description, columns = self.current_operation()
         self.results_table.clear()
         self.results_table.setRowCount(0)
@@ -417,10 +425,16 @@ class OverlapOperationsTab(QWidget):
 
         changed = [plan for plan in plans if plan.has_changes]
         verb = "changed" if applied else "would change"
-        self.results_caption.setText(f"{len(changed)} of {len(plans)} image(s) {verb}.")
+        caption = f"{len(changed)} of {len(plans)} image(s) {verb}."
+        if changed:
+            caption += " Double click an image to open it."
+        self.results_caption.setText(caption)
 
         if not changed:
             return
+
+        self.result_plans = {plan.image_path: plan for plan in changed}
+        self.results_applied = applied
 
         totals = None
         rows = []
@@ -435,7 +449,8 @@ class OverlapOperationsTab(QWidget):
         for row, (name, counts, path) in enumerate(rows):
             name_item = QTableWidgetItem(name)
             if path:
-                name_item.setToolTip(path)
+                name_item.setToolTip(f"{path}\nDouble click to open this image.")
+                name_item.setData(Qt.UserRole, path)
             else:
                 font = name_item.font()
                 font.setBold(True)
@@ -445,4 +460,34 @@ class OverlapOperationsTab(QWidget):
             for column, value in enumerate(counts, start=1):
                 item = QTableWidgetItem(str(value))
                 item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                if path:
+                    item.setData(Qt.UserRole, path)
                 self.results_table.setItem(row, column, item)
+
+    def on_results_double_clicked(self, index):
+        """Open the double-clicked image and select what the preview found on it."""
+        item = self.results_table.item(index.row(), index.column())
+        image_path = item.data(Qt.UserRole) if item is not None else None
+        if not image_path:
+            # The total row carries no path
+            return
+
+        aw = self.annotation_window
+        if image_path != aw.current_image_path:
+            # Loading an image clears the highlighted rows, which are what these
+            # operations run on, so put them back afterwards.
+            highlighted = self.image_window.table_model.get_highlighted_paths()
+            self.image_window.load_image_by_path(image_path)
+            if highlighted:
+                self.image_window.table_model.set_highlighted_paths(highlighted)
+
+        plan = self.result_plans.get(image_path)
+        if plan is None or self.results_applied:
+            # After Apply the plan's annotations are gone, so there is nothing to select.
+            return
+
+        # Anything deleted or changed since the preview is no longer there to select
+        affected = [a for a in plan.affected if a.id in aw.annotations_dict]
+        aw.unselect_annotations()
+        if affected:
+            aw.select_annotations_bulk(affected)

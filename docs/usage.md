@@ -331,6 +331,7 @@ All dock windows (Annotation Window, Labels Window, Rasters Window, Confidence W
     - **Remove overlapping**: Delete annotations of the labels to change that overlap the overlapping labels
     - **Merge same label**: Combine overlapping annotations that share a label into one shape
     - **Preview**: Shows per image counts and selects the affected annotations on the current image, changing nothing
+    - **Double click a row**: Opens that image and selects what the preview found on it, keeping the highlighted images
     - **Apply**: Makes the changes on every highlighted image as a single step, undone with <kbd>Ctrl</kbd> + <kbd>Z</kbd>
     - Polygons only: rectangles, patches and masks are left alone on both sides
   - Select images by highlighting them in the ImageWindow
