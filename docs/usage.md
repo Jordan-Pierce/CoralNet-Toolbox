@@ -324,6 +324,18 @@ All dock windows (Annotation Window, Labels Window, Rasters Window, Confidence W
   - Pre-compute and organize multiple work areas / tiles for selected images
   - Select images by highlighting them in the ImageWindow
 
+- **Morphological**: Whole-image annotation operations, also opened with <kbd>Ctrl</kbd> + <kbd>R</kbd> in Select tool
+  - **Bake / Unbake tab**: Convert between vector annotations and the mask (see Baking and Unbaking Annotations)
+  - **Overlaps tab**: Resolve overlapping polygon annotations by label
+    - **Subtract overlap**: Cut the overlapping labels out of the labels to change, leaving holes where needed
+    - **Remove overlapping**: Delete annotations of the labels to change that overlap the overlapping labels
+    - **Merge same label**: Combine overlapping annotations that share a label into one shape
+    - **Preview**: Shows per image counts and selects the affected annotations on the current image, changing nothing
+    - **Double click a row**: Opens that image and selects what the preview found on it, keeping the highlighted images
+    - **Apply**: Makes the changes on every highlighted image as a single step, undone with <kbd>Ctrl</kbd> + <kbd>Z</kbd>
+    - Polygons only: rectangles, patches and masks are left alone on both sides
+  - Select images by highlighting them in the ImageWindow
+
 - **Set Image Scale**: Calibrate pixel-to-distance conversion
   - Draw a reference line to establish the scale for measurements
   - Used by the Scale Tool for distance and area calculations
@@ -779,6 +791,9 @@ The Explorer automatically caches extracted features to accelerate re-loading th
 
 ### Baking and Unbaking Annotations
 
+Both live in the **Morphological Operations** dialog, opened with <kbd>Ctrl</kbd> + <kbd>R</kbd> in Select tool or
+from **Utilities > Morphological**. Its **Overlaps** tab resolves overlapping polygons by label; see Utilities above.
+
 **Baking and Unbaking** allows converting between vector annotations and mask annotations:
 - **Bake**: Converts vector annotations (patches, rectangles, polygons) into a mask annotation
   - Converts the geometric outlines into rasterized pixel-based regions
@@ -1005,7 +1020,7 @@ Multi-select filters and search bars to control which images are displayed:
 - <kbd>Ctrl</kbd> + <kbd>C</kbd>: Combine each overlapping cluster of selected annotations (same type and label); non-overlapping ones are left alone
 - <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>C</kbd>: Combine the entire selection into a single result regardless of overlap (e.g. to build a MultiPolygonAnnotation)
 - <kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show every vertex handle at full strength (handles themselves appear on selection)
-- <kbd>Ctrl</kbd> + <kbd>R</kbd>: Bake or unbake annotations (opens dialog to choose between baking vectors into mask or unbaking mask into vectors; Select tool must be active)
+- <kbd>Ctrl</kbd> + <kbd>R</kbd>: Open the Morphological Operations dialog (bake vectors into the mask, unbake the mask into vectors, or subtract, remove and merge overlapping polygons by label; Select tool must be active)
 - <kbd>Backspace</kbd> / <kbd>Delete</kbd>: Cancel current drawing (rectangle, polygon, work area, cutting line)
 
 ### Tool Control
