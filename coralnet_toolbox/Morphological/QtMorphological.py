@@ -42,7 +42,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class AnnotationOperationsDialog(QDialog):
+class MorphologicalOperationsDialog(QDialog):
     """Modeless dialog for whole-image annotation operations.
 
     The Bake / Unbake tab converts between vector annotations and the mask; the
@@ -60,7 +60,7 @@ class AnnotationOperationsDialog(QDialog):
         self.main_window = annotation_window.main_window
         self.image_window = annotation_window.main_window.image_window
 
-        self.setWindowTitle("Annotation Operations")
+        self.setWindowTitle("Morphological Operations")
         self.setWindowIcon(get_window_icon("coralnet.svg"))
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
         self.setMinimumWidth(340)
@@ -261,12 +261,12 @@ class MorphologicalMixin:
     """Mixin class providing bake/unbake and overlap annotation operations for AnnotationWindow."""
 
     def prompt_bake_or_unbake_annotations(self):
-        """Show the modeless Annotation Operations dialog."""
+        """Show the modeless Morphological Operations dialog."""
         if not self.current_image_path:
             return False
 
         if getattr(self, '_bake_unbake_dialog', None) is None:
-            self._bake_unbake_dialog = AnnotationOperationsDialog(self)
+            self._bake_unbake_dialog = MorphologicalOperationsDialog(self)
 
         dialog = self._bake_unbake_dialog
         dialog.show()

@@ -21,25 +21,27 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 
 # (key, combo text, description, count columns after "Image")
+# Descriptions are kept about the same length so switching operations doesn't resize the dialog.
 OPERATIONS = [
     (
         SUBTRACT,
         "Subtract overlap",
-        "Cut the overlapping labels out of the labels to change. Overlapping annotations are "
-        "left as they are, and a shape that surrounds another gets a hole. Polygons only.",
+        "Cut the overlapping labels out of the labels to change, leaving holes where needed. "
+        "Overlapping annotations stay as they are. Polygons only.",
         ["Checked", "Clipped", "Removed"],
     ),
     (
         REMOVE,
         "Remove overlapping",
-        "Delete annotations of the labels to change that overlap any annotation of the "
-        "overlapping labels. Polygons only.",
+        "Delete any annotation of the labels to change that overlaps the overlapping labels. "
+        "Overlapping annotations stay as they are. Polygons only.",
         ["Checked", "Removed"],
     ),
     (
         MERGE,
         "Merge same label",
-        "Combine annotations that overlap and share a label into one shape. Polygons only.",
+        "Combine annotations of the labels to merge that overlap each other into one shape. "
+        "Only annotations sharing a label are merged. Polygons only.",
         ["Checked", "Groups", "Merged"],
     ),
 ]
