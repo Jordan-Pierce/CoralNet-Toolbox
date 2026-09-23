@@ -2253,6 +2253,23 @@ This guide provides instructions on how to use the application, including key fu
 <p>Select images by highlighting them in the ImageWindow</p>
 </li>
 <li>
+<p><strong>Morphological</strong>: Whole-image annotation operations, also opened with <kbd>Ctrl</kbd> + <kbd>R</kbd> in Select tool</p>
+</li>
+<li><strong>Bake / Unbake tab</strong>: Convert between vector annotations and the mask (see Baking and Unbaking Annotations)</li>
+<li><strong>Overlaps tab</strong>: Resolve overlapping polygon annotations by label<ul>
+<li><strong>Subtract overlap</strong>: Cut the overlapping labels out of the labels to change, leaving holes where needed</li>
+<li><strong>Remove overlapping</strong>: Delete annotations of the labels to change that overlap the overlapping labels</li>
+<li><strong>Merge same label</strong>: Combine overlapping annotations that share a label into one shape</li>
+<li><strong>Preview</strong>: Shows per image counts and selects the affected annotations on the current image, changing nothing</li>
+<li><strong>Double click a row</strong>: Opens that image and selects what the preview found on it, keeping the highlighted images</li>
+<li><strong>Apply</strong>: Makes the changes on every highlighted image as a single step, undone with <kbd>Ctrl</kbd> + <kbd>Z</kbd></li>
+<li>Polygons only: rectangles, patches and masks are left alone on both sides</li>
+</ul>
+</li>
+<li>
+<p>Select images by highlighting them in the ImageWindow</p>
+</li>
+<li>
 <p><strong>Set Image Scale</strong>: Calibrate pixel-to-distance conversion</p>
 </li>
 <li>Draw a reference line to establish the scale for measurements</li>
@@ -2795,6 +2812,8 @@ This guide provides instructions on how to use the application, including key fu
 <li>Useful for examining annotations at different angles</li>
 </ul>
 <h3 id="baking-and-unbaking-annotations">Baking and Unbaking Annotations<a class="headerlink" href="#baking-and-unbaking-annotations" title="Permanent link">&para;</a></h3>
+<p>Both live in the <strong>Morphological Operations</strong> dialog, opened with <kbd>Ctrl</kbd> + <kbd>R</kbd> in Select tool or
+from <strong>Utilities &gt; Morphological</strong>. Its <strong>Overlaps</strong> tab resolves overlapping polygons by label; see Utilities above.</p>
 <p><strong>Baking and Unbaking</strong> allows converting between vector annotations and mask annotations:
 - <strong>Bake</strong>: Converts vector annotations (patches, rectangles, polygons) into a mask annotation
   - Converts the geometric outlines into rasterized pixel-based regions
@@ -3026,7 +3045,7 @@ This guide provides instructions on how to use the application, including key fu
 <li><kbd>Ctrl</kbd> + <kbd>C</kbd>: Combine each overlapping cluster of selected annotations (same type and label); non-overlapping ones are left alone</li>
 <li><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>C</kbd>: Combine the entire selection into a single result regardless of overlap (e.g. to build a MultiPolygonAnnotation)</li>
 <li><kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show every vertex handle at full strength (handles themselves appear on selection)</li>
-<li><kbd>Ctrl</kbd> + <kbd>R</kbd>: Bake or unbake annotations (opens dialog to choose between baking vectors into mask or unbaking mask into vectors; Select tool must be active)</li>
+<li><kbd>Ctrl</kbd> + <kbd>R</kbd>: Open the Morphological Operations dialog (bake vectors into the mask, unbake the mask into vectors, or subtract, remove and merge overlapping polygons by label; Select tool must be active)</li>
 <li><kbd>Backspace</kbd> / <kbd>Delete</kbd>: Cancel current drawing (rectangle, polygon, work area, cutting line)</li>
 </ul>
 <h3 id="tool-control">Tool Control<a class="headerlink" href="#tool-control" title="Permanent link">&para;</a></h3>
@@ -3127,7 +3146,7 @@ This guide provides instructions on how to use the application, including key fu
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="September 15, 2026 19:00:38 UTC"><span class="timeago" datetime="2026-09-15T19:00:38+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="September 15, 2026 19:00:38 UTC">2026-09-15</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="September 22, 2026 19:00:10 UTC"><span class="timeago" datetime="2026-09-22T19:00:10+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="September 22, 2026 19:00:10 UTC">2026-09-22</span>
   </span>
 
     
