@@ -1366,6 +1366,14 @@ class AnnotationViewerWindow(QWidget):
         # Group and set into model (supports headers and collapsed groups)
         groups = self._group_data_items_by_sort_key(sorted_data_items)
 
+        # Hold the scroll position when the same annotations are still on show:
+        # a relabel re-sorts the gallery underneath the user, and landing at a
+        # different offset loses the run they were working through. A different
+        # set of ids means a new filter or isolation, which starts at the top.
+        scroll_bar = self.list_view.verticalScrollBar() if getattr(self, 'list_view', None) else None
+        previous_scroll = scroll_bar.value() if scroll_bar is not None else 0
+        previous_ids = set(self.list_model._id_to_row.keys())
+
         # Synchronous update wrapped in lock to prevent rogue signals
         self._syncing_selection = True
         self.list_model.set_grouped_items(groups)
@@ -1383,7 +1391,28 @@ class AnnotationViewerWindow(QWidget):
             self._show_annotation_gallery()
         except Exception:
             pass
+
+        # Last, once the tile size and visibility are settled and the row
+        # heights they imply are final
+        if scroll_bar is not None and previous_scroll:
+            if previous_ids == set(self.list_model._id_to_row.keys()):
+                self._restore_scroll(scroll_bar, previous_scroll)
     
+    def _restore_scroll(self, scroll_bar, value):
+        """Put the scroll bar back, now and again once the view has relaid out.
+
+        The bar's range is only final after the view has handled the model
+        reset, so setting it once here would clamp against a stale maximum.
+        """
+        def _apply():
+            try:
+                scroll_bar.setValue(min(value, scroll_bar.maximum()))
+            except Exception:
+                pass
+
+        _apply()
+        QTimer.singleShot(0, _apply)
+
     def _schedule_update(self):
         """Schedule a delayed update for virtualization."""
         self.update_timer.start(50)
@@ -1992,22 +2021,16 @@ class AnnotationViewerWindow(QWidget):
                 item.set_selected(item.annotation.id in selected_ids_set)
             # ----------------------------------------------------------------------------
                 
-            first_idx = None
             for aid in selected_ids_set:
                 row = self.list_model._id_to_row.get(aid)
                 if row is None:
                     continue
                 idx = self.list_model.index(row)
                 sel_model.select(idx, sel_model.Select | sel_model.Rows)
-                if first_idx is None:
-                    first_idx = idx
                     
-            # Scroll once to the first selected index to avoid repeated repaints
-            if first_idx is not None:
-                try:
-                    self.list_view.scrollTo(first_idx)
-                except Exception:
-                    pass
+            # No scrollTo: the gallery never moves itself. Scrolling to the
+            # first selected row pulled the view away from whoever was working
+            # through a run of patches, every time a label changed (issue #454).
         finally:
             del blocker
 

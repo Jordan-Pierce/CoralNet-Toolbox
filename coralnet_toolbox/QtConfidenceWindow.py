@@ -297,6 +297,7 @@ class CropPreview(QWidget):
         self._caption = ""
         self._placeholder = ""  # Shown in place of a crop
         self._top_aligned = False
+        self._annotation = None  # Marks its own center point on the crop, if it has one
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     def sizeHint(self):
@@ -307,10 +308,16 @@ class CropPreview(QWidget):
         """Allow the preview to shrink a long way before it forces the dock larger."""
         return QSize(app_theme.scale_int(48), app_theme.scale_int(48))
 
-    def set_crop(self, pixmap, caption="", placeholder=""):
-        """Show a crop, or the empty state -- with placeholder text, if given -- when pixmap is None."""
+    def set_crop(self, pixmap, caption="", placeholder="", annotation=None):
+        """Show a crop, or the empty state -- with placeholder text, if given -- when pixmap is None.
+
+        `annotation` is the annotation the crop came from, kept so it can mark
+        its own center point on the preview -- which patches do and the other
+        types do not.
+        """
         self._pixmap = pixmap if pixmap is not None and not pixmap.isNull() else None
         self._scaled = None
+        self._annotation = annotation if self._pixmap is not None else None
         self._caption = caption if self._pixmap is not None else ""
         self._placeholder = placeholder
         self.setCursor(QCursor(Qt.PointingHandCursor if self._pixmap is not None else Qt.ArrowCursor))
@@ -383,6 +390,8 @@ class CropPreview(QWidget):
         painter.setClipPath(outline)
         painter.fillRect(target, app_theme.BACKGROUND_COLOR)  # Behind any transparent parts of the crop
         painter.drawPixmap(target, self._scaled, QRectF(self._scaled.rect()))
+        if self._annotation is not None:
+            self._annotation.paint_crop_center(painter, target)
         painter.restore()
 
         # Frame in the top prediction's colour, as the old view's border was
@@ -849,7 +858,9 @@ class ConfidenceWindow(QWidget):
         # Height x width, as everywhere else in the app
         crop = annotation.cropped_image
         caption = f"{crop.height()} × {crop.width()}"
-        self.crop_preview.set_crop(scale_pixmap(graphic, self.max_graphic_size), caption)
+        self.crop_preview.set_crop(scale_pixmap(graphic, self.max_graphic_size),
+                                   caption,
+                                   annotation=annotation)
 
     def _update_title(self, annotation):
         """Say what is on display: the annotation's type and whether it has been reviewed."""
