@@ -624,6 +624,15 @@ class MainWindow(QMainWindow):
         # Separator
         self.utilities_menu.addSeparator()
 
+        # Morphological Operations
+        self.morphological_action = QAction("Morphological", self)
+        self.morphological_action.setToolTip("Bake and unbake annotations, or resolve overlapping polygons")
+        self.morphological_action.triggered.connect(self.open_morphological_dialog)
+        self.utilities_menu.addAction(self.morphological_action)
+
+        # Separator
+        self.utilities_menu.addSeparator()
+
         # Scale
         self.scale_action = QAction("Set Image Scale", self)
         self.scale_action.setToolTip("Calibrate pixel-to-distance conversion by drawing a reference line")
@@ -3060,6 +3069,24 @@ class MainWindow(QMainWindow):
             self.untoggle_all_tools()
             # Activate the scale tool
             self.annotation_window.set_selected_tool("scale")
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_morphological_dialog(self):
+        """Open the Morphological Operations dialog to bake, unbake or resolve overlaps."""
+        # Check if there are any images in the project
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "No Images Loaded",
+                                "Please load images into the project before running these operations.")
+            return
+
+        try:
+            # The dialog previews by selecting annotations, which is the Select tool's job
+            self.untoggle_all_tools()
+            self.select_tool_action.setChecked(True)
+            self.toolChanged.emit("select")
+            self.annotation_window.prompt_bake_or_unbake_annotations()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

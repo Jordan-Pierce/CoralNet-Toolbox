@@ -1,7 +1,5 @@
 import warnings
 
-from shapely import STRtree
-
 from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush
 from PyQt5.QtWidgets import QApplication, QGraphicsItemGroup, QGraphicsPathItem
@@ -21,6 +19,7 @@ from coralnet_toolbox.Annotations import (PatchAnnotation,
                                           RectangleAnnotation,
                                           MultiPolygonAnnotation)
 from coralnet_toolbox.QtActions import MergeAnnotationsAction, CutAnnotationAction
+from coralnet_toolbox.Morphological.overlap_ops import group_by_overlap
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -740,28 +739,7 @@ class SelectTool(Tool):
         """Group indices of geometries that overlap, directly or through a
         chain of overlaps. ``None`` or empty geometries end up alone.
         """
-        n = len(geoms)
-        parent = list(range(n))
-
-        def find(i):
-            while parent[i] != i:
-                parent[i] = parent[parent[i]]
-                i = parent[i]
-            return i
-
-        # The tree only tests pairs whose bounding boxes meet; testing every
-        # pair took ~15 s for 3,000 polygons against ~10 ms this way.
-        left, right = STRtree(geoms).query(geoms, predicate='intersects')
-        for i, j in zip(left.tolist(), right.tolist()):
-            if i < j:
-                ri, rj = find(i), find(j)
-                if ri != rj:
-                    parent[ri] = rj
-
-        groups = {}
-        for i in range(n):
-            groups.setdefault(find(i), []).append(i)
-        return list(groups.values())
+        return group_by_overlap(geoms)
 
     def _combine_overlapping_clusters(self, selected_annotations, units, combine):
         """Merge every overlapping cluster in ``units`` and swap the results in.
