@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (QFileDialog, QMessageBox, QCheckBox,
                              QVBoxLayout, QLabel, QLineEdit, QDialog, QHBoxLayout,
                              QPushButton, QFormLayout, QDialogButtonBox, QDoubleSpinBox,
                              QGroupBox, QTableWidget, QTableWidgetItem, QButtonGroup, QRadioButton,
-                             QSpinBox, QHeaderView,
+                             QSpinBox, QHeaderView, QScrollArea, QFrame,
                              QWidget)
 
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
@@ -62,7 +62,7 @@ class Base(QDialog):
         self.annotation_window = main_window.annotation_window
         self.image_window = main_window.image_window
 
-        self.resize(800, 800)
+        self.resize(1400, 700)
         self.setWindowTitle("Export Dataset")
         self.setWindowIcon(get_window_icon("coralnet.svg"))
 
@@ -76,7 +76,26 @@ class Base(QDialog):
         self.val_ratio = 0.2
         self.test_ratio = 0.1
 
-        self.layout = QVBoxLayout(self)
+        # Options scroll on the left, the summary table sits on the right, and
+        # the buttons span the bottom. self.layout is the left column, so the
+        # subclasses' setup_* methods keep adding their groups there.
+        self.root_layout = QVBoxLayout(self)
+        columns_layout = QHBoxLayout()
+        self.root_layout.addLayout(columns_layout, 1)
+
+        options_widget = QWidget()
+        self.layout = QVBoxLayout(options_widget)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+
+        self.options_scroll = QScrollArea()
+        self.options_scroll.setWidgetResizable(True)
+        self.options_scroll.setFrameShape(QFrame.NoFrame)
+        self.options_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.options_scroll.setWidget(options_widget)
+        columns_layout.addWidget(self.options_scroll)
+
+        self.summary_layout = QVBoxLayout()
+        columns_layout.addLayout(self.summary_layout, 1)
 
         # Setup the layout
         self.setup_info_layout()
@@ -94,6 +113,14 @@ class Base(QDialog):
         self.setup_status_layout()
         # Setup the button layout
         self.setup_button_layout()
+
+        # Options pack to the top; any spare height stays below them
+        self.layout.addStretch(1)
+        # Fit the column to its widest group so it never needs to scroll sideways
+        self.options_scroll.setMinimumWidth(
+            options_widget.sizeHint().width()
+            + self.options_scroll.verticalScrollBar().sizeHint().width()
+        )
 
     def showEvent(self, event):
         """
@@ -396,8 +423,8 @@ class Base(QDialog):
         layout.addWidget(self.label_counts_table)
 
         group_box.setLayout(layout)
-        # Stretch 1 so extra height also goes to the table, not the option groups
-        self.layout.addWidget(group_box, 1)
+        # Stretch 1 so the table takes the right column's full height
+        self.summary_layout.addWidget(group_box, 1)
 
     def setup_status_layout(self):
         """Setup the ready status layout."""
@@ -422,7 +449,7 @@ class Base(QDialog):
         layout.addWidget(self.split_summary_label)
 
         group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
+        self.summary_layout.addWidget(group_box)
 
     def setup_button_layout(self):
         """Setup the button layout."""
@@ -443,7 +470,7 @@ class Base(QDialog):
         self.buttons.rejected.connect(self.reject)
         button_layout.addWidget(self.buttons)
 
-        self.layout.addLayout(button_layout)
+        self.root_layout.addLayout(button_layout)
 
     def update_annotation_type_checkboxes(self):
         raise NotImplementedError("Method must be implemented in the subclass.")
