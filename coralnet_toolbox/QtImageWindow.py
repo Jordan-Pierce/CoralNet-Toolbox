@@ -7,7 +7,7 @@ from contextlib import contextmanager
 import rasterio
 
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint, QItemSelectionModel, QModelIndex, QEvent
-from PyQt5.QtGui import QKeyEvent
+from PyQt5.QtGui import QKeyEvent, QStandardItem, QStandardItemModel
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QWidget, QVBoxLayout, QLabel, 
                              QComboBox, QHBoxLayout, QTableView, QHeaderView, QApplication, 
                              QMenu, QPushButton, QStyle, QFormLayout, QFrame, 
@@ -209,7 +209,216 @@ class CheckableComboBox(QComboBox):
             if item.checkState() == Qt.Checked:
                 checked.append(item.text())
         return checked
-        
+
+
+class SearchableCheckableComboBox(QComboBox):
+    """
+    An editable QComboBox whose dropdown holds checkable items.
+
+    Typing narrows the dropdown to the items containing the text, and Enter
+    checks the highlighted (or first) match. With items checked, the filter is
+    those exact names, any of them; with none checked, the typed text is a
+    substring filter, as the plain search bars were.
+    """
+    # Signal to emit when the search terms change
+    filterChanged = pyqtSignal()
+
+    # Keys the open dropdown keeps; everything else edits the search text
+    VIEW_KEYS = (Qt.Key_Up, Qt.Key_Down, Qt.Key_PageUp, Qt.Key_PageDown,
+                 Qt.Key_Home, Qt.Key_End, Qt.Key_Escape, Qt.Key_Tab, Qt.Key_Backtab)
+
+    def __init__(self, placeholder_text, parent=None):
+        super().__init__(parent)
+        self.placeholder_text = placeholder_text
+
+        # Flag to ignore signals from programmatic changes
+        self._updating = False
+
+        self.setEditable(True)
+        self.setInsertPolicy(QComboBox.NoInsert)
+        # The built-in inline completer rewrites the typed text; the dropdown
+        # does the matching instead
+        self.setCompleter(None)
+        self.lineEdit().setClearButtonEnabled(True)
+        self.lineEdit().textChanged.connect(self._on_text_changed)
+
+        self.setModel(QStandardItemModel(self))
+        self.model().itemChanged.connect(self._on_item_changed)
+
+        # Line edit: Enter checks a match. View: clicks toggle checks without
+        # closing, and typing is handed back to the line edit.
+        self.lineEdit().installEventFilter(self)
+        self.view().installEventFilter(self)
+        self.view().viewport().installEventFilter(self)
+
+        self._refresh_display()
+
+    def eventFilter(self, obj, event):
+        """Keep the dropdown open for checking and typing."""
+        view = self.view()
+        if obj is view.viewport() and event.type() == QEvent.MouseButtonRelease:
+            index = view.indexAt(event.pos())
+            if index.isValid():
+                self._toggle_row(index.row())
+                # Returning True keeps the popup open after the click
+                return True
+
+        elif obj is view and event.type() == QEvent.KeyPress:
+            if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+                index = view.currentIndex()
+                row = index.row() if index.isValid() and not view.isRowHidden(index.row()) else self._first_visible_row()
+                if row >= 0:
+                    self._toggle_row(row)
+                return True
+            if event.key() not in self.VIEW_KEYS:
+                # The popup has focus, so typing would otherwise be lost
+                QApplication.sendEvent(self.lineEdit(), event)
+                return True
+
+        elif obj is self.lineEdit() and event.type() == QEvent.KeyPress:
+            key = event.key()
+            if key in (Qt.Key_Return, Qt.Key_Enter):
+                row = self._first_visible_row()
+                if row >= 0:
+                    self._toggle_row(row)
+                return True
+            if key == Qt.Key_Backspace and not self.lineEdit().text():
+                # Backspace on an empty search drops the last checked item
+                checked = self.get_checked_items()
+                if checked:
+                    self.set_item_checked(checked[-1], False)
+                return True
+            if key == Qt.Key_Down:
+                self.showPopup()
+                return True
+            if key == Qt.Key_Up:
+                # Stepping currentIndex would overwrite the search text
+                return True
+
+        # Pass on all other events
+        return super().eventFilter(obj, event)
+
+    def wheelEvent(self, event):
+        """Ignore the wheel; stepping the current item would replace the search."""
+        event.ignore()
+
+    def showPopup(self):
+        """Show the dropdown, narrowed to the current search text."""
+        self._apply_row_filter(self.lineEdit().text())
+        super().showPopup()
+
+    def hidePopup(self):
+        """Drop leftover search text once items are checked; it no longer filters."""
+        super().hidePopup()
+        if self.get_checked_items() and self.lineEdit().text():
+            self.lineEdit().clear()
+
+    def set_items(self, names):
+        """
+        Replace the items, keeping the checks and search text that still apply.
+
+        Args:
+            names (iterable): Item texts, in display order.
+        """
+        checked = set(self.get_checked_items())
+        text = self.lineEdit().text()
+        names = list(names)
+
+        self._updating = True
+        try:
+            # A fresh model is one reset, not a signal per appended row
+            model = QStandardItemModel(self)
+            for name in names:
+                item = QStandardItem(name)
+                item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsUserCheckable)
+                item.setCheckState(Qt.Checked if name in checked else Qt.Unchecked)
+                model.appendRow(item)
+            self.setModel(model)
+            model.itemChanged.connect(self._on_item_changed)
+
+            # setModel picks item 0 as current, which overwrites the edit text
+            self.setCurrentIndex(-1)
+            self.lineEdit().setText(text)
+        finally:
+            self._updating = False
+
+        self._apply_row_filter(text)
+        self._refresh_display()
+
+        # A checked name that disappeared (e.g., a deleted label) no longer filters
+        if checked - set(names):
+            self.filterChanged.emit()
+
+    def get_checked_items(self):
+        """Return a list of strings for all checked items."""
+        model = self.model()
+        return [model.item(row).text() for row in range(model.rowCount())
+                if model.item(row).checkState() == Qt.Checked]
+
+    def set_item_checked(self, text, checked):
+        """Find an item by its text and set its check state."""
+        state = Qt.Checked if checked else Qt.Unchecked
+        for item in self.model().findItems(text):
+            if item.checkState() != state:
+                item.setCheckState(state)
+
+    def search_terms(self):
+        """
+        Return what to filter by: a frozenset of the checked names (exact
+        match), or the typed text (substring match) when nothing is checked.
+        """
+        checked = self.get_checked_items()
+        if checked:
+            return frozenset(checked)
+        return self.lineEdit().text()
+
+    def _toggle_row(self, row):
+        """Flip the check state of one row."""
+        item = self.model().item(row)
+        if item:
+            item.setCheckState(Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked)
+
+    def _first_visible_row(self):
+        """Return the first row the search text leaves visible, or -1."""
+        for row in range(self.model().rowCount()):
+            if not self.view().isRowHidden(row):
+                return row
+        return -1
+
+    def _apply_row_filter(self, text):
+        """Hide the dropdown rows that do not contain the search text."""
+        needle = text.lower()
+        model = self.model()
+        view = self.view()
+        for row in range(model.rowCount()):
+            view.setRowHidden(row, bool(needle) and needle not in model.item(row).text().lower())
+
+    def _on_text_changed(self, text):
+        """Narrow the dropdown as the user types."""
+        if self._updating:
+            return
+        self._apply_row_filter(text)
+        if text and not self.view().isVisible():
+            self.showPopup()
+        # Typed text only filters while nothing is checked
+        if not self.get_checked_items():
+            self.filterChanged.emit()
+
+    def _on_item_changed(self, item):
+        """Handle when an item's check state is changed."""
+        if self._updating:
+            return
+        self._refresh_display()
+        self.filterChanged.emit()
+
+    def _refresh_display(self):
+        """Show the checked items in the empty line edit."""
+        checked = self.get_checked_items()
+        if checked:
+            self.lineEdit().setPlaceholderText(f"{len(checked)} selected: {', '.join(checked)}")
+        else:
+            self.lineEdit().setPlaceholderText(self.placeholder_text)
+
 
 class ImageWindow(QWidget):
     # Signals
@@ -312,23 +521,21 @@ class ImageWindow(QWidget):
         self.search_layout.addRow("Filters:", self.filter_combo)
 
         # Setup image search
-        self.search_bar_images = QComboBox(self)
-        self.search_bar_images.setEditable(True)
-        self.search_bar_images.setPlaceholderText("Type to search images")
-        self.search_bar_images.setInsertPolicy(QComboBox.NoInsert)
+        self.search_bar_images = SearchableCheckableComboBox("Type to search images", self)
         self.search_bar_images.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.search_bar_images.editTextChanged.connect(self.schedule_filter)
-        self.search_bar_images.setToolTip("Search for images by filename or file path.\nMatches any image basename containing the search text.")
+        self.search_bar_images.filterChanged.connect(self.schedule_filter)
+        self.search_bar_images.setToolTip("Search for images by filename.\n"
+                                          "Type to narrow the list, then check one or more images (Enter checks the top match).\n"
+                                          "With images checked, shows any of them; with none checked, matches names containing the text.")
         self.search_layout.addRow("Search Images:", self.search_bar_images)
 
         # Setup label search
-        self.search_bar_labels = QComboBox(self)
-        self.search_bar_labels.setEditable(True)
-        self.search_bar_labels.setPlaceholderText("Type to search labels")
-        self.search_bar_labels.setInsertPolicy(QComboBox.NoInsert)
+        self.search_bar_labels = SearchableCheckableComboBox("Type to search labels", self)
         self.search_bar_labels.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.search_bar_labels.editTextChanged.connect(self.schedule_filter)
-        self.search_bar_labels.setToolTip("Search for images by annotation label name.\nShows only images containing annotations with labels matching the search text.")
+        self.search_bar_labels.filterChanged.connect(self.schedule_filter)
+        self.search_bar_labels.setToolTip("Search for images by annotation label name.\n"
+                                          "Type to narrow the list, then check one or more labels (Enter checks the top match).\n"
+                                          "With labels checked, shows images containing any of them; with none checked, matches labels containing the text.")
         self.search_layout.addRow("Search Labels:", self.search_bar_labels)
 
     def _init_info_widgets(self):
@@ -1206,8 +1413,9 @@ class ImageWindow(QWidget):
     def filter_images(self, use_threading: bool = True):
         """Filter images based on current criteria."""
         # Get filter criteria
-        search_text = self.search_bar_images.currentText()
-        search_label = self.search_bar_labels.currentText()
+        # A frozenset of checked names (exact) or the typed text (substring)
+        search_text = self.search_bar_images.search_terms()
+        search_label = self.search_bar_labels.search_terms()
         
         # --- Get values from the new CheckableComboBox ---
         checked_filters = self.filter_combo.get_checked_items()
@@ -1314,15 +1522,7 @@ class ImageWindow(QWidget):
         self.preview_tooltip.hide()
         
     def update_search_bars(self):
-        """Update items in the search bars."""
-        # Store current search texts
-        current_image_search = self.search_bar_images.currentText()
-        current_label_search = self.search_bar_labels.currentText()
-
-        # Clear and update items
-        self.search_bar_images.clear()
-        self.search_bar_labels.clear()
-
+        """Update items in the search bars, keeping checks and search text."""
         try:
             # Get image names
             image_names = set()
@@ -1347,22 +1547,9 @@ class ImageWindow(QWidget):
             print(f"Error updating search bars: {str(e)}")
             return
 
-        # Only add items if there are any
-        if image_names:
-            self.search_bar_images.addItems(sorted(image_names))
-        if label_names:
-            self.search_bar_labels.addItems(sorted(label_names))
+        self.search_bar_images.set_items(sorted(image_names))
+        self.search_bar_labels.set_items(sorted(label_names))
 
-        # Restore search texts
-        if current_image_search:
-            self.search_bar_images.setEditText(current_image_search)
-        else:
-            self.search_bar_images.setPlaceholderText("Type to search images")
-        if current_label_search:
-            self.search_bar_labels.setEditText(current_label_search)
-        else:
-            self.search_bar_labels.setPlaceholderText("Type to search labels")
-            
     def load_first_filtered_image(self):
         """Load the first image in the filtered list."""
         if not self.table_model.filtered_paths:
