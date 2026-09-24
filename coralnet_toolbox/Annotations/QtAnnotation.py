@@ -1268,6 +1268,38 @@ class Annotation(QObject):
             except RuntimeError:
                 setattr(self, attr, None)
 
+    @staticmethod
+    def build_center_crosshair_path(center_xy, gap=1, length=3):
+        """The open-center crosshair marking a center point, in scene coordinates.
+
+        Shared so anything drawing the same mark -- the selected annotation's own
+        item, the SelectTool's hover preview -- draws exactly the same shape.
+        """
+        path = QPainterPath()
+
+        # Horizontal left arm
+        path.moveTo(center_xy.x() - gap - length, center_xy.y())
+        path.lineTo(center_xy.x() - gap, center_xy.y())
+        # Horizontal right arm
+        path.moveTo(center_xy.x() + gap, center_xy.y())
+        path.lineTo(center_xy.x() + gap + length, center_xy.y())
+
+        # Vertical top arm
+        path.moveTo(center_xy.x(), center_xy.y() - gap - length)
+        path.lineTo(center_xy.x(), center_xy.y() - gap)
+        # Vertical bottom arm
+        path.moveTo(center_xy.x(), center_xy.y() + gap)
+        path.lineTo(center_xy.x(), center_xy.y() + gap + length)
+
+        return path
+
+    @staticmethod
+    def center_crosshair_pen():
+        """A crisp white pen for maximum visibility without obscuring data."""
+        pen = QPen(Qt.white, 1.5, Qt.SolidLine)
+        pen.setCosmetic(True)
+        return pen
+
     def create_center_graphics_item(self, center_xy, scene, add_to_group=False):
         """Create a graphical item representing the annotation's center point."""
         try:
@@ -1278,33 +1310,10 @@ class Annotation(QObject):
     
         if has_scene:
             self.center_graphics_item.scene().removeItem(self.center_graphics_item)
-    
-        # Create an open-center crosshair using QPainterPath
-        path = QPainterPath()
-        gap = 1     # Empty space from the center pixel
-        length = 3  # Length of each crosshair arm
-        
-        # Horizontal left arm
-        path.moveTo(center_xy.x() - gap - length, center_xy.y())
-        path.lineTo(center_xy.x() - gap, center_xy.y())
-        # Horizontal right arm
-        path.moveTo(center_xy.x() + gap, center_xy.y())
-        path.lineTo(center_xy.x() + gap + length, center_xy.y())
-        
-        # Vertical top arm
-        path.moveTo(center_xy.x(), center_xy.y() - gap - length)
-        path.lineTo(center_xy.x(), center_xy.y() - gap)
-        # Vertical bottom arm
-        path.moveTo(center_xy.x(), center_xy.y() + gap)
-        path.lineTo(center_xy.x(), center_xy.y() + gap + length)
-        
-        self.center_graphics_item = QGraphicsPathItem(path)
-        
-        # Use a crisp white pen for maximum visibility without obscuring data
-        crosshair_pen = QPen(Qt.white, 1.5, Qt.SolidLine)
-        crosshair_pen.setCosmetic(True)
-        self.center_graphics_item.setPen(crosshair_pen)
-    
+
+        self.center_graphics_item = QGraphicsPathItem(self.build_center_crosshair_path(center_xy))
+        self.center_graphics_item.setPen(self.center_crosshair_pen())
+
         if add_to_group and self.graphics_item_group:
             self.graphics_item_group.addToGroup(self.center_graphics_item)
         else:

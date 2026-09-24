@@ -276,8 +276,10 @@ class RasterManager(QObject):
         Get a filtered list of image paths based on criteria.
 
         Args:
-            search_text (str): Text to search for in filename
-            search_label (str): Label code to search for
+            search_text (str | Collection[str]): Filename search text, or exact
+                filenames (see Raster.matches_filter)
+            search_label (str | Collection[str]): Label code search text, or
+                exact label codes (see Raster.matches_filter)
             require_annotations (bool): If True, must have annotations
             require_no_annotations (bool): If True, must have no annotations
             require_predictions (bool): If True, must have predictions

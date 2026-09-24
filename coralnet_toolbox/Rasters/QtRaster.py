@@ -1086,8 +1086,10 @@ class Raster(QObject):
         Check if this raster matches the given filter criteria
 
         Args:
-            search_text (str): Text to search for in filename
-            search_label (str): Label code to search for
+            search_text (str | Collection[str]): A str matches any filename
+                containing it; a collection matches filenames in it exactly.
+            search_label (str | Collection[str]): A str matches any label code
+                containing it; a collection matches label codes in it exactly.
             top_k (int): Number of top predictions to consider for label search
             require_annotations (bool): If True, must have annotations
             require_no_annotations (bool): If True, must have no annotations
@@ -1102,8 +1104,15 @@ class Raster(QObject):
         Returns:
             bool: True if this raster matches all filter criteria
         """
+        # A str is typed search text (substring); a collection is the names
+        # checked in the Image Window dropdown (exact, any of them)
+        def _matches(search, value):
+            if isinstance(search, str):
+                return search in value
+            return value in search
+
         # Check filename search
-        if search_text and search_text not in self.basename:
+        if search_text and not _matches(search_text, self.basename):
             return False
 
         # Check raster type filter
@@ -1119,7 +1128,7 @@ class Raster(QObject):
             # Check actual annotation labels (always consider these)
             # Look for the search label in the label_set instead of self.labels
             for label_code in self.label_set:
-                if search_label in label_code:
+                if _matches(search_label, label_code):
                     label_match = True
                     break
             
@@ -1133,7 +1142,7 @@ class Raster(QObject):
                         
                         # Check each label in the top-k predictions
                         for pred_label, confidence in top_predictions:
-                            if hasattr(pred_label, 'short_label_code') and search_label in pred_label.short_label_code:
+                            if hasattr(pred_label, 'short_label_code') and _matches(search_label, pred_label.short_label_code):
                                 label_match = True
                                 break
                         if label_match:

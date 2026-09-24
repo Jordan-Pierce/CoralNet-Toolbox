@@ -155,3 +155,7 @@ datasets/
 
 # pixi
 .pixi/
+
+# Added by code-review-graph
+.code-review-graph/
+CLAUDE.md

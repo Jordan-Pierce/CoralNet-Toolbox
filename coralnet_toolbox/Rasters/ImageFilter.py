@@ -53,8 +53,10 @@ class ImageFilter(QObject):
         Filter images based on various criteria.
 
         Args:
-            search_text (str): Text to search for in image names
-            search_label (str): Label code to search for
+            search_text (str | Collection[str]): Image name search text, or
+                exact image names (see Raster.matches_filter)
+            search_label (str | Collection[str]): Label code search text, or
+                exact label codes (see Raster.matches_filter)
             require_annotations (bool): Require images to have annotations
             require_no_annotations (bool): Require images to have no annotations
             require_predictions (bool): Require images to have predictions

@@ -59,7 +59,7 @@ class SelectTool(Tool):
 
         # --- Hover preview: which annotation a click would land on ---
         self._hover_annotation_id = None
-        self._hover_item = None
+        self._hover_items = []
         self._hover_probe_pos = None
 
         self._connect_signals()
@@ -237,14 +237,19 @@ class SelectTool(Tool):
             self._clear_annotation_hover()
             return
 
-        if annotation.id == self._hover_annotation_id and self._hover_item is not None:
+        if annotation.id == self._hover_annotation_id and self._hover_items:
             return
 
         self._clear_annotation_hover()
         self._draw_annotation_hover(annotation)
 
     def _draw_annotation_hover(self, annotation):
-        """Add the hover outline item for ``annotation``."""
+        """Add the hover outline and center crosshair for ``annotation``.
+
+        Both are what selecting it would show, so the preview answers the whole
+        question -- which shape, and where its center point sits -- rather than
+        only the first half of it.
+        """
         try:
             path = annotation.get_painter_path()
         except Exception:
@@ -252,35 +257,46 @@ class SelectTool(Tool):
         if path is None or path.isEmpty():
             return
 
-        item = QGraphicsPathItem(path)
         color = QColor(annotation.label.color).lighter(150)
         pen = QPen(color, 2.5, Qt.DotLine)
         pen.setCosmetic(True)
-        item.setPen(pen)
-        item.setBrush(QBrush(Qt.NoBrush))
-        # Above the annotation layers so it reads against a crowded image,
-        # below the resize handles (60) so it never covers one.
-        item.setZValue(50)
-        item.setAcceptedMouseButtons(Qt.NoButton)
-        item.setAcceptHoverEvents(False)
+        outline = QGraphicsPathItem(path)
+        outline.setPen(pen)
+        outline.setBrush(QBrush(Qt.NoBrush))
 
-        self.annotation_window.scene.addItem(item)
-        self._hover_item = item
+        items = [outline]
+
+        # The same crosshair the annotation draws for itself once selected.
+        center_xy = getattr(annotation, 'center_xy', None)
+        if center_xy is not None:
+            crosshair = QGraphicsPathItem(annotation.build_center_crosshair_path(center_xy))
+            crosshair.setPen(annotation.center_crosshair_pen())
+            crosshair.setBrush(QBrush(Qt.NoBrush))
+            items.append(crosshair)
+
+        for item in items:
+            # Above the annotation layers so it reads against a crowded image,
+            # below the resize handles (60) so it never covers one.
+            item.setZValue(50)
+            item.setAcceptedMouseButtons(Qt.NoButton)
+            item.setAcceptHoverEvents(False)
+            self.annotation_window.scene.addItem(item)
+
+        self._hover_items = items
         self._hover_annotation_id = annotation.id
 
     def _clear_annotation_hover(self):
-        """Remove the hover outline, if there is one."""
+        """Remove the hover chrome, if there is any."""
         self._hover_annotation_id = None
-        item = self._hover_item
-        self._hover_item = None
-        if item is None:
-            return
-        try:
-            scene = item.scene()
-            if scene is not None:
-                scene.removeItem(item)
-        except RuntimeError:
-            pass  # scene teardown already destroyed it
+        items = self._hover_items
+        self._hover_items = []
+        for item in items:
+            try:
+                scene = item.scene()
+                if scene is not None:
+                    scene.removeItem(item)
+            except RuntimeError:
+                pass  # scene teardown already destroyed it
 
     # --- Live drag readout -------------------------------------------------
 
@@ -532,7 +548,7 @@ class SelectTool(Tool):
         # its own, so scene.items() reports it for any point inside its
         # bounding rect; the hover outline would resolve to the annotation it
         # is already drawn around.
-        chrome = (self.resize_subtool.handle_layer, self._hover_item)
+        chrome = (self.resize_subtool.handle_layer, *self._hover_items)
         valid_items = [item for item in items if item not in chrome]
         
         center_threshold = 10.0  # Distance threshold in pixels to consider a click "on center"

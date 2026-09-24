@@ -320,12 +320,8 @@ class Label(QWidget):
 
         # 3. Visibility toggle - compact icon button (eye)
         self.visibility_checkbox = QToolButton()
-        visible_icon = get_icon("show.svg") 
-        invisible_icon = get_icon("hide.svg")
-        if visible_icon:
-            self.visibility_checkbox.setIcon(visible_icon)
-        else:
-            self.visibility_checkbox.setText("👁")
+        self._visible_icon = get_icon("show.svg")
+        self._invisible_icon = get_icon("hide.svg")
         self.visibility_checkbox.setIconSize(app_theme.scale_size(16))
         self.visibility_checkbox.setCheckable(True)
         self.visibility_checkbox.setChecked(True)
@@ -338,24 +334,9 @@ class Label(QWidget):
         # Connect to a compatibility-friendly handler that accepts bool or int
         self.visibility_checkbox.toggled.connect(self._on_visibility_changed)
         # Sync icon/text when toggled to reflect visible/invisible state
-        def _sync_visibility_icon(visible):
-            try:
-                if visible:
-                    if visible_icon:
-                        self.visibility_checkbox.setIcon(visible_icon)
-                    else:
-                        self.visibility_checkbox.setText("👁")
-                else:
-                    if invisible_icon:
-                        self.visibility_checkbox.setIcon(invisible_icon)
-                    else:
-                        self.visibility_checkbox.setText("")
-            except Exception:
-                pass
-
-        self.visibility_checkbox.toggled.connect(_sync_visibility_icon)
+        self.visibility_checkbox.toggled.connect(self.sync_visibility_icon)
         # Initialize icon state
-        _sync_visibility_icon(self.visibility_checkbox.isChecked())
+        self.sync_visibility_icon(self.visibility_checkbox.isChecked())
 
         # Add widgets to the layout: swatch, flexible display, and toggle
         self.main_layout.addWidget(self.color_swatch)
@@ -445,6 +426,25 @@ class Label(QWidget):
         """Returns True if the visibility checkbox is checked, False otherwise."""
         return self.visibility_checkbox.isChecked()
     
+    def sync_visibility_icon(self, visible=None):
+        """
+        Show the eye icon matching the visibility state.
+
+        Wired to toggled, so callers that set the checkbox with signals blocked
+        (e.g. LabelWindow.toggle_all_labels) must call this themselves, or the
+        button's checked highlight and its icon disagree.
+        """
+        if visible is None:
+            visible = self.visibility_checkbox.isChecked()
+        try:
+            icon = self._visible_icon if visible else self._invisible_icon
+            if icon:
+                self.visibility_checkbox.setIcon(icon)
+            else:
+                self.visibility_checkbox.setText("👁" if visible else "")
+        except Exception:
+            pass
+
     def _on_visibility_changed(self, state):
         """Handle visibility checkbox state changes."""
         # Accept both Qt checkbox integer states and QToolButton bool toggles
@@ -1813,9 +1813,11 @@ class LabelWindow(QWidget):
                 label.visibility_checkbox.blockSignals(True)
             
             # Update all checkboxes without triggering signals
+            # The icon sync rides on toggled too, so refresh it by hand
             for label in self.labels:
                 label.visibility_checkbox.setChecked(new_state)
-            
+                label.sync_visibility_icon(new_state)
+
             # Reconnect signals
             for label in self.labels:
                 label.visibility_checkbox.blockSignals(False)
