@@ -14,6 +14,8 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                              QFormLayout, QComboBox, QSpinBox, QDoubleSpinBox, 
                              QLineEdit, QWidget, QScrollArea, QFrame, QMessageBox, QTabWidget)
 
+from coralnet_toolbox.MachineLearning.RunLog import capture_run_log
+
 from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -46,6 +48,11 @@ class PretrainModelWorker(QThread):
         self.output_dir = Path(self.params['project']) / self.params['name']
 
     def run(self):
+        """Execute the LightlyTrain pretrain pipeline, saving its console output to the run folder."""
+        with capture_run_log(self.output_dir / 'pretrain_log.txt'):
+            self._pretrain()
+
+    def _pretrain(self):
         """Execute the LightlyTrain pretrain pipeline."""
         try:
             self.training_started.emit()

@@ -29,6 +29,7 @@ from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedInstanceDataset
 from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedClassificationDataset
 from coralnet_toolbox.MachineLearning.EvaluateModel.QtBase import EvaluateModelWorker
+from coralnet_toolbox.MachineLearning.RunLog import capture_run_log
 
 from coralnet_toolbox.Icons import get_window_icon
 
@@ -396,7 +397,16 @@ class TrainModelWorker(QThread):
 
     def run(self):
         """
-        Run the training process in a separate thread.
+        Run the training process in a separate thread, saving its console output
+        to the run folder.
+        """
+        log_path = Path(self.params['project']) / self.params['name'] / 'train_log.txt'
+        with capture_run_log(log_path):
+            self._train()
+
+    def _train(self):
+        """
+        Run the training process.
         """
         try:
             # Emit signal to indicate training has started
