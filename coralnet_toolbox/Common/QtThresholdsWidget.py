@@ -598,6 +598,29 @@ class AreaTickSlider(QSlider):
         painter.end()
 
 
+class ThresholdSlider(QSlider):
+    """A 0-100 percent slider whose wheel step shrinks near zero.
+
+    Mirrors the ctrl+wheel behavior on the SeeAnything confidence threshold:
+    each wheel notch moves the value by STEP, but at or below FINE_CUTOFF the
+    step drops to FINE_STEP so values near zero stay reachable one notch at a
+    time instead of overshooting.
+    """
+
+    STEP = 5
+    FINE_STEP = 1
+    FINE_CUTOFF = 10
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y() or event.angleDelta().x()
+        if not delta:
+            return
+        step = self.FINE_STEP if self.value() <= self.FINE_CUTOFF else self.STEP
+        self.setValue(max(self.minimum(), min(self.maximum(),
+                                               self.value() + (step if delta > 0 else -step))))
+        event.accept()
+
+
 class ThresholdsWidget(QGroupBox):
     """
     A reusable widget that provides threshold controls (max detections, boundary detections,
@@ -685,7 +708,7 @@ class ThresholdsWidget(QGroupBox):
         
         # Uncertainty threshold controls
         if show_uncertainty:
-            self.uncertainty_threshold_slider = QSlider(Qt.Horizontal)
+            self.uncertainty_threshold_slider = ThresholdSlider(Qt.Horizontal)
             self.uncertainty_threshold_slider.setRange(0, 100)
             self.uncertainty_threshold_slider.setValue(int(self.uncertainty_thresh * 100))
             self.uncertainty_threshold_slider.setTickPosition(QSlider.TicksBelow)
@@ -705,7 +728,7 @@ class ThresholdsWidget(QGroupBox):
         
         # IoU threshold controls
         if show_iou:
-            self.iou_threshold_slider = QSlider(Qt.Horizontal)
+            self.iou_threshold_slider = ThresholdSlider(Qt.Horizontal)
             self.iou_threshold_slider.setRange(0, 100)
             self.iou_threshold_slider.setValue(int(self.iou_thresh * 100))
             self.iou_threshold_slider.setTickPosition(QSlider.TicksBelow)

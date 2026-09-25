@@ -47,6 +47,9 @@ PREDICT_CONFIDENCE_FLOOR = 0.05
 # Ctrl+wheel moves the threshold this far per notch; Ctrl+Shift+wheel, the finer step.
 THRESHOLD_STEP = 0.05
 THRESHOLD_FINE_STEP = 0.01
+# At or below this, wheel steps drop to THRESHOLD_FINE_STEP even without Shift, so
+# values near zero stay reachable one notch at a time instead of overshooting.
+THRESHOLD_FINE_CUTOFF = 0.10
 
 # A right-button press and release closer than this (in screen pixels) is a click.
 # Right-drag pans and Ctrl+right-drag rotates the canvas, and the annotation
@@ -785,7 +788,9 @@ class SeeAnythingTool(Tool):
 
         The annotation window routes Ctrl+wheel here instead of zooming. The
         threshold changed is the global one, so the value that works here is the
-        one the Generator runs with.
+        one the Generator runs with. Below THRESHOLD_FINE_CUTOFF the step drops
+        to THRESHOLD_FINE_STEP even without Shift, since the normal step would
+        overshoot the values that matter near zero.
         """
         if not event.modifiers() & Qt.ControlModifier:
             return
@@ -794,7 +799,8 @@ class SeeAnythingTool(Tool):
         delta = event.angleDelta().y() or event.angleDelta().x()
         if not delta:
             return
-        step = THRESHOLD_FINE_STEP if event.modifiers() & Qt.ShiftModifier else THRESHOLD_STEP
+        near_zero = self._threshold() <= THRESHOLD_FINE_CUTOFF
+        step = THRESHOLD_FINE_STEP if (event.modifiers() & Qt.ShiftModifier or near_zero) else THRESHOLD_STEP
         self.nudge_threshold(step if delta > 0 else -step)
         event.accept()
 
