@@ -96,6 +96,19 @@ def _stream_handlers():
                 yield handler
 
 
+def _set_stream(handler, stream):
+    """
+    Point a handler at stream. Some subclasses (e.g. logging's own last-resort
+    handler) expose `stream` as a read-only property that looks up sys.stderr on
+    every write; those already follow the proxy, so they are left alone.
+    """
+    try:
+        handler.setStream(stream)
+        return True
+    except AttributeError:
+        return False
+
+
 def _install():
     """Route sys.stdout / sys.stderr (and loggers bound to them) through the proxy."""
     global _originals
@@ -107,10 +120,10 @@ def _install():
     # would bypass the proxy unless their handlers are pointed at it as well.
     retargeted = []
     for handler in _stream_handlers():
-        proxy = proxies.get(id(handler.stream))
-        if proxy is not None:
-            retargeted.append((handler, handler.stream))
-            handler.setStream(proxy)
+        stream = handler.stream
+        proxy = proxies.get(id(stream))
+        if proxy is not None and _set_stream(handler, proxy):
+            retargeted.append((handler, stream))
     sys.stdout, sys.stderr = proxies[id(stdout)], proxies[id(stderr)]
     _originals = (stdout, stderr, retargeted)
 
@@ -124,11 +137,11 @@ def _uninstall():
     proxies = (sys.stdout, sys.stderr)
     for handler, stream in retargeted:
         if handler.stream in proxies:
-            handler.setStream(stream)
+            _set_stream(handler, stream)
     # Handlers created during the run (e.g. LightlyTrain's) captured the proxy itself
     for handler in _stream_handlers():
         if isinstance(handler.stream, _ThreadRoutedStream):
-            handler.setStream(handler.stream._original)
+            _set_stream(handler, handler.stream._original)
     if isinstance(sys.stdout, _ThreadRoutedStream):
         sys.stdout = stdout
     if isinstance(sys.stderr, _ThreadRoutedStream):
@@ -162,9 +175,17 @@ def capture_run_log(log_path):
         return
 
     ident = threading.get_ident()
-    with _lock:
-        _install()
-        _sinks[ident] = _sinks.get(ident, ()) + (sink,)
+    try:
+        with _lock:
+            _install()
+            _sinks[ident] = _sinks.get(ident, ()) + (sink,)
+    except Exception as e:
+        # Logging is a convenience; never let it stop the run itself
+        print(f"Warning: Could not capture console output to {log_path}: {e}")
+        sink.close()
+        yield None
+        return
+
     try:
         yield log_path
     finally:

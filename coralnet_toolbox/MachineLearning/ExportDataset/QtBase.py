@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (QFileDialog, QMessageBox, QCheckBox,
                              QPushButton, QFormLayout, QDialogButtonBox, QDoubleSpinBox,
                              QGroupBox, QTableWidget, QTableWidgetItem, QButtonGroup, QRadioButton,
                              QSpinBox, QHeaderView, QScrollArea, QFrame,
-                             QWidget)
+                             QWidget, QApplication)
 
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
@@ -62,6 +62,7 @@ class Base(QDialog):
         self.annotation_window = main_window.annotation_window
         self.image_window = main_window.image_window
 
+        # Height is set in fit_to_options, once the options column is built
         self.resize(1400, 700)
         self.setWindowTitle("Export Dataset")
         self.setWindowIcon(get_window_icon("coralnet.svg"))
@@ -116,11 +117,28 @@ class Base(QDialog):
 
         # Options pack to the top; any spare height stays below them
         self.layout.addStretch(1)
+
+    def fit_to_options(self):
+        """
+        Size the dialog around the options column.
+
+        The column shows in full, so it sets the dialog's height, and the
+        summary table fills that height and scrolls its own rows. Only on a
+        screen too short for the options does the column itself scroll.
+        """
+        options_hint = self.options_scroll.widget().sizeHint()
+        scrollbar_width = self.options_scroll.verticalScrollBar().sizeHint().width()
+
         # Fit the column to its widest group so it never needs to scroll sideways
-        self.options_scroll.setMinimumWidth(
-            options_widget.sizeHint().width()
-            + self.options_scroll.verticalScrollBar().sizeHint().width()
-        )
+        self.options_scroll.setMinimumWidth(options_hint.width() + scrollbar_width)
+
+        # Leave room for the title bar, buttons, and taskbar on short screens
+        screen = self.screen() or QApplication.primaryScreen()
+        max_height = int(screen.availableGeometry().height() * 0.8)
+        self.options_scroll.setMinimumHeight(min(options_hint.height(), max_height))
+
+        # The minimum hint now tracks the options column, not the table
+        self.resize(self.width(), self.minimumSizeHint().height())
 
     def showEvent(self, event):
         """
@@ -133,6 +151,8 @@ class Base(QDialog):
         super().showEvent(event)
         self.update_annotation_type_checkboxes()
         self.update_video_options()
+        # After update_video_options: the Video Frames group changes the height
+        self.fit_to_options()
         self.populate_class_filter_list()
         self.update_summary_statistics()
 
