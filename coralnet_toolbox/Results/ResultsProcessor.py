@@ -21,12 +21,63 @@ from coralnet_toolbox.Common import resolve_area_bounds_px
 
 
 class ResultsProcessor:
-    def __init__(self, main_window, class_mapping={}):
+    def __init__(self, main_window, class_mapping={}, excluded_class_names=None):
         self.main_window = main_window
         self.label_window = main_window.label_window
         self.image_window = main_window.image_window
         self.annotation_window = main_window.annotation_window
         self.class_mapping = class_mapping
+        # Model classes the user left out in the deploy dialog. Only
+        # classification reads this here; detection filters inside the model
+        # call, before NMS, so an excluded box never suppresses a kept one.
+        self.excluded_class_names = set(excluded_class_names or ())
+
+    @staticmethod
+    def top_k_probs(probs, names, excluded_class_names=None, k=5, renormalize=False):
+        """The k most probable classes, leaving out the excluded ones.
+
+        Only the allowed classes are ranked, so the top k are drawn from them
+        rather than being whatever survives of the model's own top k. Excluded
+        classes are removed outright, not zeroed: the model runs in fp16, where
+        every class but a confident winner routinely underflows to exactly 0.0,
+        and a zeroed excluded class would tie with those and could be ranked
+        right back in.
+
+        With ``renormalize`` the allowed probabilities are rescaled to sum to 1,
+        which is the model's softmax over those classes alone. When they sum to
+        nothing -- the model put everything on excluded classes -- there is no
+        distribution to rescale, and they are left at zero so the prediction
+        falls to Review instead of being given a confidence it never had.
+
+        :param probs: 1-D tensor of class probabilities
+        :param names: dict of class index -> class name
+        :return: list of (class_index, confidence) pairs, most confident first
+        """
+        probs = probs.detach().float().flatten().cpu()
+        excluded_ids = set()
+        if excluded_class_names:
+            excluded_ids = {int(i) for i, name in names.items() if name in excluded_class_names}
+
+        allowed_ids = [i for i in range(probs.numel()) if i not in excluded_ids]
+        k = min(k, len(allowed_ids))
+        if k <= 0:
+            return []
+
+        allowed_probs = probs[allowed_ids]
+        if renormalize and excluded_ids:
+            total = float(allowed_probs.sum())
+            if total > 0:
+                allowed_probs = allowed_probs / total
+
+        confs, positions = allowed_probs.topk(k)
+        return [(allowed_ids[int(p)], float(c)) for c, p in zip(confs, positions)]
+
+    def _short_code_for_class(self, class_name):
+        """The project short code a model class maps to, falling back to the class name."""
+        entry = self.class_mapping.get(class_name) if isinstance(self.class_mapping, dict) else None
+        if isinstance(entry, dict):
+            return entry.get('short_label_code', class_name)
+        return class_name
     
     def _get_uncertainty_thresh(self):
         """Get the current uncertainty threshold from main_window."""
@@ -473,20 +524,25 @@ class ResultsProcessor:
         try:
             image_path = result.path.replace("\\", "/")
             class_names = result.names
-            top1 = result.probs.top1
-            top1conf = result.probs.top1conf
-            top1cls = class_names[top1]
-            top5 = result.probs.top5
-            top5conf = result.probs.top5conf
+            # Ranked over the allowed classes only; top1 and its confidence
+            # come from the same ranking, so the Review threshold judges the
+            # class that is actually assigned rather than an excluded one.
+            top_k = self.top_k_probs(result.probs.data, class_names, self.excluded_class_names)
         except Exception as e:
             print(f"Warning: Failed to process classification result\n{e}")
             return None, None, None, {}
 
-        for idx, conf in zip(top5, top5conf):
+        if not top_k:
+            return None, None, None, {}
+
+        top1, top1conf = top_k[0]
+        top1cls = class_names[top1]
+
+        for idx, conf in top_k:
             class_name = class_names[idx]
-            label = self.label_window.get_label_by_short_code(class_name)
+            label = self.label_window.get_label_by_short_code(self._short_code_for_class(class_name))
             if label:
-                predictions[label] = float(conf)
+                predictions[label] = conf
 
         return image_path, top1cls, top1conf, predictions
 

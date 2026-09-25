@@ -193,16 +193,35 @@ class AsyncYoloBatchInferenceTask(BatchInferenceTask):
         )
 
 
+def _class_filter_overrides(model_dialog: Any) -> dict[str, Any]:
+    """The deploy dialog's unticked classes, as Ultralytics' ``classes=`` filter.
+
+    Read once when the worker is built, so a checkbox toggled mid-run cannot
+    apply to half the batch. Empty when nothing is left out.
+    """
+    try:
+        class_ids = model_dialog.allowed_class_ids()
+    except Exception:
+        class_ids = None
+    return {} if class_ids is None else {"classes": class_ids}
+
+
 class DetectBatchInferenceTask(AsyncYoloBatchInferenceTask):
     name = "Detect"
     default_worker_task = "detect"
     progress_title = "Running Inference"
+
+    def model_call_overrides(self) -> dict[str, Any]:
+        return _class_filter_overrides(self.model_dialog)
 
 
 class SegmentBatchInferenceTask(AsyncYoloBatchInferenceTask):
     name = "Segment"
     default_worker_task = "segment"
     progress_title = "Running Inference"
+
+    def model_call_overrides(self) -> dict[str, Any]:
+        return _class_filter_overrides(self.model_dialog)
 
 
 class SemanticBatchInferenceTask(AsyncYoloBatchInferenceTask):
@@ -230,6 +249,11 @@ class SemanticBatchInferenceTask(AsyncYoloBatchInferenceTask):
                 checkbox is not None and checkbox.isChecked())
         except Exception:
             dialog._semantic_include_bg = False
+
+        # Classes unticked in the deploy dialog, snapshotted for the same
+        # reason as the options below.
+        dialog._semantic_excluded_class_names = set(
+            getattr(self.model_dialog, "excluded_class_names", None) or ())
 
         # Whether the finished masks become polygons, and whether touching
         # objects are separated first, are the deploy dialog's settings -- there

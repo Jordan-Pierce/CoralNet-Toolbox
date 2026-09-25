@@ -7,8 +7,9 @@ import ujson as json
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (QFileDialog, QMessageBox, QVBoxLayout, QLabel, QDialog,
-                             QPushButton, QGroupBox, QHBoxLayout, QTableWidget, 
-                             QTableWidgetItem, QHeaderView, QSizePolicy)
+                             QPushButton, QGroupBox, QHBoxLayout, QTableWidget,
+                             QTableWidgetItem, QHeaderView, QSizePolicy, QCheckBox,
+                             QWidget)
 
 from torch.cuda import empty_cache
 
@@ -69,6 +70,13 @@ class Base(QDialog):
         self.quiet_load = False
         self.label_to_class_name = {}  # Map row index to class name for checkbox tracking
 
+        # Model classes the user has unticked in the labels table, by class
+        # name. Kept by name rather than on the checkboxes because the table is
+        # rebuilt on every load, and Active Learning reloads the model every
+        # round -- a choice held by the widgets would be wiped each time.
+        self.excluded_class_names = set()
+        self.class_checkboxes = {}  # class name -> QCheckBox in the table
+
         # Create main horizontal layout
         main_layout = QHBoxLayout(self)
         
@@ -126,14 +134,18 @@ class Base(QDialog):
 
         # Create a table widget to display labels
         self.labels_table = QTableWidget()
-        # Removed disabled checkbox column (was unused). Use 3 columns: Status, Short Label, Long Label
-        self.labels_table.setColumnCount(3)
-        self.labels_table.setHorizontalHeaderLabels(["Status", "Short", "Long"])
+        # Columns: Use (checkbox), Status, Short Label, Long Label
+        self.labels_table.setColumnCount(4)
+        self.labels_table.setHorizontalHeaderLabels(["Use", "Status", "Short", "Long"])
+        self.labels_table.horizontalHeaderItem(0).setToolTip(
+            "Untick a class to leave it out of predictions.\n"
+            "Existing predictions are not changed until they are predicted again.")
         self.labels_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.labels_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         header = self.labels_table.horizontalHeader()
         header.setStretchLastSection(False)
         header.setSectionResizeMode(QHeaderView.Stretch)
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         layout.addWidget(self.labels_table, 1)
 
         # Add status label
@@ -245,8 +257,9 @@ class Base(QDialog):
         )
 
         if file_path:
-            # Clear the class mapping
+            # Clear the class mapping, and the classes left out of the last model
             self.class_mapping = {}
+            self.excluded_class_names = set()
 
             if ".bin" in file_path:  # TODO remove this
                 # OpenVINO is a directory
@@ -351,9 +364,13 @@ class Base(QDialog):
         auto_created_count = 0
         missing_count = 0
 
+        # A class the model no longer has cannot stay excluded
+        self.excluded_class_names &= set(self.class_names)
+
         # Clear the table and set row count
         self.labels_table.setRowCount(len(self.class_names))
         self.label_to_class_name = {}  # Reset the mapping
+        self.class_checkboxes = {}
 
         for row, class_name in enumerate(self.class_names):
             status_emoji = ""
@@ -390,24 +407,28 @@ class Base(QDialog):
 
             # Store mapping of row to class name for checkbox tracking
             self.label_to_class_name[row] = class_name
-            # Add items to table: status in col 0, short label in col 1, long label in col 2
+            # Col 0: the include checkbox, centred in a cell widget since a
+            # checkable item draws its box flush left
+            self.labels_table.setCellWidget(row, 0, self._make_class_checkbox_cell(class_name))
+
+            # Add items to table: status in col 1, short label in col 2, long label in col 3
             status_item = QTableWidgetItem(status_emoji)
             status_item.setToolTip(status_text)
             status_item.setFlags(status_item.flags() & ~Qt.ItemIsEditable & ~Qt.ItemIsSelectable)
             status_item.setTextAlignment(Qt.AlignCenter)
-            self.labels_table.setItem(row, 0, status_item)
+            self.labels_table.setItem(row, 1, status_item)
 
             short_label_item = QTableWidgetItem(short_label)
             short_label_item.setToolTip(f"Short Label: {short_label}")
             short_label_item.setFlags(short_label_item.flags() & ~Qt.ItemIsEditable & ~Qt.ItemIsSelectable)
             short_label_item.setTextAlignment(Qt.AlignCenter)
-            self.labels_table.setItem(row, 1, short_label_item)
+            self.labels_table.setItem(row, 2, short_label_item)
 
             long_label_item = QTableWidgetItem(long_label)
             long_label_item.setToolTip(f"Long Label: {long_label}")
             long_label_item.setFlags(long_label_item.flags() & ~Qt.ItemIsEditable & ~Qt.ItemIsSelectable)
             long_label_item.setTextAlignment(Qt.AlignCenter)
-            self.labels_table.setItem(row, 2, long_label_item)
+            self.labels_table.setItem(row, 3, long_label_item)
 
         # Show warning if there are missing labels
         if missing_labels and warn_missing:
@@ -526,17 +547,75 @@ class Base(QDialog):
         if created:
             self.label_window.refresh_after_batch_add()
 
+    def _make_class_checkbox_cell(self, class_name):
+        """A centred checkbox that includes or leaves out one model class."""
+        checkbox = QCheckBox()
+        checkbox.setChecked(class_name not in self.excluded_class_names)
+        checkbox.setToolTip(f"Predict {class_name}")
+        checkbox.toggled.connect(
+            lambda checked, name=class_name: self._on_class_checkbox_toggled(name, checked))
+        self.class_checkboxes[class_name] = checkbox
+
+        cell = QWidget()
+        layout = QHBoxLayout(cell)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setAlignment(Qt.AlignCenter)
+        layout.addWidget(checkbox)
+        return cell
+
+    def _on_class_checkbox_toggled(self, class_name, checked):
+        """Record a class being ticked or unticked in the labels table."""
+        if not checked and not (set(self.class_names) - self.excluded_class_names - {class_name}):
+            # With every class left out, classification has no answer to give
+            # and detection returns nothing at all.
+            self.set_class_included(class_name, True)
+            QMessageBox.warning(self, "Warning", "At least one class must stay enabled.")
+            return
+
+        if checked:
+            self.excluded_class_names.discard(class_name)
+        else:
+            self.excluded_class_names.add(class_name)
+        self.on_class_filter_changed(class_name, checked)
+
+    def on_class_filter_changed(self, class_name, included):
+        """Hook for subclasses that tie other controls to a class's checkbox."""
+        pass
+
+    def set_class_included(self, class_name, included):
+        """Include or leave out a class without going through its checkbox's signal."""
+        if included:
+            self.excluded_class_names.discard(class_name)
+        else:
+            self.excluded_class_names.add(class_name)
+        checkbox = self.class_checkboxes.get(class_name)
+        if checkbox is not None and checkbox.isChecked() != included:
+            checkbox.blockSignals(True)
+            checkbox.setChecked(included)
+            checkbox.blockSignals(False)
+
+    def allowed_class_ids(self):
+        """Model class indices still ticked, or None when nothing is left out.
+
+        None rather than the full list so callers can pass it straight to
+        Ultralytics' ``classes=`` and skip the filter entirely in the common case.
+        """
+        if not self.excluded_class_names or self.loaded_model is None:
+            return None
+        return [int(idx) for idx, name in self.loaded_model.names.items()
+                if name not in self.excluded_class_names]
+
     def get_checked_class_names(self):
         """
         Get a list of class names that are currently checked in the table.
-        
+
         :return: List of class names that have checked checkboxes
         """
-        # The checkbox column was removed; return all class names present in the table in row order.
         class_names = []
         for row in range(self.labels_table.rowCount()):
-            if row in self.label_to_class_name:
-                class_names.append(self.label_to_class_name[row])
+            class_name = self.label_to_class_name.get(row)
+            if class_name is not None and class_name not in self.excluded_class_names:
+                class_names.append(class_name)
         return class_names
 
     def get_checked_labels(self):
@@ -566,6 +645,8 @@ class Base(QDialog):
         self.model_path = None
         self.class_mapping = {}
         self.auto_created_labels = set()
+        self.excluded_class_names = set()
+        self.class_checkboxes = {}
         gc.collect()
         empty_cache()
         self.status_bar.setText("No model loaded")

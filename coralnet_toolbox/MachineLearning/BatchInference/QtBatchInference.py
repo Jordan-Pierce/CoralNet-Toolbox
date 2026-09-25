@@ -1977,6 +1977,8 @@ class BatchInferenceDialog(QDialog):
                             self.main_window.label_window,
                             mask_ann_map,
                             include_background=getattr(self, '_semantic_include_bg', False),
+                            excluded_class_names=getattr(
+                                self, '_semantic_excluded_class_names', None),
                         )
 
                         # Video frames: create a temporary MaskAnnotation to produce a colored QImage,
