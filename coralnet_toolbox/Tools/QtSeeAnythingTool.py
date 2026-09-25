@@ -51,6 +51,10 @@ THRESHOLD_FINE_STEP = 0.01
 # values near zero stay reachable one notch at a time instead of overshooting.
 THRESHOLD_FINE_CUTOFF = 0.10
 
+# The wheel cannot push the threshold down to 0.00 -- that turns off confidence
+# filtering entirely, so it is deliberate enough to require setting manually.
+THRESHOLD_WHEEL_FLOOR = 0.01
+
 # A right-button press and release closer than this (in screen pixels) is a click.
 # Right-drag pans and Ctrl+right-drag rotates the canvas, and the annotation
 # window hands the press to the tool before the canvas starts either, so acting on
@@ -790,7 +794,9 @@ class SeeAnythingTool(Tool):
         threshold changed is the global one, so the value that works here is the
         one the Generator runs with. Below THRESHOLD_FINE_CUTOFF the step drops
         to THRESHOLD_FINE_STEP even without Shift, since the normal step would
-        overshoot the values that matter near zero.
+        overshoot the values that matter near zero. The wheel bottoms out at
+        THRESHOLD_WHEEL_FLOOR rather than 0.00, which turns filtering off and so
+        must be set deliberately, not scrolled past.
         """
         if not event.modifiers() & Qt.ControlModifier:
             return
@@ -1348,10 +1354,14 @@ class SeeAnythingTool(Tool):
             float: The threshold now in force.
         """
         current = self._threshold()
-        new = round(min(1.0, max(0.0, current + delta)), 2)
+        new = round(min(1.0, max(THRESHOLD_WHEEL_FLOOR, current + delta)), 2)
         if new == round(current, 2):
-            self.main_window.status_bar.showMessage(
-                f"Confidence threshold is already {new:.2f}.", 2000)
+            if current <= THRESHOLD_WHEEL_FLOOR and delta < 0:
+                self.main_window.status_bar.showMessage(
+                    "Confidence threshold can't go lower by wheel; set 0.00 manually.", 2000)
+            else:
+                self.main_window.status_bar.showMessage(
+                    f"Confidence threshold is already {new:.2f}.", 2000)
             return current
 
         self.main_window.update_uncertainty_thresh(new)
