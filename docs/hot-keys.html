@@ -308,6 +308,8 @@
                             </ul>
                              <b>Feature Select Tool</b>
                              <ul><li><b>Backspace</b>: Clear all points and start over.</li></ul>
+                             <b>See Anything Tool</b>
+                             <ul><li><b>Ctrl + Shift + Backspace</b>: Clear the whole prompt session.</li></ul>
                              <b>Work Areas</b>
                              <ul><li><b>Ctrl + Shift + Backspace</b>: Remove all work areas in the image.</li></ul>
                         </span>
@@ -321,7 +323,9 @@
                     <kbd class="hotkey">R
                         <span class="tooltiptext"><b>Annotation Editing</b><ul><li><b>Ctrl + R</b>: Open Morphological Operations: bake/unbake annotations, or subtract, remove and merge overlapping polygons by label (Select tool must be active).</li></ul></span>
                     </kbd>
-                    <kbd>T</kbd>
+                    <kbd class="hotkey">T
+                        <span class="tooltiptext"><b>See Anything Tool</b><ul><li><b>Ctrl + T</b>: Set a text prompt (leave empty to clear it).</li></ul></span>
+                    </kbd>
                     <kbd>Y</kbd>
                     <kbd>U</kbd>
                     <kbd>I</kbd>
@@ -357,6 +361,8 @@
                                 <li><b>Ctrl + Shift</b>: Show every vertex handle at full strength (handles appear on selection).</li>
                                 <li><b>Ctrl + Shift + Mouse Wheel</b>: Change a polygon's vertex count.</li>
                             </ul>
+                            <b>See Anything Tool</b>
+                            <ul><li><b>Ctrl + Shift</b>: Reveal removed detections so they can be restored.</li></ul>
                             <b>Work Areas</b>
                             <ul>
                                 <li><b>Ctrl + Shift</b>: Show removal buttons on existing work areas.</li>
@@ -399,6 +405,8 @@
                                 <li><b>Ctrl + Shift</b>: Show every vertex handle at full strength (handles appear on selection).</li>
                                 <li><b>Ctrl + Shift + Mouse Wheel</b>: Change a polygon's vertex count.</li>
                             </ul>
+                            <b>See Anything Tool</b>
+                            <ul><li><b>Ctrl + Shift</b>: Reveal removed detections so they can be restored.</li></ul>
                             <b>Work Areas</b>
                             <ul>
                                 <li><b>Ctrl + Shift</b>: Show removal buttons on existing work areas.</li>
@@ -478,6 +486,10 @@
                                 <ul>
                                     <li><b>Ctrl + Click</b>: Add positive prototype / assign patch to selected label.</li>
                                 </ul>
+                                <b>See Anything Tool</b>
+                                <ul>
+                                    <li><b>Ctrl + Click</b>: Add a detection as a positive example (more like this).</li>
+                                </ul>
                                 <b>Window Specific</b>
                                  <ul>
                                     <li><b>Double Click</b>: Load image (Image Window).</li>
@@ -496,6 +508,8 @@
                                 </ul>
                                 <b>Feature Select Tool</b>
                                 <ul><li><b>Ctrl + Scroll</b>: Adjust similarity/reject threshold.</li></ul>
+                                <b>See Anything Tool</b>
+                                <ul><li><b>Ctrl + Scroll</b>: Adjust confidence threshold (add Shift for finer steps).</li></ul>
                             </span>
                         </div>
                         <div class="mouse-right-button hotkey">
@@ -511,6 +525,11 @@
                                 <ul><li><b>Ctrl + Click</b>: Add negative point (SAM Tool).</li></ul>
                                 <b>Feature Select Tool</b>
                                 <ul><li><b>Ctrl + Click</b>: Add negative prototype / undo last point for selected label.</li></ul>
+                                <b>See Anything Tool</b>
+                                <ul>
+                                    <li><b>Ctrl + Click</b>: Remove a detection and add it as a negative example (fewer like this).</li>
+                                    <li><b>Ctrl + Shift + Click</b>: Drop / restore a single detection.</li>
+                                </ul>
                             </span>
                         </div>
                     </div>
