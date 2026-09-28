@@ -1031,6 +1031,15 @@ class Annotation(QObject):
         self._cached_cropped_image_graphic = graphic
         return graphic
     
+    def paint_crop_center(self, painter, rect, cover=False):
+        """Mark this annotation's center point on a crop drawn into `rect`.
+
+        A no-op here: only annotations that are *defined* by a center point --
+        patches -- have one worth marking. `cover` says the crop was scaled to
+        cover `rect` and center-cropped to it, rather than fitted inside it.
+        """
+        return
+
     def _create_cropped_image_graphic(self):
         """Create the graphical representation - to be implemented by subclasses."""
         raise NotImplementedError("Subclasses must implement this method.")
