@@ -1,6 +1,6 @@
 [project]
 name = "coralnet-toolbox"
-version = "1.0.16"
+version = "1.0.17"
 
 dynamic = [
     "dependencies",
@@ -42,7 +42,7 @@ universal = true
 
 
 [tool.bumpversion]
-current_version = "1.0.16"
+current_version = "1.0.17"
 commit = true
 tag = true
 
