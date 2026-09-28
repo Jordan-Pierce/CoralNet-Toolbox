@@ -193,7 +193,7 @@ class PatchSamplingDialog(QDialog):
 
     def setup_propagation_exclusion_layout(self):
         """Set up the propagation and exclusion options configuration."""
-        group_box = QGroupBox("Propagation & Exclusion")
+        group_box = QGroupBox("Propagation and Exclusion")
         layout = QFormLayout()
 
         # Sample Label
@@ -211,7 +211,7 @@ class PatchSamplingDialog(QDialog):
         self.propagate_labels_combo.setCurrentIndex(0)
         self.propagate_labels_combo.currentIndexChanged.connect(self.preview_annotations)
         self.propagate_labels_combo.currentIndexChanged.connect(self.on_propagate_labels_changed)
-        self.propagate_labels_combo.setToolTip("Copy the label to all highlighted rows.")
+        self.propagate_labels_combo.setToolTip("Patches sampled on existing annotations will inherit the label it lands on.")
         layout.addRow("Propagate Labels:", self.propagate_labels_combo)
 
         # Exclude Regions

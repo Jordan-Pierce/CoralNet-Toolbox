@@ -8,6 +8,7 @@ import rasterio
 import shutil
 import ujson as json
 
+from PyQt5 import sip
 from PyQt5.QtCore import Qt, QPointF, QObject, QThread, pyqtSignal
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QVBoxLayout, QGroupBox,
                              QLabel, QLineEdit, QDialog, QPushButton, QDialogButtonBox,
@@ -1015,12 +1016,31 @@ class Base(QDialog):
         self.worker.processing_complete.connect(self.on_processing_complete)
         self.thread.start()
 
+    def _live_progress_bar(self):
+        """The worker's progress dialog, or None once it has been closed.
+
+        ProgressBar.set_title() pumps the event loop, which drains the worker's
+        queued signals re-entrantly: a fast import can run on_processing_complete
+        and on_worker_finished inside a status slot, closing (and, through
+        WA_DeleteOnClose, deleting) the dialog that slot is still updating.
+        """
+        bar = self.progress_bar
+        if bar is None or sip.isdeleted(bar):
+            return None
+        return bar
+
     def on_status_changed(self, title, total):
-        self.progress_bar.set_title(title)
-        self.progress_bar.start_progress(total)
+        bar = self._live_progress_bar()
+        if bar is None:
+            return
+        # set_title last: it pumps events, after which the bar may be gone.
+        bar.start_progress(total)
+        bar.set_title(title)
 
     def on_progress_update(self, value):
-        self.progress_bar.set_value(value)
+        bar = self._live_progress_bar()
+        if bar is not None:
+            bar.set_value(value)
 
     def on_processing_complete(self, raw_annotations, image_paths, parsing_errors, duplicates_removed=0):
         if self.task == 'semantic':
@@ -1283,9 +1303,11 @@ class Base(QDialog):
         if self.thread is None:
             return
 
-        if self.progress_bar:
-            self.progress_bar.stop_progress()
-            self.progress_bar.close()
+        bar = self._live_progress_bar()
+        if bar is not None:
+            bar.stop_progress()
+            bar.close()
+        self.progress_bar = None
         self.thread.quit()
         self.thread.wait()
         self.worker.deleteLater()
