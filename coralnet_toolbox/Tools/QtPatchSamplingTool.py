@@ -861,6 +861,14 @@ class PatchSamplingTool(Tool):
                 # Finish drawing
                 self.end_point = scene_pos
                 self._finalize_rectangle()
+            self.report_state()
+
+    def status_hint(self):
+        """Say whether the next click starts or ends the sampling area."""
+        if self.is_drawing:
+            return "Left click to finish the sampling area"
+        return ("Left click, move, left click to draw the sampling area"
+                "  |  It sets the margins in the dialog")
 
     def mouseMoveEvent(self, event: QMouseEvent):
         """Handle mouse move - update rectangle preview and crosshair"""

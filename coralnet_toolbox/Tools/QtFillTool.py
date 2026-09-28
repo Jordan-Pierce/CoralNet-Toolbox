@@ -30,6 +30,9 @@ class FillTool(Tool):
         self.cursor_move_callback = None
         self.cursor_clear_callback = None
 
+    def status_hint(self):
+        return "Left click to fill the region under the cursor with the selected label"
+
     def mousePressEvent(self, event):
         """Handles left-click to fill the region under the cursor."""
         if event.button() != Qt.LeftButton:

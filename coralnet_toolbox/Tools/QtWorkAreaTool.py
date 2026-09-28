@@ -57,6 +57,22 @@ class WorkAreaTool(Tool):
         self.active = True
         self.annotation_window.viewport().setCursor(self.cursor)
         self.load_work_areas()
+        self.report_state()
+
+    def status_hint(self):
+        """Say what the next click does: start, finish, or drop a placed copy."""
+        if self.placement_mode:
+            return ("Ctrl+left click: drop a copy here and keep placing"
+                    "  |  Left click: drop it and stop"
+                    "  |  Release Ctrl or Backspace: stop placing")
+        if self.drawing:
+            return ("Left click or Space to finish the work area"
+                    "  |  Hold Ctrl to lock its size and place copies"
+                    "  |  Backspace: cancel it")
+        return ("Left click, move, left click to draw a work area"
+                "  |  Space: use the current view"
+                "  |  Hold Ctrl+Shift to remove one"
+                "  |  Ctrl+Shift+Backspace: clear all")
 
     def deactivate(self):
         """Deactivate the work area tool and clean up."""
@@ -163,6 +179,7 @@ class WorkAreaTool(Tool):
         # Exit placement mode with Backspace
         if key == Qt.Key_Backspace and self.placement_mode:
             self.cancel_drawing()
+            self.report_state()
             return
 
         # Ctrl+Shift to show remove buttons
@@ -188,6 +205,7 @@ class WorkAreaTool(Tool):
         # Cancel current drawing (Backspace or Escape - without modifiers)
         if (key == Qt.Key_Backspace or key == Qt.Key_Escape) and self.drawing and not (modifiers & Qt.ControlModifier):
             self.cancel_drawing()
+            self.report_state()
             return
 
     def keyReleaseEvent(self, event):
@@ -200,6 +218,7 @@ class WorkAreaTool(Tool):
             if not (modifiers & Qt.ShiftModifier):
                 # Cancel placement mode and exit drawing entirely
                 self.cancel_drawing()
+                self.report_state()
                 return
         
         # For Ctrl+Shift: hide remove buttons when either key is released
@@ -264,7 +283,8 @@ class WorkAreaTool(Tool):
         self.drawing_work_area = WorkArea.from_rect(QRectF(pos.x(), pos.y(), 0, 0), 
                                                      self.get_current_image_name())
         self.drawing_work_area.create_tag(self.annotation_window.scene)
-        
+        self.report_state()
+
     def update_drawing(self, pos, ctrl_held=False):
         """Update the work area rectangle as the mouse moves."""
         if not self.current_rect:
@@ -334,7 +354,8 @@ class WorkAreaTool(Tool):
         self.current_rect.setRect(constrained_rect)
         self.drawing_work_area.rect = constrained_rect
         self.drawing_work_area.update_tag(constrained_rect.width(), constrained_rect.height())
-    
+        self.report_state()
+
     def _finalize_placement_work_area(self, pos):
         """Finalize the current placement work area and create a new one with same dimensions."""
         if not self.current_rect or not self.drawing_work_area:
@@ -438,7 +459,8 @@ class WorkAreaTool(Tool):
         self.placement_mode = False
         self.locked_width = 0
         self.locked_height = 0
-        
+        self.report_state()
+
     def cancel_drawing(self):
         """Cancel the current work area drawing."""
         if self.current_rect:

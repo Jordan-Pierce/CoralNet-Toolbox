@@ -62,6 +62,9 @@ class SelectTool(Tool):
         self._hover_items = []
         self._hover_probe_pos = None
 
+        # Selection size the status hint last described: 0, 1, or 2 for "many"
+        self._hint_selection_kind = None
+
         self._connect_signals()
 
     def _connect_signals(self):
@@ -106,6 +109,35 @@ class SelectTool(Tool):
         # Picking the tool back up with something already selected should show
         # its handles immediately, not wait for the next click.
         self._refresh_resize_handles()
+
+    def status_hint(self):
+        """Say what applies to the current selection, or to the cut line."""
+        if self.active_subtool is self.cut_subtool:
+            if self.cut_subtool.drawing_in_progress:
+                return ("Move to draw the cut, left click to cut"
+                        "  |  Hold Ctrl and left click for straight segments"
+                        "  |  Backspace: clear the line"
+                        "  |  Ctrl+X: leave cut mode")
+            return "Cut mode: left click to start the cut line  |  Ctrl+X: leave cut mode"
+
+        count = len(self.selected_annotations)
+        self._hint_selection_kind = min(count, 2)
+        if count == 0:
+            return ("Left click an annotation to select it"
+                    "  |  Ctrl+click to add to the selection"
+                    "  |  Ctrl+drag on empty space to box select")
+        if count == 1:
+            return ("Drag to move  |  Drag a handle to reshape"
+                    "  |  Ctrl+Shift: show every vertex"
+                    "  |  Ctrl+Shift+wheel: polygon detail"
+                    "  |  Ctrl+X: cut"
+                    "  |  Ctrl+Space: accept top prediction"
+                    "  |  Delete: remove")
+        return (f"{count} selected  |  Ctrl+C: combine overlapping"
+                "  |  Ctrl+Shift+C: combine all into one"
+                "  |  Ctrl+X: subtract from the last selected"
+                "  |  Ctrl+Space: accept top predictions"
+                "  |  Delete: remove")
 
     def deactivate(self):
         self.deactivate_subtool()
@@ -383,6 +415,10 @@ class SelectTool(Tool):
                 elif len(self.selected_annotations) == 1:
                     # If only one is selected, start cutting mode.
                     self.set_active_subtool(self.cut_subtool, event, annotation=self.selected_annotations[0])
+                    # Only if cutting actually started; an unverified or
+                    # multi-polygon target has already said what happened.
+                    if self.active_subtool is self.cut_subtool:
+                        self.report_state()
 
             # Ctrl+C: Combine overlapping clusters, leave the rest alone.
             # Ctrl+Shift+C: old all-at-once combine (always makes one result).
@@ -496,8 +532,15 @@ class SelectTool(Tool):
             pass
 
     def _on_selection_changed(self, *args):
-        """Selection changed: handles follow it."""
+        """Selection changed: handles follow it, and so does the hint.
+
+        The hint only changes between none, one, and many selected, so it is
+        re-shown on those steps alone rather than on every click.
+        """
         self._refresh_resize_handles()
+        if self.active_subtool is None and \
+                min(len(self.selected_annotations), 2) != self._hint_selection_kind:
+            self.report_state()
 
     def _on_view_changed(self, *args):
         """Zoom or pan changed: keep the layer's cached scale current."""

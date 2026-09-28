@@ -481,6 +481,13 @@ All dock windows (Annotation Window, Labels Window, Rasters Window, Confidence W
     - **Save Annotations**: Optional toggle to save generated annotations to the project
       - When disabled: Preview mode shows results without persisting to the project
       - When enabled: Annotations are added to the project for each image / frame
+    - **Feature Options** (Feature model): choose an **Action**
+      - **Extract Feature Maps**: Cache a dense feature map for each selected image
+      - **Densify Patches**: Fill each image's mask from its existing labels (patches, polygons and mask classes seed a feature map; Review patches are ignored; image rasters only)
+        - **Reject Threshold**: Pixels less similar than this to every class stay unlabeled
+        - **Minimum Classes**: Skip images whose labels seed fewer classes
+        - **Only Fill Unlabeled Pixels**: Keep pixels the mask already labels
+        - **Replace Matching Patches**: Delete each patch whose label the new mask holds at its center (cannot be undone)
 
 ### CoralNet
 
@@ -751,13 +758,13 @@ The Explorer automatically caches extracted features to accelerate re-loading th
     - <kbd>Ctrl</kbd> + <kbd>Alt</kbd>: Toggle between Binary and Multi-class mode
     - <kbd>N</kbd>: Refresh the yellow crosshair point suggestion
     - <kbd>Space</kbd>: Finalize and create a Polygon / Mask annotation
+    - <kbd>Shift</kbd> + <kbd>Space</kbd>: Finalize to the Mask and delete the patches it agrees with (same label at the patch center), so the mask fills them in. Undo restores both.
     - <kbd>Backspace</kbd>: Clear all points and start over
 
 - **Work Area Tool**: For creating restricted areas for model prediction
   - <kbd>Left-Click</kbd>: Start drawing a work area click again to finish drawing
   - <kbd>Backspace</kbd>: Cancel drawing the current work area
   - <kbd>Space</kbd>: Create a work area from the current view
-  - <kbd>Ctrl</kbd> + <kbd>Alt</kbd>: Create temporary work area from current view (disappears when keys released / pressed again)
   - <kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show removal buttons on existing work areas (click the "X" to remove)
   - <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Backspace</kbd>: Remove all work areas in the current image
   - **Practical Use**:
@@ -1029,7 +1036,6 @@ Multi-select filters and search bars to control which images are displayed:
   - Switch from annotation tool back to SelectTool
   - Toggle between Brush and Erase tools
   - Toggle Feature Select Tool binary / multi-class mode
-- <kbd>Ctrl</kbd> + <kbd>Alt</kbd>: Create temporary work area from current view (hold to maintain)
 
 ### Work Areas
 - <kbd>Space</kbd>: Create a work area from the current view (or define via left-click twice)
@@ -1059,6 +1065,7 @@ Multi-select filters and search bars to control which images are displayed:
 - <kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd>: Adjust similarity / reject threshold
 - <kbd>N</kbd>: Refresh the yellow crosshair point suggestion
 - <kbd>Space</kbd>: Finalize and create Polygon / Mask annotation
+- <kbd>Shift</kbd> + <kbd>Space</kbd>: Finalize to Mask and replace the patches it agrees with
 - <kbd>Backspace</kbd>: Clear all points and start over
 
 ### Model Predictions

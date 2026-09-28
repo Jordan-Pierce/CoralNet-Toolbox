@@ -25,6 +25,13 @@ class RectangleTool(Tool):
     def activate(self):
         self.active = True
         self.annotation_window.setCursor(self.cursor)
+        self.report_state()
+
+    def status_hint(self):
+        """Say whether the next click starts or finishes a rectangle."""
+        if self.drawing_continuous:
+            return "Left click to place the opposite corner  |  Backspace: cancel it"
+        return "Left click to set a corner, move, then left click again to finish"
 
     def deactivate(self):
         super().deactivate()
@@ -53,6 +60,7 @@ class RectangleTool(Tool):
             self.annotation_window.unselect_annotations()
             # Create the initial cursor annotation
             self.create_cursor_annotation(self.start_point)
+            self.report_state()
         elif event.button() == Qt.LeftButton and self.drawing_continuous:
             # Finish drawing the rectangle
             self.end_point = self.annotation_window.mapToScene(event.pos())
@@ -63,6 +71,7 @@ class RectangleTool(Tool):
             self.drawing_continuous = False
             # Clear the cursor annotation when finished
             self.clear_cursor_annotation()
+            self.report_state()
         elif event.button() == Qt.RightButton and self.drawing_continuous:
             # Panning the image while drawing
             pass
@@ -100,6 +109,7 @@ class RectangleTool(Tool):
         if event.key() == Qt.Key_Backspace:
             # Cancel the current annotation
             self.cancel_annotation()
+            self.report_state()
 
     def cancel_annotation(self):
         self.start_point = None

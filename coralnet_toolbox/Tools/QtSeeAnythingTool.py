@@ -298,7 +298,7 @@ class SeeAnythingTool(Tool):
         self.hover_pos = None
         super().leave()
 
-    def report_state(self):
+    def status_hint(self):
         """Say what Space and Backspace will do from here.
 
         Space means several different things depending on the state -- create
@@ -306,9 +306,6 @@ class SeeAnythingTool(Tool):
         Where a third option exists (drawing more reference boxes to widen the
         same prediction) it is named too, because nothing on screen suggests it.
         """
-        if not self.active:
-            return
-
         session = self._session()
         session_note = ""
         if session is not None and not session.is_empty():
@@ -361,7 +358,7 @@ class SeeAnythingTool(Tool):
             message = ("Draw a box around an example, or Ctrl+T for a text prompt"
                        "  |  Backspace or Space: close the work area")
 
-        self.main_window.status_bar.showMessage(message, 6000)
+        return message
 
     def _sam_enabled(self):
         """True when the dialog is set to refine detections with SAM."""
