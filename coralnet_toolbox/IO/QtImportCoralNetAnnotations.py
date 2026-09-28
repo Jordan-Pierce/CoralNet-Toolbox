@@ -108,8 +108,9 @@ class ImportCoralNetAnnotations:
         try:
             # Pre-process labels to avoid repeated lookups
             unique_labels = set(df['Label'].unique())
-            if 'Machine suggestion' in df.columns:
-                unique_labels.update(df['Machine suggestion'].dropna().unique())
+            # Look at each column that contains the string "Machine Suggestion"
+            for col in df.columns[df.columns.str.contains("Machine Suggestion", case=False)]:
+                unique_labels.update(df[col].dropna().unique())
             
             label_cache = {}
             for label_code in unique_labels:
