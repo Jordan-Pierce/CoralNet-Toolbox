@@ -44,6 +44,8 @@ from coralnet_toolbox.Features.LabelPropagation import (
     cell_at,
     classify,
     iter_seeds,
+    partition_patches,
+    patches_where,
     upsample_field,
     write_prediction,
 )
@@ -1416,14 +1418,22 @@ class FeatureSelectTool(Tool):
         """Paint a class-id prediction into the mask as one undoable action.
 
         See LabelPropagation.write_prediction: nothing is painted behind a vector
-        annotation, except that with ``replace_patches`` the patches the
-        prediction agrees with are deleted and the mask fills their footprint.
-        The deletion joins the mask edit, so a single undo restores both.
+        annotation, except that with ``replace_patches`` the patches in the work
+        area the prediction agrees with are deleted and the mask fills their
+        footprint. The deletion joins the mask edit, so a single undo restores both.
         """
+        annotations = self.annotation_window.get_image_annotations()
+        replaced, kept = [], []
+        if replace_patches:
+            left, top, width, height = self._region()[0]
+            patches = patches_where(annotations, lambda x, y: (left <= x < left + width
+                                                               and top <= y < top + height))
+            replaced, kept = partition_patches(patches, prediction_mask,
+                                               mask_annotation.label_id_to_class_id_map)
+
         history_action = MaskEditAction(mask_annotation, description=description)
-        replaced, kept = write_prediction(mask_annotation, prediction_mask,
-                                          self.annotation_window.get_image_annotations(),
-                                          self._region()[0], replace_patches, history_action)
+        write_prediction(mask_annotation, prediction_mask, (0, 0), annotations, replaced,
+                         history_action=history_action)
         if replaced:
             self.annotation_window.unselect_annotations()
             self.annotation_window.delete_annotations(replaced, record_action=False)

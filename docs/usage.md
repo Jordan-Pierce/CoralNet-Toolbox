@@ -477,13 +477,15 @@ All dock windows (Annotation Window, Labels Window, Rasters Window, Confidence W
         - Configurable simplification level for polygon complexity
   - **Batch Inference**: Run inference on multiple selected images or a single video
     - **Input Options**: Select multiple images OR one video file (not both, not multiple videos)
+    - **Type**: Standard runs on whole images; Tiled runs only on each raster's work areas (for example a tile grid from the Work Area Manager), and rasters without work areas are skipped
     - **Live Mode**: Display inference results in real-time as the model processes
     - **Save Annotations**: Optional toggle to save generated annotations to the project
       - When disabled: Preview mode shows results without persisting to the project
       - When enabled: Annotations are added to the project for each image / frame
     - **Feature Options** (Feature model): choose an **Action**
       - **Extract Feature Maps**: Cache a dense feature map for each selected image
-      - **Densify Patches**: Fill each image's mask from its existing labels (patches, polygons and mask classes seed a feature map; Review patches are ignored; image rasters only)
+      - **Densify Patches**: Fill each image's mask from its existing labels (patches, polygons and mask classes seed a feature map; Review patches are ignored)
+        - **Type**: Standard densifies the whole image; Tiled densifies only each work area, at full input resolution, and skips rasters without work areas (required for orthomosaics; create a tile grid with the Work Area Manager, ideally with at least 20% overlap). Prototypes are shared across all of an image's work areas, and each pixel in an overlap takes the work area it sits most centrally in
         - **Reject Threshold**: Pixels less similar than this to every class stay unlabeled
         - **Minimum Classes**: Skip images whose labels seed fewer classes
         - **Only Fill Unlabeled Pixels**: Keep pixels the mask already labels

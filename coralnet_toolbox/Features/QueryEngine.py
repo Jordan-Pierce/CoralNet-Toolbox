@@ -536,6 +536,22 @@ class QueryEngine:
             out[key] = centroids
         return out
 
+    @classmethod
+    def balance_vectors(cls, vectors_by_class):
+        """:meth:`_balance_prototypes` for prototype VECTORS rather than ids.
+
+        For prototypes gathered outside this buffer, e.g. seeds collected across
+        every tile of an image (see LabelPropagation). ``vectors_by_class`` maps
+        ``class_key -> [P, D]`` L2-normalized rows; empty classes are dropped.
+        Returns ``{class_key: [k, D] float32}``, k the same for every class.
+        """
+        cleaned = {key: np.asarray(v, dtype=np.float32)
+                   for key, v in vectors_by_class.items() if len(v)}
+        if not cleaned:
+            return {}
+        k = max(1, min(cls.PROTOTYPE_BUDGET, min(v.shape[0] for v in cleaned.values())))
+        return {key: cls._spherical_kmeans(v, k) for key, v in cleaned.items()}
+
     def class_scores(self, prototypes_by_class) -> Tuple[np.ndarray, list]:
         """Per-class max-pool cosine similarity over the feature buffer.
 
@@ -559,11 +575,19 @@ class QueryEngine:
             similarity field for ``keys[k]``; ``keys`` is the class-key list in
             row order. Both empty when no class has prototypes.
         """
+        return self.scores_from_centroids(self._balance_prototypes(prototypes_by_class))
+
+    def scores_from_centroids(self, centroids_by_class) -> Tuple[np.ndarray, list]:
+        """Per-class max cosine of every element to that class's ``[k, D]`` centroids.
+
+        The scoring half of :meth:`class_scores`, for centroids that are already
+        balanced (``_balance_prototypes`` / :meth:`balance_vectors`). Returns
+        ``(best [C, N] float32, keys)``.
+        """
         N = self.features_np.shape[0]
-        balanced = self._balance_prototypes(prototypes_by_class)
         keys = []
         rows = []
-        for key, protos in balanced.items():
+        for key, protos in centroids_by_class.items():
             keys.append(key)
             if self.use_torch:
                 p = torch.as_tensor(protos, dtype=torch.float32, device=self.device)

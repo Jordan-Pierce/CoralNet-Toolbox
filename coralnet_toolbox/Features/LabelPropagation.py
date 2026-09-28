@@ -10,6 +10,11 @@ A region is an image-pixel rect ``(left, top, width, height)`` covered by a
 ``(grid_h, grid_w)`` feature grid. The mapping between the two is proportional,
 not a single stride: the extractor resizes the crop to a square before
 patchifying, so the grid's aspect ratio need not match the crop's.
+
+Batch densify can split an image into several regions (its work areas), given
+as integer windows ``(x0, y0, x1, y1)``. Where windows overlap, each pixel
+belongs to the window it sits most centrally in (see owned_mask), so a seed
+votes once and every pixel is written once.
 """
 
 from __future__ import annotations
@@ -29,7 +34,7 @@ def _has_class(label):
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-def standardize_features(features):
+def standardize_features(features, stats=None):
     """Per-channel z-standardize [N, D] features over the region, re-L2.
 
     Raw ViT patch tokens carry a large channel-wise mean plus a positional
@@ -53,13 +58,41 @@ def standardize_features(features):
 
     Statistics are region-local by design; they are deliberately NOT applied
     to feature maps persisted to disk, which stay raw so they remain
-    comparable across crops.
+    comparable across crops. ``stats`` (a ``(mean, std)`` pair, see
+    ChannelStats) replaces them when several tiles of one image must share a
+    single feature space.
     """
     features = np.asarray(features, dtype=np.float32)
-    features = features - features.mean(axis=0, keepdims=True)
-    features = features / (features.std(axis=0, keepdims=True) + 1e-6)
+    if stats is None:
+        mean, std = features.mean(axis=0), features.std(axis=0)
+    else:
+        mean, std = stats
+    features = (features - mean) / (std + 1e-6)
     norms = np.linalg.norm(features, axis=1, keepdims=True)
     return features / np.maximum(norms, 1e-12)
+
+
+class ChannelStats:
+    """Running per-channel mean / std over feature chunks (float64 sums).
+
+    Lets every tile of an image be standardized in one shared space, so class
+    prototypes gathered in one tile compare fairly against the others.
+    """
+
+    def __init__(self):
+        self.count, self.sum, self.sumsq = 0, 0.0, 0.0
+
+    def add(self, features):
+        features = np.asarray(features, dtype=np.float64)
+        self.count += features.shape[0]
+        self.sum = self.sum + features.sum(axis=0)
+        self.sumsq = self.sumsq + np.square(features).sum(axis=0)
+
+    def result(self):
+        """``(mean, std)`` as float32, for standardize_features."""
+        mean = self.sum / self.count
+        std = np.sqrt(np.maximum(self.sumsq / self.count - np.square(mean), 0.0))
+        return mean.astype(np.float32), std.astype(np.float32)
 
 
 def build_query_engine(feature_map, standardize=True):
@@ -293,50 +326,159 @@ def iter_seeds(annotations, rect, grid_hw, mask_annotation=None):
             yield label, cells, ann
 
 
-def classify(engine, prototypes, grid_hw, out_hw, reject):
-    """Classify ``prototypes`` into a per-pixel label map at ``out_hw``.
+def label_map_from_scores(best, grid_hw, out_hw, reject):
+    """Per-pixel label map at ``out_hw`` from per-class grid scores ``best`` [C, N].
 
     Bilinearly upsamples EACH class's similarity field to the target size, then
     argmaxes + applies the reject floor there, so the boundary follows a smooth
-    contour at full resolution.
+    contour at full resolution. -1 is unlabeled; k indexes the rows of ``best``.
+    """
+    ups = np.stack(
+        [upsample_field(np.asarray(best[c], dtype=np.float32).reshape(grid_hw), *out_hw)
+         for c in range(len(best))],
+        axis=0,
+    )  # [C, out_h, out_w]
+    return np.where(ups.max(axis=0) >= reject, ups.argmax(axis=0), -1)
 
-    Returns ``(label_map, keys)``: an int [out_h, out_w] map where -1 is
-    unlabeled and k indexes ``keys``; ``(None, [])`` without prototypes.
+
+def classify(engine, prototypes, grid_hw, out_hw, reject):
+    """Classify ``prototypes`` (element ids) into a per-pixel label map at ``out_hw``.
+
+    Returns ``(label_map, keys)`` (see label_map_from_scores); ``(None, [])``
+    without prototypes.
     """
     best, keys = engine.class_scores(prototypes)
     if not keys:
         return None, []
-    ups = np.stack(
-        [upsample_field(best[c].reshape(grid_hw).astype(np.float32), *out_hw)
-         for c in range(len(keys))],
-        axis=0,
-    )  # [C, out_h, out_w]
-    label_map = np.where(ups.max(axis=0) >= reject, ups.argmax(axis=0), -1)
-    return label_map, keys
+    return label_map_from_scores(best, grid_hw, out_hw, reject), keys
 
 
-def partition_patches(annotations, prediction_mask, label_id_to_class_id, rect):
-    """Split the patches centered in ``rect`` by whether the prediction agrees.
+# ----------------------------------------------------------------------------------------------------------------------
+# Regions
+# ----------------------------------------------------------------------------------------------------------------------
 
-    A patch agrees when ``prediction_mask`` (full-image class ids) holds the
-    patch's own class at its center: the mask already says what the point says,
-    so the patch can be replaced without losing its label. Returns
-    ``(agree, disagree)``.
+
+def _centrality(window, xs, ys):
+    """[len(ys), len(xs)] distance of pixels from ``window``'s center: 0 there, 1 at its edge."""
+    x0, y0, x1, y1 = window
+    cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+    half_w, half_h = max((x1 - x0) / 2.0, 1e-6), max((y1 - y0) / 2.0, 1e-6)
+    return np.maximum(np.abs(ys - cy)[:, None] / half_h, np.abs(xs - cx)[None, :] / half_w)
+
+
+def owned_mask(index, windows):
+    """Bool [h, w] over ``windows[index]``: the pixels that window owns.
+
+    A pixel covered by several windows belongs to the one it sits most
+    centrally in (ties to the lower index), so overlapping tiles each write,
+    and seed, only their own share. Computed per window, never at image size.
+    """
+    x0, y0, x1, y1 = windows[index]
+    xs = np.arange(x0, x1) + 0.5
+    ys = np.arange(y0, y1) + 0.5
+    mine = _centrality(windows[index], xs, ys)
+    owned = np.ones(mine.shape, dtype=bool)
+    for other, window in enumerate(windows):
+        ix0, iy0 = max(x0, window[0]), max(y0, window[1])
+        ix1, iy1 = min(x1, window[2]), min(y1, window[3])
+        if other == index or ix0 >= ix1 or iy0 >= iy1:
+            continue
+        sy, sx = slice(iy0 - y0, iy1 - y0), slice(ix0 - x0, ix1 - x0)
+        theirs = _centrality(window, xs[sx], ys[sy])
+        owned[sy, sx] &= (mine[sy, sx] <= theirs) if index < other else (mine[sy, sx] < theirs)
+    return owned
+
+
+def owner_of(x, y, windows):
+    """Index of the window owning the pixel under (x, y) (see owned_mask), or None."""
+    px, py = np.floor(x), np.floor(y)
+    best, owner = None, None
+    for index, window in enumerate(windows):
+        x0, y0, x1, y1 = window
+        if x0 <= px < x1 and y0 <= py < y1:
+            c = float(_centrality(window, np.array([px + 0.5]), np.array([py + 0.5]))[0, 0])
+            if best is None or c < best:
+                best, owner = c, index
+    return owner
+
+
+def annotations_in(annotations, window):
+    """Annotations whose bounding box overlaps ``window``."""
+    x0, y0, x1, y1 = window
+    inside = []
+    for ann in annotations:
+        try:
+            tl, br = ann.get_bounding_box_top_left(), ann.get_bounding_box_bottom_right()
+        except Exception:
+            inside.append(ann)
+            continue
+        if tl.x() < x1 and tl.y() < y1 and br.x() >= x0 and br.y() >= y0:
+            inside.append(ann)
+    return inside
+
+
+def iter_owned_seeds(annotations, windows, index, grid_hw, mask_annotation=None, max_cells=None):
+    """iter_seeds over ``windows[index]``, keeping only the seeds that window owns.
+
+    A patch seeds only in the window owning its center, and a region's cells
+    only where the window owns the cell center, so a seed in an overlap votes
+    once. ``max_cells`` caps (strided) the cells kept per seed, which bounds the
+    vectors a large polygon or mask class contributes across many tiles.
     """
     from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 
-    left, top, width, height = rect
-    h, w = prediction_mask.shape
+    x0, y0, x1, y1 = windows[index]
+    grid_h, grid_w = grid_hw
+    owned = owned_mask(index, windows) if len(windows) > 1 else None
+    for label, cells, ann in iter_seeds(annotations, (x0, y0, x1 - x0, y1 - y0), grid_hw,
+                                        mask_annotation):
+        cells = np.asarray(cells, dtype=np.int64)
+        if owned is not None:
+            if isinstance(ann, PatchAnnotation):
+                if owner_of(*ann.get_centroid(), windows) != index:
+                    continue
+            else:
+                gy, gx = np.divmod(cells, grid_w)
+                py = ((gy + 0.5) * (y1 - y0) / grid_h).astype(np.int64)
+                px = ((gx + 0.5) * (x1 - x0) / grid_w).astype(np.int64)
+                cells = cells[owned[py, px]]
+        if max_cells and cells.size > max_cells:
+            cells = cells[np.linspace(0, cells.size - 1, max_cells).astype(np.int64)]
+        if cells.size:
+            yield label, cells, ann
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Patch replacement
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def patches_where(annotations, contains):
+    """Classed (non-Review) PatchAnnotations whose center passes ``contains(x, y)``."""
+    from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
+
+    return [ann for ann in annotations
+            if isinstance(ann, PatchAnnotation) and _has_class(ann.label)
+            and contains(*ann.get_centroid())]
+
+
+def partition_patches(patches, prediction, label_id_to_class_id, origin=(0, 0)):
+    """Split ``patches`` by whether the prediction agrees with them.
+
+    A patch agrees when ``prediction`` (class ids, top-left at ``origin`` in the
+    image) holds the patch's own class at its center: the mask already says
+    what the point says, so the patch can be replaced without losing its label.
+    Patches centered outside the prediction disagree. Returns
+    ``(agree, disagree)``.
+    """
+    x0, y0 = origin
+    h, w = prediction.shape
     agree, disagree = [], []
-    for ann in annotations:
-        if not isinstance(ann, PatchAnnotation) or not _has_class(ann.label):
-            continue
+    for ann in patches:
         cx, cy = ann.get_centroid()
-        if not (left <= cx < left + width and top <= cy < top + height):
-            continue
-        x, y = int(cx), int(cy)
+        x, y = int(cx) - x0, int(cy) - y0
         class_id = label_id_to_class_id.get(ann.label.id)
-        if class_id is not None and 0 <= x < w and 0 <= y < h and prediction_mask[y, x] == class_id:
+        if class_id is not None and 0 <= x < w and 0 <= y < h and prediction[y, x] == class_id:
             agree.append(ann)
         else:
             disagree.append(ann)
@@ -348,71 +490,94 @@ def partition_patches(annotations, prediction_mask, label_id_to_class_id, rect):
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-def occupancy_indices(mask_annotation, annotations):
-    """Flat pixel indices covered by vector ``annotations``, or None if none.
+def _occupancy(mask_annotation, annotations, origin, shape):
+    """Bool ``shape`` window (top-left ``origin``) of pixels vector annotations cover, or None.
 
     Reuses the MaskAnnotation's own rasterization helpers so the occupancy
     matches exactly how rasterize_annotations()/bake mark the same pixels.
+    Geometries are shifted into the window, so nothing is rasterized beyond it.
     """
+    from shapely.affinity import translate
+
+    x0, y0 = origin
+    h, w = shape
     geometries = []
     for ann in annotations:
         try:
             geom = mask_annotation._get_annotation_rasterization_geometry(ann)
         except Exception:
             geom = None
-        if geom is not None and not getattr(geom, 'is_empty', False):
-            geometries.append(geom)
+        if geom is None or getattr(geom, 'is_empty', False):
+            continue
+        minx, miny, maxx, maxy = geom.bounds
+        if maxx < x0 or maxy < y0 or minx > x0 + w or miny > y0 + h:
+            continue
+        geometries.append(translate(geom, -x0, -y0) if (x0 or y0) else geom)
     if not geometries:
         return None
     try:
-        h, w = mask_annotation.mask_data.shape
-        occ = mask_annotation._fast_rasterize(geometries, w, h, mode="rasterio")
+        occupied = mask_annotation._fast_rasterize(geometries, w, h, mode="rasterio")
     except Exception:
         return None
-    idx = np.flatnonzero(occ.ravel())
-    return idx if idx.size else None
+    return occupied if occupied.any() else None
 
 
-def write_prediction(mask_annotation, prediction_mask, annotations, rect,
-                     replace_patches=False, history_action=None):
-    """Paint a full-image class-id prediction into the mask.
+def write_prediction(mask_annotation, prediction, origin, annotations, replaced=(),
+                     region=None, history_action=None):
+    """Paint a class-id prediction window (top-left at ``origin``) into the mask.
 
     Enforces the app-wide invariant that a MaskAnnotation never holds a label
     behind a vector annotation (mask class A hiding under a patch/polygon of
     class B): the prediction is zeroed wherever one sits, and any mask already
-    there is cleared. With ``replace_patches``, the patches in ``rect`` the
-    prediction agrees with (see partition_patches) are treated as gone, so the
-    mask fills their footprint. ``prediction_mask`` is modified in place.
-
-    Returns ``(replaced, kept)`` patches; deleting ``replaced`` is the caller's
-    job, so it can fold the deletion into its own undo action (or not).
+    there is cleared. ``replaced`` patches (see partition_patches) count as
+    gone, so the mask fills their footprint; deleting them is the caller's job,
+    so it can fold the deletion into its own undo action (or not). ``region``
+    (bool, window-shaped) limits the pixels this call may change, so
+    overlapping tiles each write only what they own. ``prediction`` is
+    modified in place.
     """
-    vectors = [a for a in annotations if not getattr(a, 'is_mask_annotation', False)]
-    replaced, kept = [], []
-    if replace_patches:
-        replaced, kept = partition_patches(vectors, prediction_mask,
-                                           mask_annotation.label_id_to_class_id_map, rect)
-        replaced_ids = {a.id for a in replaced}
-        vectors = [a for a in vectors if a.id not in replaced_ids]
+    x0, y0 = origin
+    width = mask_annotation.mask_data.shape[1]
+    if region is not None:
+        prediction[~region] = 0
 
-    occupied = occupancy_indices(mask_annotation, vectors)
+    def flat(selected):
+        ys, xs = np.nonzero(selected)
+        return (ys.astype(np.int64) + y0) * width + (xs + x0)
+
+    replaced_ids = {a.id for a in replaced}
+    vectors = [a for a in annotations
+               if not getattr(a, 'is_mask_annotation', False) and a.id not in replaced_ids]
+    occupied = _occupancy(mask_annotation, vectors, origin, prediction.shape)
     if occupied is not None:
+        if region is not None:
+            occupied &= region
         # Don't paint under the remaining vectors; clear any mask already there
         # (respects the LOCK_BIT, so protected pixels are left untouched).
-        prediction_mask.ravel()[occupied] = 0
+        prediction[occupied] = 0
         mask_annotation.update_mask_at_indices(
-            occupied, 0, silent=True, history_action=history_action)
+            flat(occupied), 0, silent=True, history_action=history_action)
 
-    freed = occupancy_indices(mask_annotation, replaced)
+    freed = _occupancy(mask_annotation, replaced, origin, prediction.shape)
     if freed is not None:
         if occupied is not None:
-            freed = np.setdiff1d(freed, occupied, assume_unique=True)
+            freed &= ~occupied
+        if region is not None:
+            freed &= region
         # Raw write: also lifts the LOCK_BIT rasterize_annotations() left under
         # the patch, which the lock-respecting update below would skip.
-        applied = mask_annotation.apply_flat_values_at_indices(freed, prediction_mask.ravel()[freed])
+        applied = mask_annotation.apply_flat_values_at_indices(flat(freed), prediction[freed])
         if applied is not None and history_action is not None:
             history_action.add_change(applied["flat_indices"], applied["before_values"],
                                       applied["after_values"], update_rect=applied["update_rect"])
 
-    mask_annotation.update_mask_with_prediction_mask(prediction_mask, history_action=history_action)
-    return replaced, kept
+    # Merge over the prediction's bounding box only; the update skips locked pixels.
+    rows, cols = np.nonzero(prediction)
+    if rows.size == 0:
+        return
+    r0, r1, c0, c1 = rows.min(), rows.max() + 1, cols.min(), cols.max() + 1
+    tile = prediction[r0:r1, c0:c1]
+    current = mask_annotation.mask_data[y0 + r0:y0 + r1, x0 + c0:x0 + c1]
+    mask_annotation.update_mask_with_mask(np.where(tile > 0, tile, current),
+                                          (int(x0 + c0), int(y0 + r0)),
+                                          history_action=history_action)

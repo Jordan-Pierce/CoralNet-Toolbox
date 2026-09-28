@@ -817,9 +817,11 @@ class BatchInferenceDialog(QDialog):
         "Extract Feature Maps": "Feature extracts a dense feature map for each selected raster and "
                                 "caches it on disk.",
         "Densify Patches": "Feature densifies each raster's existing labels into its mask. Patches, "
-                           "polygons and mask classes seed a feature map of the whole image, and "
-                           "every pixel gets the class it most resembles. Review patches are "
-                           "ignored. Image rasters only.",
+                           "polygons and mask classes seed a feature map, and every pixel gets "
+                           "the class it most resembles; Review patches are ignored. Standard "
+                           "uses the whole image. Tiled uses only each raster's work areas, at "
+                           "full input resolution, and skips rasters without any. Orthomosaics "
+                           "require Tiled.",
     }
 
     def setup_info_layout(self):
@@ -872,7 +874,7 @@ class BatchInferenceDialog(QDialog):
         self.inference_type_combo.addItem("Standard")
         self.inference_type_combo.addItem("Tiled")
         self.inference_type_combo.currentTextChanged.connect(self.on_inference_type_changed)
-        self.inference_type_combo.setToolTip("Standard: Run inference on full images.\nTiled: Split images into tiles for better handling of large images or GPU memory constraints.")
+        self.inference_type_combo.setToolTip("Standard: Run inference on full images.\nTiled: Run inference on each raster's work areas only (e.g. a tile grid from the\nWork Area Manager); rasters without work areas are skipped.")
         form_layout.addRow("Type:", self.inference_type_combo)
 
         # Save annotations (moved out of Video Options so editable for non-video runs)
@@ -1273,9 +1275,11 @@ class BatchInferenceDialog(QDialog):
         if hasattr(self, 'video_group'):
             self.video_group.setVisible(has_video)
 
-        # --- Type combo: tiling only applies to image rasters on tiling models.
+        # --- Type combo: tiling only applies to image rasters on tiling models
+        # (Feature tiles only to densify, over each raster's work areas).
         # VideoRaster has no "Tiled" option, so force Standard and grey it out.
-        model_supports_tiling = model not in ("Classify", "Feature")
+        densify = model == "Feature" and self.get_densify_options() is not None
+        model_supports_tiling = model not in ("Classify", "Feature") or densify
         type_enabled = model_supports_tiling and not has_video
         if hasattr(self, 'inference_type_combo'):
             if not type_enabled and self.inference_type_combo.currentText() != "Standard":
@@ -1614,6 +1618,35 @@ class BatchInferenceDialog(QDialog):
             "replace_patches": self.densify_replace_combo.currentText() == "True",
         }
 
+    def _confirm_tiled_work_areas(self):
+        """Tiled runs only on work areas, so warn before rasters without any are skipped."""
+        if self.inference_type_combo.currentText() != "Tiled":
+            return True
+        paths = self.get_selected_image_paths()
+        raster_manager = getattr(self.image_window, 'raster_manager', None)
+        rasters = [raster_manager.get_raster(p) for p in paths] if raster_manager else []
+        missing = sum(1 for raster in rasters if raster is None or not raster.has_work_areas())
+        if not missing:
+            return True
+        if missing == len(paths):
+            QMessageBox.warning(
+                self,
+                "No Work Areas",
+                "Tiled runs only on work areas, and none of the selected rasters have any.\n\n"
+                "Create work areas (for example a tile grid with the Work Area Manager) "
+                "or set Type to Standard.",
+            )
+            return False
+        reply = QMessageBox.question(
+            self,
+            "Missing Work Areas",
+            f"{missing} of {len(paths)} selected raster(s) have no work areas and will be "
+            "skipped.\n\nContinue?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        return reply == QMessageBox.Yes
+
     def _confirm_patch_replacement(self):
         """Batch edits can't be undone, so confirm before densify deletes patches."""
         options = self.get_densify_options() if self.current_selected_model == "Feature" else None
@@ -1706,7 +1739,7 @@ class BatchInferenceDialog(QDialog):
         if not self.check_model_availability():
             QMessageBox.warning(self, "No Model", "Please load a model first.")
             return
-        if not self._confirm_patch_replacement():
+        if not self._confirm_tiled_work_areas() or not self._confirm_patch_replacement():
             return
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -1812,7 +1845,7 @@ class BatchInferenceDialog(QDialog):
         Handles three source types:
         - VideoRaster, Standard  → one item per frame (is_video=True)
         - Raster, Standard       → one item per image (file-path source)
-        - Raster, Tiled          → one item per WorkArea
+        - Raster, Tiled          → one item per WorkArea (none without work areas)
 
         VideoRaster tiled mode falls back to Standard (frame-by-frame, no tiles)
         because tile coordinates on video frames are not yet supported.

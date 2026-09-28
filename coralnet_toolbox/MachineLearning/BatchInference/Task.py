@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC
+from contextlib import contextmanager
 from typing import Any
 
 from .Contracts import InferenceItem, InferenceThresholds
@@ -520,23 +521,41 @@ class FeatureBatchInferenceTask(BatchInferenceTask):
 
 
 class FeatureDensifyBatchInferenceTask(BatchInferenceTask):
-    """Densify each image's existing labels into its mask over a dense feature map.
+    """Densify each raster's existing labels into its mask over dense features.
 
-    Per image raster: extract features for the whole image, seed per-class
-    prototypes from its annotations and mask, classify every pixel, and write
-    the classes into the image's MaskAnnotation (see LabelPropagation, which the
-    Feature Select tool's multi-class mode shares). Batch edits are not
-    undoable, so replacing patches is opt-in and confirmed by the dialog.
+    Regions are the whole image when Type is Standard, and only the raster's
+    work areas when Type is Tiled (rasters without any are skipped).
+    Orthomosaics need Tiled, since a whole mosaic squeezed into one model input
+    is far too coarse. Per raster, in three passes:
+
+      1. extract every region's features, accumulating image-wide channel
+         statistics and the feature vectors under each seed;
+      2. standardize with those statistics, score every region against the
+         image-wide class prototypes, and decide which patches to replace;
+      3. classify every region and paint the pixels it owns into the mask.
+
+    A pixel in several regions belongs to the one it sits most centrally in
+    (LabelPropagation.owned_mask), which also keeps a seed in an overlap from
+    voting twice. Only the mask itself is ever held at image size. Batch edits
+    are not undoable, so replacing patches is opt-in and confirmed by the dialog.
     """
 
     name = "Feature Densify"
     progress_title = "Densifying Patches"
 
-    # Long edge (px) the label map is classified at before a nearest resize to
-    # full resolution; bounds the [classes, H, W] float stack on large rasters.
+    # Region edge (px) classified at before a nearest resize to full size;
+    # bounds the [classes, H, W] float stack.
     MAX_CLASSIFY_EDGE = 2048
+    # Region features kept in memory between passes 1 and 2; past this budget
+    # regions are re-extracted instead (slower, but flat memory on orthomosaics).
+    FEATURE_CACHE_BYTES = 1_500_000_000
+    # Cells kept per seed per region, so a big polygon or mask class adds a
+    # bounded number of vectors however many regions it spans.
+    MAX_SEED_CELLS = 64
 
     def run(self, progress_bar: Any) -> bool:
+        from collections import Counter
+
         extractor = getattr(self.model_dialog, "loaded_model", None)
         if extractor is None or not getattr(extractor, "supports_dense", False):
             return False
@@ -545,32 +564,38 @@ class FeatureDensifyBatchInferenceTask(BatchInferenceTask):
             return False
 
         options = self.dialog.get_densify_options()
+        tiled = self.selected_inference_type() == "Tiled"
         annotation_window = self.dialog.annotation_window
-        densified, replaced, kept, skipped = [], [], 0, 0
+        skipped = Counter()
 
-        progress_bar.set_title(f"Densifying patches on {len(self.image_paths)} image(s)...")
-        progress_bar.start_progress(len(self.image_paths))
+        plans = []
+        for image_path in self.image_paths:
+            regions, reason = self._regions(raster_manager.get_raster(image_path), tiled)
+            if regions is None:
+                skipped[reason] += 1
+            else:
+                plans.append((image_path, regions))
+
+        # Two feature passes per region; the third only upsamples stored scores.
+        progress_bar.set_title(f"Densifying patches on {len(plans)} image(s)...")
+        progress_bar.start_progress(max(1, 2 * sum(len(regions) for _, regions in plans)))
+        densified, replaced, kept = [], [], 0
         try:
-            for image_path in self.image_paths:
+            for image_path, regions in plans:
                 if progress_bar.wasCanceled():
                     break
+                raster = raster_manager.get_raster(image_path)
                 try:
-                    raster = raster_manager.get_raster(image_path)
-                    # Image rasters only: video frames and orthomosaics are out of scope.
-                    result = None
-                    if raster is not None and getattr(raster, "raster_type", "") == "ImageRaster":
-                        result = self._densify_image(raster, extractor, options)
-                    if result is None:
-                        skipped += 1
-                        continue
-                    densified.append(image_path)
-                    replaced.extend(result[0])
-                    kept += len(result[1])
+                    result, reason = self._densify(raster, regions, extractor, options, progress_bar)
                 except Exception as e:
                     print(f"Densify failed for {image_path}: {e}")
-                    skipped += 1
-                finally:
-                    progress_bar.update_progress()
+                    result, reason = None, "failed, see console"
+                if result is None:
+                    skipped[reason] += 1
+                    continue
+                densified.append(image_path)
+                replaced.extend(result[0])
+                kept += len(result[1])
         finally:
             try:
                 import torch
@@ -590,62 +615,173 @@ class FeatureDensifyBatchInferenceTask(BatchInferenceTask):
         if options["replace_patches"]:
             message += f", replaced {len(replaced)} patch(es), kept {kept} that disagree"
         if skipped:
-            message += f"; skipped {skipped} (not an image raster, or too few seeded classes)"
-        self.dialog.main_window.status_bar.showMessage(message + ".", 10000)
+            message += "; skipped: " + ", ".join(f"{reason} ({n})" for reason, n in skipped.items())
+        self.dialog.main_window.status_bar.showMessage(message + ".", 15000)
         return True
 
-    def _densify_image(self, raster, extractor, options):
-        """Densify one raster into its mask; ``(replaced, kept)`` or None if skipped."""
-        import cv2
+    @staticmethod
+    def _regions(raster, tiled):
+        """``[(window, work_area)]`` to densify, or ``(None, skip reason)``.
+
+        Windows are integer ``(x0, y0, x1, y1)`` pixel bounds; ``work_area`` is
+        the WorkArea a window came from (None for the whole image).
+        """
+        kind = getattr(raster, "raster_type", "")
+        if kind not in ("ImageRaster", "OrthoRaster"):
+            return None, "not an image raster or orthomosaic"
+        if not tiled:
+            if kind == "OrthoRaster":
+                return None, "orthomosaic with Type Standard (use Tiled)"
+            return [((0, 0, raster.width, raster.height), None)], None
+        # Tiled runs only on work areas, like every other batch task.
+        regions = []
+        for work_area in raster.get_work_areas():
+            rect = work_area.rect
+            x0, y0 = max(0, int(rect.left())), max(0, int(rect.top()))
+            x1 = min(raster.width, int(round(rect.right())))
+            y1 = min(raster.height, int(round(rect.bottom())))
+            if x1 > x0 and y1 > y0:
+                regions.append(((x0, y0, x1, y1), work_area))
+        return (regions, None) if regions else (None, "no work areas")
+
+    @staticmethod
+    @contextmanager
+    def _highlighted(work_area):
+        """Show ``work_area`` highlighted while it is processed, as the Deploy dialogs do.
+
+        Only work areas drawn on the current image are visible. Events are
+        flushed first so the highlight paints before the heavy work starts.
+        """
+        if work_area is None:
+            yield
+            return
+        from PyQt5.QtWidgets import QApplication
+
+        work_area.highlight()
+        QApplication.processEvents()
+        try:
+            yield
+        finally:
+            work_area.unhighlight()
+
+    def _densify(self, raster, regions, extractor, options, progress_bar):
+        """Densify one raster; ``((replaced, kept), None)`` or ``(None, skip reason)``."""
         import numpy as np
-        from PyQt5.QtCore import QRectF
-        from coralnet_toolbox.utilities import work_area_to_numpy
+        from coralnet_toolbox.Features.QueryEngine import QueryEngine
         from coralnet_toolbox.Features.LabelPropagation import (
-            build_query_engine, classify, iter_seeds, write_prediction,
+            ChannelStats, annotations_in, iter_owned_seeds, owned_mask, owner_of,
+            partition_patches, patches_where, standardize_features, write_prediction,
         )
 
+        windows = [window for window, _ in regions]
+        work_areas = [work_area for _, work_area in regions]
         annotation_window = self.dialog.annotation_window
         annotations = list(annotation_window.get_image_annotations(raster.image_path))
         if not annotations and raster.mask_annotation is None:
-            return None
+            progress_bar.advance_progress(2 * len(windows))
+            return None, "no annotations"
+        local = [annotations_in(annotations, window) for window in windows]
 
-        height, width = raster.height, raster.width
-        image = work_area_to_numpy(raster.rasterio_src, QRectF(0, 0, width, height))
-        if image is None or image.size == 0:
-            return None
-        engine, grid_hw = build_query_engine(extractor.extract_dense(image))
-        rect = (0.0, 0.0, float(width), float(height))
+        # Pass 1: features, image-wide channel statistics, seed vectors.
+        stats, seeds, cache, grids, cached = ChannelStats(), {}, [], [], 0
+        for t, window in enumerate(windows):
+            if progress_bar.wasCanceled():
+                return None, "canceled"
+            with self._highlighted(work_areas[t]):
+                features = self._extract(raster, window, extractor)
+                grids.append(features.shape[:2])
+                features = features.reshape(-1, features.shape[2])
+                stats.add(features)
+                for label, cells, _ in iter_owned_seeds(local[t], windows, t, grids[t],
+                                                        raster.mask_annotation, self.MAX_SEED_CELLS):
+                    seeds.setdefault(label.id, []).append(features[cells])
+                keep = cached + features.nbytes <= self.FEATURE_CACHE_BYTES
+                cache.append(features if keep else None)
+                cached += features.nbytes if keep else 0
+            progress_bar.update_progress()
 
-        prototypes = {}
-        for label, cells, _ in iter_seeds(annotations, rect, grid_hw, raster.mask_annotation):
-            prototypes.setdefault(label.id, set()).update(cells)
-        if len(prototypes) < options["min_classes"]:
-            return None
+        if len(seeds) < options["min_classes"]:
+            progress_bar.advance_progress(len(windows))
+            return None, f"fewer than {options['min_classes']} seeded classes"
 
-        scale = min(1.0, self.MAX_CLASSIFY_EDGE / max(height, width))
-        out_hw = (max(1, round(height * scale)), max(1, round(width * scale)))
-        label_map, keys = classify(engine, {k: list(v) for k, v in prototypes.items()},
-                                   grid_hw, out_hw, options["reject"])
-        if label_map is None:
-            return None
-
+        # Image-wide prototypes, in the shared standardized space.
+        channel_stats = stats.result()
+        centroids = QueryEngine.balance_vectors(
+            {key: standardize_features(np.concatenate(v), channel_stats) for key, v in seeds.items()})
         mask_annotation = annotation_window._get_mask_annotation_for_bake(raster.image_path)
         if mask_annotation is None:
-            return None
-        # label_map is -1 for unlabeled, so shift by one into a class-id lookup.
-        lut = np.zeros(len(keys) + 1, dtype=np.uint8)
-        for k, key in enumerate(keys):
-            lut[k + 1] = mask_annotation.label_id_to_class_id_map.get(key, 0)
-        prediction = lut[label_map + 1]
-        if out_hw != (height, width):
-            prediction = cv2.resize(prediction, (width, height), interpolation=cv2.INTER_NEAREST)
-        if options["fill_unlabeled_only"]:
-            prediction[(mask_annotation.mask_data % mask_annotation.LOCK_BIT) != 0] = 0
-        if not prediction.any():
-            return None
+            progress_bar.advance_progress(len(windows))
+            return None, "no mask available"
+        label_to_class = mask_annotation.label_id_to_class_id_map
+        # Score row k is centroids' k-th class; label maps are -1 when unlabeled,
+        # so shift by one into a class-id lookup.
+        lut = np.zeros(len(centroids) + 1, dtype=np.uint8)
+        for k, key in enumerate(centroids):
+            lut[k + 1] = label_to_class.get(key, 0)
 
-        return write_prediction(mask_annotation, prediction, annotations, rect,
-                                replace_patches=options["replace_patches"])
+        # Pass 2: score every region, and decide replacements before anything is
+        # written, since a patch's footprint can reach into a neighbouring region.
+        scores, replaced, kept = [], [], []
+        for t, window in enumerate(windows):
+            if progress_bar.wasCanceled():
+                return None, "canceled"
+            with self._highlighted(work_areas[t]):
+                features = cache[t]
+                if features is None:
+                    features = self._extract(raster, window, extractor)
+                    features = features.reshape(-1, features.shape[2])
+                cache[t] = None
+                engine = QueryEngine(standardize_features(features, channel_stats),
+                                     np.ones(features.shape[0], dtype=bool))
+                scores.append(engine.scores_from_centroids(centroids)[0].astype(np.float16))
+                if options["replace_patches"]:
+                    patches = patches_where(local[t], lambda x, y: owner_of(x, y, windows) == t)
+                    if patches:
+                        prediction = self._prediction(scores[t], grids[t], window, lut,
+                                                      options["reject"])
+                        agree, disagree = partition_patches(patches, prediction, label_to_class,
+                                                            window[:2])
+                        replaced += agree
+                        kept += disagree
+            progress_bar.update_progress()
+
+        # Pass 3: paint the pixels each region owns.
+        for t, window in enumerate(windows):
+            with self._highlighted(work_areas[t]):
+                x0, y0, x1, y1 = window
+                prediction = self._prediction(scores[t], grids[t], window, lut, options["reject"])
+                if options["fill_unlabeled_only"]:
+                    current = mask_annotation.mask_data[y0:y1, x0:x1]
+                    prediction[(current % mask_annotation.LOCK_BIT) != 0] = 0
+                region = owned_mask(t, windows) if len(windows) > 1 else None
+                write_prediction(mask_annotation, prediction, (x0, y0), local[t], replaced, region)
+        return (replaced, kept), None
+
+    @staticmethod
+    def _extract(raster, window, extractor):
+        """Dense [h, w, C] features for one window, read straight from the file."""
+        from PyQt5.QtCore import QRectF
+        from coralnet_toolbox.utilities import work_area_to_numpy
+
+        x0, y0, x1, y1 = window
+        image = work_area_to_numpy(raster.rasterio_src, QRectF(x0, y0, x1 - x0, y1 - y0))
+        if image is None or image.size == 0:
+            raise ValueError(f"could not read window {window}")
+        return extractor.extract_dense(image)
+
+    def _prediction(self, scores, grid_hw, window, lut, reject):
+        """Full-size class-id prediction for ``window`` from its per-class scores."""
+        import cv2
+        from coralnet_toolbox.Features.LabelPropagation import label_map_from_scores
+
+        x0, y0, x1, y1 = window
+        h, w = y1 - y0, x1 - x0
+        scale = min(1.0, self.MAX_CLASSIFY_EDGE / max(h, w))
+        out_hw = (max(1, round(h * scale)), max(1, round(w * scale)))
+        prediction = lut[label_map_from_scores(scores, grid_hw, out_hw, reject) + 1]
+        if out_hw != (h, w):
+            prediction = cv2.resize(prediction, (w, h), interpolation=cv2.INTER_NEAREST)
+        return prediction
 
 
 class SamBatchInferenceTask(AsyncYoloBatchInferenceTask):
