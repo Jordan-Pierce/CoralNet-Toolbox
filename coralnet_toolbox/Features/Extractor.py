@@ -119,10 +119,13 @@ class TransformerExtractor(BaseExtractor):
                  upsample_factor: Optional[int] = None):
         self.model_name = model_name
         self.device = device
-        # Target square input edge in pixels. None → use the model's default
-        # processor resolution (small, e.g. ~224 → coarse grid). A larger value
-        # yields a proportionally larger patch grid (e.g. 768 → ~48×48 for /16).
+        # Input pixel budget, as the edge of a square with the same area. None →
+        # use the model's default processor resolution (small, e.g. ~224 → coarse
+        # grid). A larger value yields a proportionally larger patch grid (e.g.
+        # 768 → ~54×54 for /14). See _model_input for when aspect is kept.
         self._input_size = int(input_size) if input_size else None
+        # ViT patch edge (px), when known; set by _infer_architecture.
+        self._patch = None
         # Optional AnyUp densification factor (2, 4, or 8) applied to the
         # native patch grid, capped at the model's input resolution.
         self._upsample_factor = int(upsample_factor) if upsample_factor else None
@@ -205,7 +208,7 @@ class TransformerExtractor(BaseExtractor):
                 self._channels = 1024
             elif "giant" in self.model_name.lower():
                 self._channels = 1536
-            self._stride = 16  # All ViT/16
+            self._stride = self._patch = 14  # All DINOv2 are ViT/14
         # DINOv3 models
         elif "dinov3" in self.model_name.lower():
             if "convnext" in self.model_name.lower():
@@ -227,7 +230,7 @@ class TransformerExtractor(BaseExtractor):
                     self._channels = 1024
                 elif "7b" in self.model_name.lower():
                     self._channels = 2560
-                self._stride = 16
+                self._stride = self._patch = 16
         # ConvNeXt V2 (plain, non-DINOv3). Channels-first [C, H, W] spatial map,
         # so the forward-pass fallback can't be used (it reads shape[-1] = width,
         # not channels). Pin the final-stage dim by size; stride is recomputed
@@ -261,12 +264,54 @@ class TransformerExtractor(BaseExtractor):
             self._channels = 768
             self._stride = 16
 
+    def _keeps_aspect(self) -> bool:
+        """Whether this backbone takes a non-square input with a predictable grid.
+
+        DINOv2/v3 ViTs (known patch size, interpolated position embeddings) and
+        spatial CNNs (ConvNext, ResNet) do. Others (e.g. Swin, plain ViT) keep
+        the square input their token-count parsing relies on.
+        """
+        name = self.model_name.lower()
+        return self._patch is not None or "convnext" in name or "resnet" in name
+
+    def _model_input(self, image_rgb: np.ndarray) -> np.ndarray:
+        """Resize ``image_rgb`` to the input budget, keeping aspect where possible.
+
+        The budget is ``input_size²`` pixels. Where _keeps_aspect allows, both
+        sides are scaled to fit it and snapped to the patch size (32 for CNNs);
+        squashing to a square instead stretched non-square images (and their
+        grid cells) anisotropically, which measured worse on 2:1 images.
+        """
+        if not self._input_size:
+            return image_rgb
+        S = int(self._input_size)
+        if not self._keeps_aspect():
+            return cv2.resize(image_rgb, (S, S), interpolation=cv2.INTER_AREA)
+        H, W = image_rgb.shape[:2]
+        multiple = self._patch or 32
+        scale = S / np.sqrt(max(1, H * W))
+        h = max(multiple, int(round(H * scale / multiple)) * multiple)
+        w = max(multiple, int(round(W * scale / multiple)) * multiple)
+        return cv2.resize(image_rgb, (w, h), interpolation=cv2.INTER_AREA)
+
+    def _token_grid(self, model_input: np.ndarray, n_tokens: int) -> Optional[Tuple[int, int]]:
+        """Patch grid (h, w) for a token sequence, from the input size and patch.
+
+        Only when the processor's resize is disabled (an input size is set) and
+        the patch size is known; None otherwise, or when the token count leaves
+        an implausible number of special tokens.
+        """
+        if not self._input_size or not self._patch:
+            return None
+        h, w = model_input.shape[0] // self._patch, model_input.shape[1] // self._patch
+        return (h, w) if 0 <= n_tokens - h * w <= 8 else None
+
     @staticmethod
     def _split_vit_tokens(feat: np.ndarray) -> Tuple[np.ndarray, int, int]:
         """Drop leading special tokens and return (patch_tokens, grid_h, grid_w).
 
-        The HF image-feature-extraction pipeline resizes inputs to a fixed
-        square resolution, so the remaining patch tokens form a square grid.
+        For a square input (the HF pipeline's own resize, or a backbone that
+        does not keep aspect) the remaining patch tokens form a square grid.
         The only unknown is how many leading special tokens to drop:
           - 1: CLS only (ViT, DINOv2, CLIP/BioCLIP)
           - 5: CLS + 4 DINOv3 register tokens
@@ -296,20 +341,15 @@ class TransformerExtractor(BaseExtractor):
         Handles two output layouts the HF ``image-feature-extraction`` pipeline
         can emit:
           - **ViT token sequence** ``[T, C]`` (CLS/register tokens + patch grid)
-            → drop special tokens, reshape to the square patch grid.
+            → drop special tokens, reshape to the patch grid.
           - **CNN spatial map** ``[C, H, W]`` (ConvNext, ResNet) → transpose the
             channels-first map to ``[H, W, C]``.
         """
         try:
-            # Feed a fixed square at the requested resolution (the processor's
-            # own resize/crop was disabled in _configure_resolution). Larger
-            # input → larger/denser patch grid.
-            model_input = image_rgb
-            if self._input_size:
-                S = int(self._input_size)
-                model_input = cv2.resize(
-                    image_rgb, (S, S), interpolation=cv2.INTER_AREA
-                )
+            # Feed the requested input size (the processor's own resize/crop was
+            # disabled in _configure_resolution). Larger input → larger/denser
+            # patch grid.
+            model_input = self._model_input(image_rgb)
 
             with torch.inference_mode():
                 result = self._pipeline(Image.fromarray(model_input))
@@ -346,10 +386,15 @@ class TransformerExtractor(BaseExtractor):
                 h_patches, w_patches = feat.shape[0], feat.shape[1]
                 self._stride = max(1, round(image_rgb.shape[0] / h_patches))
             elif feat.ndim == 2:
-                # ViT token sequence [T, C]. The pipeline resizes inputs to a
-                # fixed square, so the patch grid is square; infer it from the
-                # token count (not image_rgb.shape).
-                feat, h_patches, w_patches = self._split_vit_tokens(feat)
+                # ViT token sequence [T, C]. With a known patch size the grid
+                # follows the (possibly non-square) model input; otherwise the
+                # input was square, so infer the grid from the token count.
+                grid = self._token_grid(model_input, feat.shape[0])
+                if grid is not None:
+                    h_patches, w_patches = grid
+                    feat = feat[feat.shape[0] - h_patches * w_patches:]
+                else:
+                    feat, h_patches, w_patches = self._split_vit_tokens(feat)
                 feat = feat.reshape(h_patches, w_patches, -1)
                 self._stride = max(1, round(image_rgb.shape[0] / h_patches))
             else:
@@ -1028,8 +1073,9 @@ class FeatureExtractor:
         Args:
             model_name: Model identifier (HF path, YOLO name, or "Color Features").
             device: Compute device ("cuda" or "cpu"). Auto-detected if None.
-            input_size: Optional square input edge (px) for dense transformer
-                extraction. Larger → denser feature grid. None = model default.
+            input_size: Optional input size (px) for dense transformer extraction,
+                as the edge of an equal-area square (DINO ViTs and CNNs keep the
+                image's aspect). Larger → denser feature grid. None = model default.
             upsample_factor: Optional AnyUp densification factor (2, 4, or 8)
                 applied to the native patch grid, capped at input_size.
         """

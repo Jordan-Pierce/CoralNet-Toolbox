@@ -973,8 +973,8 @@ class BatchInferenceDialog(QDialog):
         self.densify_reject_spin = QDoubleSpinBox()
         self.densify_reject_spin.setRange(0.0, 1.0)
         self.densify_reject_spin.setSingleStep(0.02)
-        self.densify_reject_spin.setValue(0.5)
-        self.densify_reject_spin.setToolTip("Pixels whose best similarity to any class is below this stay unlabeled.\nThe same reject threshold as the Feature Select tool's multi-class mode.")
+        self.densify_reject_spin.setValue(0.0)
+        self.densify_reject_spin.setToolTip("Pixels whose best similarity to any class is below this stay unlabeled.\n0 labels every pixel. The same reject threshold as the Feature Select tool's multi-class mode.")
         self._feature_form.addRow("Reject Threshold:", self.densify_reject_spin)
 
         self.densify_min_classes_spin = QSpinBox()

@@ -28,7 +28,8 @@ TRANSFORMER_MODELS = {
     'DINOv2 (Giant)': 'facebook/dinov2-giant',
     'DINOv2 (Giant ImageNet1k)': 'facebook/dinov2-giant-imagenet1k-1-layer',
     # DINOv2 with registers: extra register tokens absorb high-norm artifact
-    # patches, yielding cleaner dense similarity maps. Ungated.
+    # patches. Ungated. For label propagation it did NOT beat plain DINOv2
+    # (tied with many labels, worse from a few clicks), matching Raine et al.
     'DINOv2+reg (Small)': 'facebook/dinov2-with-registers-small',
     'DINOv2+reg (Base)': 'facebook/dinov2-with-registers-base',
     'DINOv2+reg (Large)': 'facebook/dinov2-with-registers-large',

@@ -92,7 +92,9 @@ class FeaturesDeployModelDialog(QDialog):
                 if model_supports_dense(model_id):
                     self.model_combo.addItem(display_name, model_id)
 
-        default_idx = self.model_combo.findText("DINOv2+reg (Small)")
+        # Plain DINOv2, not the registers variant: tied when many labels seed the
+        # classes, clearly better from a few clicks per class (mIoU 0.86 vs 0.76).
+        default_idx = self.model_combo.findText("DINOv2 (Small)")
         self.model_combo.setCurrentIndex(default_idx if default_idx >= 0 else 0)
         self.model_combo.setToolTip("Choose a dense-capable backbone for feature extraction.\nDINOv2: Fast, strong general-purpose features.\nOpenCLIP/TIMM: Specialized vision models.")
 
@@ -113,25 +115,30 @@ class FeaturesDeployModelDialog(QDialog):
         options_group = QGroupBox("Extraction Options")
         options_layout = QFormLayout()
 
-        # Input resolution: the square edge (px) the image is resized to before
-        # the backbone. Larger → denser feature grid (e.g. 768 → ~48×48 for /16)
-        # → finer detail on the mesh, at higher VRAM/time cost.
+        # Input resolution: the pixel budget (edge of the equal-area square) the
+        # image is resized to before the backbone. DINO ViTs and CNNs keep the
+        # image's aspect ratio within it; other backbones get the square. Larger
+        # → denser feature grid (e.g. 768 → ~54×54 for /14) → finer detail, at
+        # higher VRAM/time cost.
         self.resolution_combo = QComboBox()
         for px in (256, 384, 512, 768, 1024, 1536, 2560):
             self.resolution_combo.addItem(str(px), px)
         default_res_idx = self.resolution_combo.findText("768")
         self.resolution_combo.setCurrentIndex(default_res_idx if default_res_idx >= 0 else 0)
         self.resolution_combo.setToolTip(
-            "Square input edge in pixels. Larger gives a denser feature grid and "
-            "finer detail, but uses more VRAM/time (attention scales with tokens²)."
+            "Input size in pixels, as the edge of a square with the same area. DINOv2/v3 "
+            "and ConvNeXt keep the image's aspect ratio. Larger gives a denser feature "
+            "grid and finer detail, but uses more VRAM/time (attention scales with tokens²)."
         )
         options_layout.addRow("Input Resolution:", self.resolution_combo)
 
-        # AnyUp upsampling: densifies the patch grid (e.g. 48x48 -> 192x192 for
+        # AnyUp upsampling: densifies the patch grid (e.g. 54x54 -> 216x216 for
         # 4x) using the RGB image as guidance, capped at the input resolution.
+        # 4x measured best against ground-truth masks (mIoU 0.87 off, 0.95 2x,
+        # 0.97 4x on one dataset; a smaller gain on Coralscapes).
         self.upsample_combo = QComboBox()
         self.upsample_combo.addItems(["Off", "2x", "4x", "8x"])
-        self.upsample_combo.setCurrentText("2x")
+        self.upsample_combo.setCurrentText("4x")
         self.upsample_combo.setToolTip(
             "Densify the feature grid with AnyUp (https://github.com/wimmerth/anyup), "
             "using the RGB image as guidance. Capped at the input resolution. "
