@@ -181,6 +181,12 @@ class AnnotationItemDelegate(QtWidgets.QStyledItemDelegate):
         pix = self._tile_pixmap(ann, rect.size(), painter.device().devicePixelRatioF())
         if pix is not None:
             painter.drawPixmap(rect.topLeft(), pix)
+            # Patches mark their center point; other types draw nothing. Done
+            # while the rounded clip is still in place so no arm spills out.
+            try:
+                ann.paint_crop_center(painter, tile, cover=True)
+            except Exception:
+                pass
         if hovered and not selected:
             painter.fillRect(tile, QtGui.QColor(255, 255, 255, 28))
         painter.setClipping(False)

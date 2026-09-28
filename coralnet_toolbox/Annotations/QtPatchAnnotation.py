@@ -234,6 +234,78 @@ class PatchAnnotation(Annotation):
 
         return cropped_image_graphic
 
+    def paint_crop_center(self, painter, rect, cover=False):
+        """Draw the open-center crosshair marking this patch's center point.
+
+        A patch is defined by its center point, which is what makes it worth
+        marking on a crop -- the other annotation types are defined by their
+        outline, so they inherit the base no-op.
+
+        `rect` is where the crop was drawn. `cover` says it was scaled to cover
+        `rect` and center-cropped to it, as the gallery tiles are, rather than
+        fitted inside it like the ConfidenceWindow preview.
+        """
+        crop = self.cropped_image
+        if crop is None or crop.isNull() or self.center_xy is None:
+            return
+
+        extent = min(rect.width(), rect.height())
+        if extent < 24:  # Too small for the cross to read as one
+            return
+
+        fx, fy = self._crop_center_fraction()
+        if cover:
+            scale = max(rect.width() / crop.width(), rect.height() / crop.height())
+            cx = rect.center().x() + (fx - 0.5) * crop.width() * scale
+            cy = rect.center().y() + (fy - 0.5) * crop.height() * scale
+        else:
+            cx = rect.left() + fx * rect.width()
+            cy = rect.top() + fy * rect.height()
+
+        arm = max(3.0, extent * 0.09)
+        gap = max(1.5, extent * 0.0375)
+
+        path = QPainterPath()
+        path.moveTo(cx - gap - arm, cy)
+        path.lineTo(cx - gap, cy)
+        path.moveTo(cx + gap, cy)
+        path.lineTo(cx + gap + arm, cy)
+        path.moveTo(cx, cy - gap - arm)
+        path.lineTo(cx, cy - gap)
+        path.moveTo(cx, cy + gap)
+        path.lineTo(cx, cy + gap + arm)
+
+        painter.save()
+        painter.setBrush(Qt.NoBrush)
+        # Dark underlay first, so the white cross reads on a pale substrate too
+        underlay = QPen(QColor(0, 0, 0, 160), 3.0)
+        underlay.setCapStyle(Qt.RoundCap)
+        painter.setPen(underlay)
+        painter.drawPath(path)
+        painter.setPen(QPen(QColor(255, 255, 255), 1.5))
+        painter.drawPath(path)
+        painter.restore()
+
+    def _crop_center_fraction(self):
+        """Where center_xy falls inside cropped_image, as (fx, fy) in 0-1.
+
+        The crop window is cropped_bbox clamped to the image bounds, so a patch
+        near an edge is not centered in its own crop -- the crosshair needs the
+        offset, not the middle of the tile.
+        """
+        try:
+            crop = self.cropped_image
+            left = max(0.0, float(min(self.cropped_bbox[0], self.cropped_bbox[2])))
+            top = max(0.0, float(min(self.cropped_bbox[1], self.cropped_bbox[3])))
+            fx = (self.center_xy.x() - left) / crop.width()
+            fy = (self.center_xy.y() - top) / crop.height()
+            if not (0.0 <= fx <= 1.0 and 0.0 <= fy <= 1.0):
+                # bbox and crop disagree (stale bbox, odd window): fall back
+                return 0.5, 0.5
+            return fx, fy
+        except Exception:
+            return 0.5, 0.5
+
     def create_cropped_image(self, rasterio_src):
         """Create a cropped image from the rasterio source based on the annotation's bounding box."""
         # Clear cached graphic when creating new cropped image

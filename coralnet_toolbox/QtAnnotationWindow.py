@@ -2904,10 +2904,14 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
         # box of the visible region for any rotation angle.
         return self.mapToScene(self.viewport().rect()).boundingRect()
 
-    def animate_to_rect(self, target_rect: QRectF, duration: int = 500, max_zoom: float = 4.0):
+    def animate_to_rect(self, target_rect: QRectF, duration: int = 500, max_zoom: float = 4.0,
+                        keep_zoom: bool = False):
         """Smoothly animate the view center and zoom to fit `target_rect`.
 
         This avoids instant jumps and provides a brief inertia-like transition.
+        With `keep_zoom`, only the center moves: the caller is stepping through
+        annotations and refitting the zoom to each one is what the user is
+        trying to avoid.
         """
         if target_rect is None or target_rect.isNull():
             return
@@ -2930,6 +2934,9 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
             start_zoom = float(get_view_scale(self.transform()))
         except Exception:
             start_zoom = 1.0
+
+        if keep_zoom:
+            desired_zoom = start_zoom
 
         # Prepare animator object and animations
         animator = ViewAnimator(self)
@@ -2989,8 +2996,8 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
         # Smoothly animate the view to the work area
         self.animate_to_rect(work_area_rect)
 
-    def center_on_annotation(self, annotation):
-        """Center the view on the specified annotation."""
+    def center_on_annotation(self, annotation, keep_zoom=False):
+        """Center the view on the specified annotation, optionally at the current zoom."""
         # Create graphics item if it doesn't exist
         if not annotation.graphics_item:
             annotation.create_graphics_item(self.scene)
@@ -3000,7 +3007,7 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
         annotation_center = annotation_rect.center()
 
         # Smoothly animate the view to the annotation
-        self.animate_to_rect(annotation_rect)
+        self.animate_to_rect(annotation_rect, keep_zoom=keep_zoom)
     
     def center_and_zoom_on_annotation(self, annotation):
         """Center and zoom in to focus on the specified annotation with relaxed zoom and dynamic padding."""
@@ -3110,7 +3117,9 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
                 self.select_annotation(annotations[new_index])
                 ann = annotations[new_index]
                 if use_animation:
-                    self.center_on_annotation(ann)
+                    # Hold the user's zoom: refitting it per annotation makes a
+                    # run of patches jump between scales (issue #454)
+                    self.center_on_annotation(ann, keep_zoom=True)
                 else:
                     # Fast cycling: snap instantly without animation
                     if ann.center_xy:
