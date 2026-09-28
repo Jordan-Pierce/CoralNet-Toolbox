@@ -47,6 +47,13 @@ PREDICT_CONFIDENCE_FLOOR = 0.05
 # Ctrl+wheel moves the threshold this far per notch; Ctrl+Shift+wheel, the finer step.
 THRESHOLD_STEP = 0.05
 THRESHOLD_FINE_STEP = 0.01
+# At or below this, wheel steps drop to THRESHOLD_FINE_STEP even without Shift, so
+# values near zero stay reachable one notch at a time instead of overshooting.
+THRESHOLD_FINE_CUTOFF = 0.10
+
+# The wheel cannot push the threshold down to 0.00 -- that turns off confidence
+# filtering entirely, so it is deliberate enough to require setting manually.
+THRESHOLD_WHEEL_FLOOR = 0.01
 
 # A right-button press and release closer than this (in screen pixels) is a click.
 # Right-drag pans and Ctrl+right-drag rotates the canvas, and the annotation
@@ -291,7 +298,7 @@ class SeeAnythingTool(Tool):
         self.hover_pos = None
         super().leave()
 
-    def report_state(self):
+    def status_hint(self):
         """Say what Space and Backspace will do from here.
 
         Space means several different things depending on the state -- create
@@ -299,9 +306,6 @@ class SeeAnythingTool(Tool):
         Where a third option exists (drawing more reference boxes to widen the
         same prediction) it is named too, because nothing on screen suggests it.
         """
-        if not self.active:
-            return
-
         session = self._session()
         session_note = ""
         if session is not None and not session.is_empty():
@@ -354,7 +358,7 @@ class SeeAnythingTool(Tool):
             message = ("Draw a box around an example, or Ctrl+T for a text prompt"
                        "  |  Backspace or Space: close the work area")
 
-        self.main_window.status_bar.showMessage(message, 6000)
+        return message
 
     def _sam_enabled(self):
         """True when the dialog is set to refine detections with SAM."""
@@ -785,7 +789,11 @@ class SeeAnythingTool(Tool):
 
         The annotation window routes Ctrl+wheel here instead of zooming. The
         threshold changed is the global one, so the value that works here is the
-        one the Generator runs with.
+        one the Generator runs with. Below THRESHOLD_FINE_CUTOFF the step drops
+        to THRESHOLD_FINE_STEP even without Shift, since the normal step would
+        overshoot the values that matter near zero. The wheel bottoms out at
+        THRESHOLD_WHEEL_FLOOR rather than 0.00, which turns filtering off and so
+        must be set deliberately, not scrolled past.
         """
         if not event.modifiers() & Qt.ControlModifier:
             return
@@ -794,7 +802,8 @@ class SeeAnythingTool(Tool):
         delta = event.angleDelta().y() or event.angleDelta().x()
         if not delta:
             return
-        step = THRESHOLD_FINE_STEP if event.modifiers() & Qt.ShiftModifier else THRESHOLD_STEP
+        near_zero = self._threshold() <= THRESHOLD_FINE_CUTOFF
+        step = THRESHOLD_FINE_STEP if (event.modifiers() & Qt.ShiftModifier or near_zero) else THRESHOLD_STEP
         self.nudge_threshold(step if delta > 0 else -step)
         event.accept()
 
@@ -1342,10 +1351,14 @@ class SeeAnythingTool(Tool):
             float: The threshold now in force.
         """
         current = self._threshold()
-        new = round(min(1.0, max(0.0, current + delta)), 2)
+        new = round(min(1.0, max(THRESHOLD_WHEEL_FLOOR, current + delta)), 2)
         if new == round(current, 2):
-            self.main_window.status_bar.showMessage(
-                f"Confidence threshold is already {new:.2f}.", 2000)
+            if current <= THRESHOLD_WHEEL_FLOOR and delta < 0:
+                self.main_window.status_bar.showMessage(
+                    "Confidence threshold can't go lower by wheel; set 0.00 manually.", 2000)
+            else:
+                self.main_window.status_bar.showMessage(
+                    f"Confidence threshold is already {new:.2f}.", 2000)
             return current
 
         self.main_window.update_uncertainty_thresh(new)

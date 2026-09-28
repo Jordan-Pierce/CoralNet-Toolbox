@@ -83,6 +83,7 @@ class CutSubTool(SubTool):
         if not self.drawing_in_progress:
             self._start_drawing_cut_line(position)
             self.last_click_point = position
+            self.parent_tool.report_state()
         else:
             if self.ctrl_pressed and self.last_click_point:
                 # Add a straight segment from last_click_point to position
@@ -91,6 +92,7 @@ class CutSubTool(SubTool):
                 # Continue drawing (don't finish yet)
             else:
                 self._finish_and_perform_cut()
+                self.parent_tool.report_state()
 
     def mouseMoveEvent(self, event):
         """Handle mouse move events to update the cut line."""
@@ -113,11 +115,13 @@ class CutSubTool(SubTool):
         # Check for Ctrl+X to toggle cutting mode off
         if event.modifiers() & Qt.ControlModifier and event.key() == Qt.Key_X:
             self.parent_tool.deactivate_subtool()
+            self.parent_tool.report_state()
             return
-            
+
         # Handle Backspace to clear the current cutting line but stay in cutting mode
         if event.key() == Qt.Key_Backspace:
             self._clear_cutting_line()
+            self.parent_tool.report_state()
             return
 
         if event.key() == Qt.Key_Control:

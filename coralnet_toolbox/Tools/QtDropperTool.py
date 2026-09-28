@@ -25,6 +25,9 @@ class DropperTool(Tool):
         # Set a specific cursor for this tool
         self.cursor = Qt.CrossCursor
 
+    def status_hint(self):
+        return "Left click a mask pixel to select its label"
+
     def mousePressEvent(self, event):
         """Handles left-click to pick the label at the cursor position."""
         if event.button() != Qt.LeftButton:

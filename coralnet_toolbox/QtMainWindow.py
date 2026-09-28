@@ -972,14 +972,18 @@ class MainWindow(QMainWindow):
                     "• A SAM predictor must be deployed first."),
             
             "see_anything": ("See Anything (YOLOE) Tool\n\n"
-                             "Uses YOLOE to detect / segments objects of interest based on visual prompts.\n"
+                             "Uses YOLOE to detect / segment objects of interest based on visual or text prompts.\n"
                              "• Left-click to create a working area, then click again to confirm.\n"
                              "\t• Or, press Spacebar to create a working area for the current view.\n"
-                             "• Draw rectangles inside the working area to guide detection.\n"
-                             "• Press Spacebar to generate detections using drawn rectangles.\n"
+                             "• Draw rectangles inside the working area to guide detection, or Ctrl+T for a text prompt.\n"
+                             "• Press Spacebar to generate detections from drawn rectangles or the prompt session.\n"
+                             "• Ctrl+Left-click a detection to add it as a positive example (more like this).\n"
+                             "• Ctrl+Right-click a detection to remove it and add it as a negative example (fewer like this).\n"
+                             "• Ctrl+Shift+Right-click a detection to drop / restore it (hold Ctrl+Shift to reveal dropped ones).\n"
+                             "• Ctrl+Mouse Wheel adjusts the confidence threshold (add Shift for finer steps).\n"
                              "• Press Spacebar again to confirm annotations or apply SAM refinement.\n"
                              "• Press Backspace to cancel current operation or clear annotations.\n"
-                             "• Uncertainty can be adjusted in Parameters section.\n"
+                             "• Ctrl+Shift+Backspace clears the whole prompt session.\n"
                              "• A See Anything (YOLOE) predictor must be deployed first."),
 
             "feature_select": ("Feature Select Tool\n\n"
@@ -1001,6 +1005,8 @@ class MainWindow(QMainWindow):
                                 "• A yellow crosshair suggests the most informative next point to\n"
                                 "  label; it updates after each click (or press N to refresh).\n"
                                 "• Space finalizes: creates a Polygon/Mask annotation; Backspace clears.\n"
+                                "• Shift+Space finalizes to the Mask and deletes the patches it agrees\n"
+                                "  with (same label at the patch center), so the mask fills them in.\n"
                                 "• A Feature model must be deployed first.\n"),
             
             "work_area": ("Work Area Tool\n\n"
@@ -1009,7 +1015,6 @@ class MainWindow(QMainWindow):
                           "\t• Or, press Spacebar to create a work area from the current view.\n"
                           "• Hold Ctrl+Shift to show delete buttons for existing work areas.\n"
                           "• Press Ctrl+Shift+Backspace to clear all work areas.\n"
-                          "• Hold Ctrl+Alt to temporarily view a work area of the current view.\n"
                           "• Work areas can be used with Tile Batch Inference and other batch operations.\n"
                           "• All work areas are automatically saved with the image in a Project (JSON) file."),
 

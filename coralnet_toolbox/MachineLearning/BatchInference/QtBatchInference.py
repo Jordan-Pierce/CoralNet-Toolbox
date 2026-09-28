@@ -10,8 +10,8 @@ import cv2
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QMutex, QMutexLocker
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QVBoxLayout,
                              QLabel, QDialog, QDialogButtonBox, QGroupBox,
-                             QFormLayout, QComboBox, QHBoxLayout,
-                             QSpinBox, QPushButton, QTabWidget, QWidget)
+                             QFormLayout, QComboBox, QHBoxLayout, QSpinBox,
+                             QDoubleSpinBox, QPushButton, QTabWidget, QWidget)
 
 from coralnet_toolbox.Icons import get_icon, get_window_icon
 from coralnet_toolbox.Common import ThresholdsWidget
@@ -654,7 +654,7 @@ class BatchInferenceDialog(QDialog):
 
         self.layout = QVBoxLayout(self)
 
-        # Short, lightweight intro line (no heavyweight group box).
+        # Information box; its text follows the selected model (_update_info_text).
         self.setup_info_layout()
 
         # Two-tab layout: "Settings" holds the model/source-dependent controls
@@ -805,15 +805,56 @@ class BatchInferenceDialog(QDialog):
         except Exception:
             pass
 
+    # What each task does, shown under the intro in the Information box. Feature
+    # is keyed by its action, since Extract and Densify do different things.
+    TASK_INFO = {
+        "Classify": "Classify predicts labels for the patch annotations on the selected rasters.",
+        "Detect": "Detect adds bounding box predictions to the selected rasters.",
+        "Segment": "Segment adds polygon predictions to the selected rasters.",
+        "Semantic": "Semantic predicts a class for every pixel of the selected rasters.",
+        "SAM": "SAM segments every object it finds in the selected rasters.",
+        "See Anything": "See Anything finds objects like your reference examples in the selected rasters.",
+        "Extract Feature Maps": "Feature extracts a dense feature map for each selected raster and "
+                                "caches it on disk.",
+        "Densify Patches": "Feature densifies each raster's existing labels into its mask. Patches, "
+                           "polygons and mask classes seed a feature map, and every pixel gets "
+                           "the class it most resembles; Review patches are ignored. Standard "
+                           "uses the whole image. Tiled uses only each raster's work areas, at "
+                           "full input resolution, and skips rasters without any. Orthomosaics "
+                           "require Tiled.",
+    }
+
     def setup_info_layout(self):
         """
-        Set up a single-line intro label (no group box) to keep the dialog compact.
+        Set up the Information group box at the top of the dialog.
         """
-        info_label = QLabel("Perform batch inferencing on the selected rasters.\nSelect images via right-click in the Image window.")
-        info_label.setOpenExternalLinks(True)
-        info_label.setWordWrap(True)
-        info_label.setToolTip("Run a deployed model on multiple selected images to generate automatic predictions.\nResults can be saved directly to the project.")
-        self.layout.addWidget(info_label)
+        group_box = QGroupBox("Information")
+        layout = QVBoxLayout()
+        self.info_label = QLabel()
+        self.info_label.setWordWrap(True)
+        # Top-aligned: the label reserves room for its longest text (see
+        # _reserve_stable_height), so shorter texts shouldn't float mid-box.
+        self.info_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self.info_label.setToolTip("Run a deployed model on multiple selected images to generate automatic predictions.\nResults can be saved directly to the project.")
+        layout.addWidget(self.info_label)
+        group_box.setLayout(layout)
+        self.layout.addWidget(group_box)
+        self._update_info_text()
+
+    def _info_text(self, task=None):
+        """The intro, plus the line describing ``task`` (a TASK_INFO key)."""
+        text = ("Perform batch inferencing on the selected rasters. "
+                "Select images via right-click in the Image window.")
+        if task in self.TASK_INFO:
+            text += "\n\n" + self.TASK_INFO[task]
+        return text
+
+    def _update_info_text(self):
+        """Show the intro plus a line describing the selected model's task."""
+        task = getattr(self, 'current_selected_model', None)
+        if task == "Feature" and hasattr(self, 'feature_action_combo'):
+            task = self.feature_action_combo.currentText()
+        self.info_label.setText(self._info_text(task))
 
     def setup_options_layout(self):
         """
@@ -833,7 +874,7 @@ class BatchInferenceDialog(QDialog):
         self.inference_type_combo.addItem("Standard")
         self.inference_type_combo.addItem("Tiled")
         self.inference_type_combo.currentTextChanged.connect(self.on_inference_type_changed)
-        self.inference_type_combo.setToolTip("Standard: Run inference on full images.\nTiled: Split images into tiles for better handling of large images or GPU memory constraints.")
+        self.inference_type_combo.setToolTip("Standard: Run inference on full images.\nTiled: Run inference on each raster's work areas only (e.g. a tile grid from the\nWork Area Manager); rasters without work areas are skipped.")
         form_layout.addRow("Type:", self.inference_type_combo)
 
         # Save annotations (moved out of Video Options so editable for non-video runs)
@@ -867,6 +908,7 @@ class BatchInferenceDialog(QDialog):
         self.batch_size_spin_label = form_layout.labelForField(self.batch_size_spin)
 
         group_box.setLayout(form_layout)
+        self.options_group = group_box
         self.settings_layout.addWidget(group_box)
 
     def setup_thresholds_layout(self):
@@ -917,6 +959,48 @@ class BatchInferenceDialog(QDialog):
         group_box.setLayout(layout)
         self.task_specific_group = group_box
         self.settings_layout.addWidget(group_box)
+
+        # --- Feature options: extract feature maps, or densify labels into masks ---
+        feature_box = QGroupBox("Feature Options")
+        self._feature_form = QFormLayout()
+
+        self.feature_action_combo = QComboBox()
+        self.feature_action_combo.addItems(["Extract Feature Maps", "Densify Patches"])
+        self.feature_action_combo.setToolTip("Extract Feature Maps: cache a dense feature map for each raster.\nDensify Patches: fill each raster's mask from its existing labels.")
+        self.feature_action_combo.currentTextChanged.connect(self._on_feature_action_changed)
+        self._feature_form.addRow("Action:", self.feature_action_combo)
+
+        self.densify_reject_spin = QDoubleSpinBox()
+        self.densify_reject_spin.setRange(0.0, 1.0)
+        self.densify_reject_spin.setSingleStep(0.02)
+        self.densify_reject_spin.setValue(0.5)
+        self.densify_reject_spin.setToolTip("Pixels whose best similarity to any class is below this stay unlabeled.\nThe same reject threshold as the Feature Select tool's multi-class mode.")
+        self._feature_form.addRow("Reject Threshold:", self.densify_reject_spin)
+
+        self.densify_min_classes_spin = QSpinBox()
+        self.densify_min_classes_spin.setRange(1, 99)
+        self.densify_min_classes_spin.setValue(2)
+        self.densify_min_classes_spin.setToolTip("Skip rasters whose labels seed fewer classes than this.\nWith one class, every pixel above the reject threshold gets that class.")
+        self._feature_form.addRow("Minimum Classes:", self.densify_min_classes_spin)
+
+        self.densify_fill_combo = QComboBox()
+        self.densify_fill_combo.addItems(["True", "False"])
+        self.densify_fill_combo.setCurrentText("True")
+        self.densify_fill_combo.setToolTip("True: keep the pixels each mask already labels.\nFalse: overwrite them with the prediction.")
+        self._feature_form.addRow("Only Fill Unlabeled Pixels:", self.densify_fill_combo)
+
+        self.densify_replace_combo = QComboBox()
+        self.densify_replace_combo.addItems(["True", "False"])
+        self.densify_replace_combo.setCurrentText("False")
+        self.densify_replace_combo.setToolTip("True: delete each patch whose label the new mask holds at its center,\nso the mask fills it in. Batch runs cannot be undone.")
+        self._feature_form.addRow("Replace Matching Patches:", self.densify_replace_combo)
+
+        self._densify_widgets = [self.densify_reject_spin, self.densify_min_classes_spin,
+                                 self.densify_fill_combo, self.densify_replace_combo]
+
+        feature_box.setLayout(self._feature_form)
+        self.feature_group = feature_box
+        self.settings_layout.addWidget(feature_box)
 
         # --- Video-specific options (Start / End / Stride) ---
         video_box = QGroupBox("Video Options")
@@ -1167,33 +1251,94 @@ class BatchInferenceDialog(QDialog):
             self.task_specific_group.setVisible(is_classify)
             self.task_specific_group.setEnabled(is_classify)
 
+        # --- Feature block: the densify rows only apply to Densify Patches ---
+        if hasattr(self, 'feature_group'):
+            self.feature_group.setVisible(model == "Feature")
+            densify = self.feature_action_combo.currentText() == "Densify Patches"
+            for widget in self._densify_widgets:
+                self._set_row_visible(widget, densify)
+
+        if hasattr(self, 'info_label'):
+            self._update_info_text()
+
         # --- Save Annotations / Batch Size: hidden for models that ignore them ---
         # Feature manages its own output; Classify writes directly, so the
         # worker-oriented controls don't apply to them.
         wants_worker_opts = model in ("Detect", "Segment", "Semantic", "SAM", "See Anything")
         if hasattr(self, 'save_annotations_combo'):
-            self.save_annotations_combo.setVisible(wants_worker_opts)
-            if getattr(self, 'save_annotations_combo_label', None):
-                self.save_annotations_combo_label.setVisible(wants_worker_opts)
+            self._set_row_visible(self.save_annotations_combo, wants_worker_opts)
         if hasattr(self, 'batch_size_spin'):
-            self.batch_size_spin.setVisible(wants_worker_opts)
-            if getattr(self, 'batch_size_spin_label', None):
-                self.batch_size_spin_label.setVisible(wants_worker_opts)
+            self._set_row_visible(self.batch_size_spin, wants_worker_opts)
 
         # --- Video block: only when at least one highlighted raster is video ---
         has_video = self._highlighted_has_video()
         if hasattr(self, 'video_group'):
             self.video_group.setVisible(has_video)
 
-        # --- Type combo: tiling only applies to image rasters on tiling models.
+        # --- Type combo: tiling only applies to image rasters on tiling models
+        # (Feature tiles only to densify, over each raster's work areas).
         # VideoRaster has no "Tiled" option, so force Standard and grey it out.
-        model_supports_tiling = model not in ("Classify", "Feature")
+        densify = model == "Feature" and self.get_densify_options() is not None
+        model_supports_tiling = model not in ("Classify", "Feature") or densify
         type_enabled = model_supports_tiling and not has_video
         if hasattr(self, 'inference_type_combo'):
             if not type_enabled and self.inference_type_combo.currentText() != "Standard":
                 self.inference_type_combo.setCurrentText("Standard")
             self.inference_type_combo.setEnabled(type_enabled)
-    
+
+    @staticmethod
+    def _set_row_visible(widget, visible):
+        """Show or hide a form row: the field and its label."""
+        widget.setVisible(visible)
+        label = widget.parentWidget().layout().labelForField(widget)
+        if label is not None:
+            label.setVisible(visible)
+
+    def _reserve_stable_height(self):
+        """Reserve room for the tallest task so switching models keeps one height.
+
+        Sections, rows and the Information text are shown per model, so the
+        dialog's natural height used to jump with every switch. Measure each
+        task's layout with all of its rows shown (and every Information text),
+        keep the tallest as minimum heights, then restore the real visibility.
+        Video Options follow the source rather than the task, so they only count
+        while a video is selected.
+        """
+        def height_of(group):
+            group.ensurePolished()
+            group.layout().invalidate()
+            return group.sizeHint().height()
+
+        worker_rows = (self.save_annotations_combo, self.batch_size_spin)
+        for widget in (*worker_rows, *self._densify_widgets):
+            self._set_row_visible(widget, True)
+        options_full = height_of(self.options_group)
+        feature_full = height_of(self.feature_group)
+        for widget in worker_rows:
+            self._set_row_visible(widget, False)
+        options_base = height_of(self.options_group)
+        classify = height_of(self.task_specific_group)
+        video = height_of(self.video_group)
+        self._update_visible_sections()
+
+        # Worker models show every Options row; Classify / Feature drop two of
+        # them but add their own group below.
+        spacing = self.settings_layout.spacing()
+        margins = self.settings_layout.contentsMargins()
+        height = max(options_full, options_base + spacing + max(classify, feature_full))
+        if self._highlighted_has_video():
+            height += spacing + video
+        self.settings_tab.setMinimumHeight(height + margins.top() + margins.bottom())
+
+        # The Information text wraps, so measure every variant at the current width.
+        width = self.info_label.width()
+        info_heights = []
+        for task in (None, *self.TASK_INFO):
+            self.info_label.setText(self._info_text(task))
+            info_heights.append(self.info_label.heightForWidth(width))
+        self._update_info_text()
+        self.info_label.setMinimumHeight(max(info_heights))
+
     def on_inference_type_changed(self, inference_type):
         """
         Handle inference type change and update the annotation window tool accordingly.
@@ -1431,6 +1576,9 @@ class BatchInferenceDialog(QDialog):
 
             # Source changed → re-evaluate which sections apply (e.g. Video).
             self._update_visible_sections()
+            # Also runs on show (showEvent calls this), once widths are real.
+            if self.isVisible():
+                self._reserve_stable_height()
         except Exception:
             # Swallow errors to avoid noisy exceptions from signal handlers
             pass
@@ -1454,6 +1602,65 @@ class BatchInferenceDialog(QDialog):
         """Keep the Review/All annotation dropdowns mutually exclusive."""
         if text == "True" and self.review_combo.currentText() == "True":
             self.review_combo.setCurrentText("False")
+
+    def _on_feature_action_changed(self, text):
+        """Show the densify rows (and matching info) only for Densify Patches."""
+        self._update_visible_sections()
+
+    def get_densify_options(self):
+        """Densify settings when the Feature action is Densify Patches, else None."""
+        if self.feature_action_combo.currentText() != "Densify Patches":
+            return None
+        return {
+            "reject": self.densify_reject_spin.value(),
+            "min_classes": self.densify_min_classes_spin.value(),
+            "fill_unlabeled_only": self.densify_fill_combo.currentText() == "True",
+            "replace_patches": self.densify_replace_combo.currentText() == "True",
+        }
+
+    def _confirm_tiled_work_areas(self):
+        """Tiled runs only on work areas, so warn before rasters without any are skipped."""
+        if self.inference_type_combo.currentText() != "Tiled":
+            return True
+        paths = self.get_selected_image_paths()
+        raster_manager = getattr(self.image_window, 'raster_manager', None)
+        rasters = [raster_manager.get_raster(p) for p in paths] if raster_manager else []
+        missing = sum(1 for raster in rasters if raster is None or not raster.has_work_areas())
+        if not missing:
+            return True
+        if missing == len(paths):
+            QMessageBox.warning(
+                self,
+                "No Work Areas",
+                "Tiled runs only on work areas, and none of the selected rasters have any.\n\n"
+                "Create work areas (for example a tile grid with the Work Area Manager) "
+                "or set Type to Standard.",
+            )
+            return False
+        reply = QMessageBox.question(
+            self,
+            "Missing Work Areas",
+            f"{missing} of {len(paths)} selected raster(s) have no work areas and will be "
+            "skipped.\n\nContinue?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        return reply == QMessageBox.Yes
+
+    def _confirm_patch_replacement(self):
+        """Batch edits can't be undone, so confirm before densify deletes patches."""
+        options = self.get_densify_options() if self.current_selected_model == "Feature" else None
+        if not options or not options["replace_patches"]:
+            return True
+        reply = QMessageBox.question(
+            self,
+            "Replace Matching Patches",
+            f"Densify will delete the patches its mask agrees with on "
+            f"{len(self.highlighted_images)} raster(s).\n\nBatch runs cannot be undone. Continue?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        return reply == QMessageBox.Yes
 
     def _on_save_annotations_changed(self, text):
         """Handler for the Save Annotations combobox.
@@ -1531,6 +1738,8 @@ class BatchInferenceDialog(QDialog):
         """
         if not self.check_model_availability():
             QMessageBox.warning(self, "No Model", "Please load a model first.")
+            return
+        if not self._confirm_tiled_work_areas() or not self._confirm_patch_replacement():
             return
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -1636,7 +1845,7 @@ class BatchInferenceDialog(QDialog):
         Handles three source types:
         - VideoRaster, Standard  → one item per frame (is_video=True)
         - Raster, Standard       → one item per image (file-path source)
-        - Raster, Tiled          → one item per WorkArea
+        - Raster, Tiled          → one item per WorkArea (none without work areas)
 
         VideoRaster tiled mode falls back to Standard (frame-by-frame, no tiles)
         because tile coordinates on video frames are not yet supported.
@@ -1977,6 +2186,8 @@ class BatchInferenceDialog(QDialog):
                             self.main_window.label_window,
                             mask_ann_map,
                             include_background=getattr(self, '_semantic_include_bg', False),
+                            excluded_class_names=getattr(
+                                self, '_semantic_excluded_class_names', None),
                         )
 
                         # Video frames: create a temporary MaskAnnotation to produce a colored QImage,

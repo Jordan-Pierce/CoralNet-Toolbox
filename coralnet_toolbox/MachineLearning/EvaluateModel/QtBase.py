@@ -2,6 +2,7 @@ import warnings
 
 import gc
 import datetime
+import traceback
 from pathlib import Path
 
 from torch.cuda import empty_cache
@@ -17,6 +18,7 @@ from PyQt5.QtWidgets import (QFileDialog, QMessageBox, QVBoxLayout,
 
 from coralnet_toolbox.MachineLearning.Callbacks import EvaluationSignalEmitter
 from coralnet_toolbox.MachineLearning.ConfusionMatrix import ConfusionMatrixMetrics
+from coralnet_toolbox.MachineLearning.RunLog import capture_run_log
 
 from coralnet_toolbox.Icons import get_icon, get_window_icon
 
@@ -60,7 +62,15 @@ class EvaluateModelWorker(QThread):
 
     def run(self):
         """
-        Run the evaluation process in a separate thread.
+        Run the evaluation process in a separate thread, saving its console output
+        to the save directory.
+        """
+        with capture_run_log(Path(self.params['save_dir']) / 'eval_log.txt'):
+            self._evaluate()
+
+    def _evaluate(self):
+        """
+        Run the evaluation process.
         """
         try:
             # Emit signal to indicate evaluation has started
@@ -95,14 +105,17 @@ class EvaluateModelWorker(QThread):
             metrics_dict = {}
             if hasattr(results, 'results_dict'):
                 metrics_dict = results.results_dict
+            if metrics_dict:
+                print(f"Evaluation Metrics: {metrics_dict}")
             self.eval_metrics.emit(metrics_dict)
 
             # Emit signal to indicate evaluation has completed
             self.evaluation_completed.emit()
 
         except Exception as e:
+            print(f"Error during evaluation: {e}\n\nTraceback:\n{traceback.format_exc()}")
             self.evaluation_error.emit(str(e))
-            
+
             
 class Base(QDialog):
     def __init__(self, main_window, parent=None):
@@ -351,7 +364,6 @@ class Base(QDialog):
 
     def on_evaluation_error(self, error_message):
         QMessageBox.critical(self, "Error", error_message)
-        print(error_message)
     
     def on_eval_status(self, message):
         """
@@ -374,5 +386,3 @@ class Base(QDialog):
         # Update MainWindow status bar with completion message
         if hasattr(self, 'main_window') and hasattr(self.main_window, 'statusBar'):
             self.main_window.statusBar().showMessage("Evaluation completed successfully", 5000)
-        if metrics_dict:
-            print(f"Evaluation Metrics: {metrics_dict}")

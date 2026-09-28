@@ -114,17 +114,14 @@ class SAMTool(Tool):
         self.sync_settings_from_dialog()
         self.report_state()
 
-    def report_state(self):
+    def status_hint(self):
         """Say what Space and Backspace will do from here, and what else is on offer.
 
         Space means three different things depending on the state -- create the
         work area, commit the preview, or close the work area -- and nothing on
         screen says which. Where extra prompts can still be added, that is named
-        too. Mirrors SeeAnythingTool.report_state so the two tools read alike.
+        too. Mirrors SeeAnythingTool.status_hint so the two tools read alike.
         """
-        if not self.active:
-            return
-
         if self.creating_working_area:
             message = "Space: finish the work area  |  Backspace: cancel it"
         elif not self.working_area:
@@ -152,7 +149,7 @@ class SAMTool(Tool):
                        "Left click once to start a box, drag, left click to end  |  "
                        "Space: close the work area")
 
-        self.main_window.status_bar.showMessage(message, 6000)
+        return message
 
     def update_transparency(self, value):
         """Update the transparency of the unconfirmed hover preview.

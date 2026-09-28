@@ -22,6 +22,15 @@ class EraseTool(BrushTool):
         super().__init__(annotation_window)
         # Note: Erase tool uses the exact same 'self.painting' flag from BrushTool to track the stroke.
 
+    STROKE_VERB = "erase"
+
+    def status_hint(self):
+        """The brush hint, plus clearing the whole mask."""
+        message = super().status_hint()
+        if not self.painting:
+            message += "  |  Ctrl+Backspace: clear the mask"
+        return message
+
     def keyPressEvent(self, event):
         """Handles key press events, toggle shape with Ctrl+Shift, clear with Ctrl+Delete/Backspace."""
         modifiers = event.modifiers()

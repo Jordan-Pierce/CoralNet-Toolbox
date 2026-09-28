@@ -13,6 +13,9 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 class Tool:
+    # How long a usage hint stays on the status bar.
+    STATUS_HINT_MSECS = 6000
+
     def __init__(self, annotation_window):
         self.annotation_window = annotation_window
         self.main_window = annotation_window.main_window
@@ -51,6 +54,34 @@ class Tool:
     def activate(self):
         self.active = True
         self.annotation_window.setCursor(self.cursor)
+        self.report_state()
+
+    def status_hint(self):
+        """Say what the mouse and keys do from the tool's current state.
+
+        Returns one line in the form "Action: effect  |  Action: effect", or
+        None to leave the status bar alone. Subclasses override this; the
+        toolbar tooltip holds the full reference, this holds what applies now.
+        """
+        return None
+
+    def report_state(self):
+        """Put status_hint() on the status bar.
+
+        Called on activation and wherever the tool changes state, so the hint
+        always describes what the next click or key press will do. Callers that
+        just showed an outcome message (an error, a count) should not call this
+        straight after, or the hint will replace it.
+        """
+        if not self.active:
+            return
+        message = self.status_hint()
+        if not message:
+            return
+        try:
+            self.main_window.status_bar.showMessage(message, self.STATUS_HINT_MSECS)
+        except Exception:
+            pass
 
     def deactivate(self):
         self._cursor_update_timer.stop()

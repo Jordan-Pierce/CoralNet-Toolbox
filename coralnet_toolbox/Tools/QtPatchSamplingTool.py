@@ -15,6 +15,7 @@ from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
+from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
 
 from coralnet_toolbox.WorkArea import WorkArea
 from coralnet_toolbox.Common.QtMarginInput import MarginInput
@@ -193,7 +194,7 @@ class PatchSamplingDialog(QDialog):
 
     def setup_propagation_exclusion_layout(self):
         """Set up the propagation and exclusion options configuration."""
-        group_box = QGroupBox("Propagation & Exclusion")
+        group_box = QGroupBox("Propagation and Exclusion")
         layout = QFormLayout()
 
         # Sample Label
@@ -211,7 +212,7 @@ class PatchSamplingDialog(QDialog):
         self.propagate_labels_combo.setCurrentIndex(0)
         self.propagate_labels_combo.currentIndexChanged.connect(self.preview_annotations)
         self.propagate_labels_combo.currentIndexChanged.connect(self.on_propagate_labels_changed)
-        self.propagate_labels_combo.setToolTip("Copy the label to all highlighted rows.")
+        self.propagate_labels_combo.setToolTip("Patches sampled on existing annotations will inherit the label it lands on.")
         layout.addRow("Propagate Labels:", self.propagate_labels_combo)
 
         # Exclude Regions
@@ -220,7 +221,9 @@ class PatchSamplingDialog(QDialog):
         self.exclude_regions_combo.setCurrentIndex(0)
         self.exclude_regions_combo.currentIndexChanged.connect(self.preview_annotations)
         self.exclude_regions_combo.currentIndexChanged.connect(self.on_exclude_regions_changed)
-        self.exclude_regions_combo.setToolTip("Avoid sampling over existing annotations.\nPrevents overlap with already-labeled regions.")
+        self.exclude_regions_combo.setToolTip("Avoid sampling over existing annotations.\n"
+                                              "Prevents overlap with already-labeled regions, "
+                                              "including labeled mask pixels.")
         layout.addRow("Avoid Annotations:", self.exclude_regions_combo)
 
         group_box.setLayout(layout)
@@ -366,9 +369,51 @@ class PatchSamplingDialog(QDialog):
             self.propagate_labels_combo.setDisabled(False)
         self.preview_annotations()
 
-    def sample_annotations(self, method, num_annotations, annotation_size, 
-                           margins, image_width, image_height, exclude_regions=False, exclude_polygons=None):
-        """Sample annotations using the specified method, optionally excluding regions."""
+    # Vector shapes a sampled patch can inherit its label from. Patches are left
+    # out: an existing point's square footprint is not a region of its class.
+    REGION_TYPES = (PolygonAnnotation, RectangleAnnotation, MultiPolygonAnnotation)
+
+    def _existing_mask(self, image_path):
+        """The image's MaskAnnotation if it already has one (never creates it), else None."""
+        raster = self.image_window.raster_manager.get_raster(image_path)
+        return getattr(raster, 'mask_annotation', None)
+
+    def _region_label_lookup(self, image_path):
+        """Return ``label_at(point)``: the label of the region under ``point`` on ``image_path``.
+
+        Reads that image's own mask (from its raster, never creating one) and its
+        own vector regions, so preview and commit, and every highlighted image,
+        propagate the same way. The mask is checked first; masks and vectors
+        never overlap. ``label_at`` returns None where no region is hit.
+        """
+        mask = self._existing_mask(image_path)
+        regions = [a for a in self.annotation_window.get_image_annotations(image_path)
+                   if isinstance(a, self.REGION_TYPES)]
+
+        def label_at(point):
+            if mask is not None:
+                # Strip the LOCK_BIT so locked and unlocked pixels read alike.
+                class_id = int(mask.get_class_at_point(point)) & (mask.LOCK_BIT - 1)
+                label = mask.class_id_to_label_map.get(class_id) if class_id else None
+                if label is not None:
+                    return label
+            # The painter path honors holes and every MultiPolygon island.
+            for ann in regions:
+                if ann.get_cached_painter_path().contains(point):
+                    return ann.label
+            return None
+
+        return label_at
+
+    def sample_annotations(self, method, num_annotations, annotation_size,
+                           margins, image_width, image_height, exclude_regions=False, exclude_polygons=None,
+                           exclude_mask=None):
+        """Sample annotations using the specified method, optionally excluding regions.
+
+        With ``exclude_regions``, a patch is rejected if its square overlaps any
+        of ``exclude_polygons`` or any labeled pixel of ``exclude_mask`` (the
+        image's MaskAnnotation, or None).
+        """
         if not margins:
             return []
 
@@ -393,6 +438,19 @@ class PatchSamplingDialog(QDialog):
         polygons = []
         if exclude_regions and exclude_polygons:
             polygons = exclude_polygons
+        mask = exclude_mask if exclude_regions else None
+
+        def blocked(x, y):
+            """Whether the patch square at (x, y) overlaps an excluded polygon or mask class."""
+            if polygons and rect_overlaps_any_polygon(x, y, annotation_size, polygons):
+                return True
+            if mask is not None:
+                x, y = int(x), int(y)
+                window = mask.mask_data[y:y + annotation_size, x:x + annotation_size]
+                # Strip the LOCK_BIT: the locked, empty pixels under vector
+                # annotations are not mask content (the polygons cover those).
+                return bool((window & (mask.LOCK_BIT - 1)).any())
+            return False
 
         if method == "Random":
             min_spacing = annotation_size // 2
@@ -414,7 +472,7 @@ class PatchSamplingDialog(QDialog):
                 current = candidates[idx]
                 x, y = current
                 # Exclude if overlaps any polygon
-                if polygons and rect_overlaps_any_polygon(x, y, annotation_size, polygons):
+                if blocked(x, y):
                     # Remove this candidate and continue
                     remaining_indices = remaining_indices[remaining_indices != idx]
                     continue
@@ -434,7 +492,7 @@ class PatchSamplingDialog(QDialog):
                 while needed > 0 and tries < 10 * needed:
                     x = np.random.randint(x_min, x_max + 1)
                     y = np.random.randint(y_min, y_max + 1)
-                    if polygons and rect_overlaps_any_polygon(x, y, annotation_size, polygons):
+                    if blocked(x, y):
                         tries += 1
                         continue
                     annotations.append((x, y, annotation_size))
@@ -465,7 +523,7 @@ class PatchSamplingDialog(QDialog):
                     y = max(top, min(y, image_height - annotation_size - bottom))
 
                     # Exclude if overlaps any polygon
-                    if polygons and rect_overlaps_any_polygon(x, y, annotation_size, polygons):
+                    if blocked(x, y):
                         continue
 
                     annotations.append((x, y, annotation_size))
@@ -518,12 +576,14 @@ class PatchSamplingDialog(QDialog):
                                                                 image_rect=self.annotation_window.get_image_rect())
         self.annotation_graphics.append(margin_graphics)
     
-        # Prepare polygons to exclude if needed
+        # Prepare polygons (and the mask) to exclude if needed
         polygons = []
+        exclude_mask = None
         if exclude_regions:
             # Get all annotation polygons for the current image
             image_annotations = self.annotation_window.get_image_annotations()
             polygons = [a.get_polygon() for a in image_annotations]
+            exclude_mask = self._existing_mask(self.annotation_window.current_image_path)
 
         # Sample new annotations
         self.sampled_annotations = self.sample_annotations(
@@ -534,27 +594,17 @@ class PatchSamplingDialog(QDialog):
             image_width,
             image_height,
             exclude_regions=exclude_regions,
-            exclude_polygons=polygons
+            exclude_polygons=polygons,
+            exclude_mask=exclude_mask
         )
     
         # Create graphics for each annotation, using propagated label if needed
-        image_annotations = self.annotation_window.get_image_annotations()
+        label_at = (self._region_label_lookup(self.annotation_window.current_image_path)
+                    if propagate else None)
         for x, y, size in self.sampled_annotations:
-            if propagate:
-                center = QPointF(x + size / 2, y + size / 2)
-                # find annotation whose polygon contains the center
-                found = next(
-                    (
-                        a for a in image_annotations
-                        if a.get_polygon().containsPoint(center, Qt.OddEvenFill) and
-                        (isinstance(a, PolygonAnnotation) or isinstance(a, RectangleAnnotation))
-                    ),
-                    None
-                )
-                used_label = found.label if found else sample_label
-            else:
-                used_label = sample_label
-                
+            found = label_at(QPointF(x + size // 2, y + size // 2)) if label_at else None
+            used_label = found if found is not None else sample_label
+
             # --- Pass the color AND the short label code ---
             graphic = PatchGraphic(x, y, size, used_label.color, used_label.short_label_code)
             # -----------------------------------------------
@@ -639,12 +689,14 @@ class PatchSamplingDialog(QDialog):
                 # Validate margins for each image
                 margins = self.margin_input.get_margins(width, height)
                 
-                # Prepare polygons to exclude if needed
+                # Prepare polygons (and the mask) to exclude if needed
                 polygons = []
+                exclude_mask = None
                 if exclude_regions:
                     # Get all annotation polygons for this image
                     image_annotations = self.annotation_window.get_image_annotations(image_path)
                     polygons = [a.get_polygon() for a in image_annotations]
+                    exclude_mask = self._existing_mask(image_path)
 
                 # Sample the annotations given params
                 annotations_coords = self.sample_annotations(method,
@@ -654,41 +706,19 @@ class PatchSamplingDialog(QDialog):
                                                              width,
                                                              height,
                                                              exclude_regions=exclude_regions,
-                                                             exclude_polygons=polygons)
+                                                             exclude_polygons=polygons,
+                                                             exclude_mask=exclude_mask)
 
+                # Propagate from THIS image's mask and regions, not the one on screen.
+                label_at = self._region_label_lookup(image_path) if propagate else None
                 for x, y, size in annotations_coords:
-                    # Determine label based on propagation
-                    used_label = sample_label  # Default to the selected sample label
-                    if propagate:
-                        center = QPointF(x + size // 2, y + size // 2)
-                        
-                        # First, check the MaskAnnotation for label propagation 
-                        # (since masks and vectors don't overlap, this is safe)
-                        mask_annotation = self.annotation_window.current_mask_annotation
-                        if mask_annotation and image_path == mask_annotation.image_path:
-                            class_id = mask_annotation.get_class_at_point(center)
-                            if class_id > 0:  # Valid class ID (not background)
-                                mask_label = mask_annotation.class_id_to_label_map.get(class_id)
-                                if mask_label:
-                                    used_label = mask_label
-                        # Note: No need to check vectors here if mask provided a label, as they don't overlap
-                        
-                        # If no mask label (or no mask), check vector annotations
-                        if used_label == sample_label:  # Only check vectors if mask didn't provide a label
-                            existing = self.annotation_window.get_image_annotations(image_path)
-                            found = next(
-                                (
-                                    a for a in existing
-                                    if a.get_polygon().containsPoint(center, Qt.OddEvenFill)
-                                ),
-                                None
-                            )
-                            if found:
-                                used_label = found.label
-        
+                    center = QPointF(x + size // 2, y + size // 2)
+                    found = label_at(center) if label_at else None
+                    used_label = found if found is not None else sample_label
+
                     # Create the annotation with the determined label
                     new_annotation = PatchAnnotation(
-                        QPointF(x + size // 2, y + size // 2),
+                        center,
                         size,
                         used_label,
                         image_path,
@@ -861,6 +891,14 @@ class PatchSamplingTool(Tool):
                 # Finish drawing
                 self.end_point = scene_pos
                 self._finalize_rectangle()
+            self.report_state()
+
+    def status_hint(self):
+        """Say whether the next click starts or ends the sampling area."""
+        if self.is_drawing:
+            return "Left click to finish the sampling area"
+        return ("Left click, move, left click to draw the sampling area"
+                "  |  It sets the margins in the dialog")
 
     def mouseMoveEvent(self, event: QMouseEvent):
         """Handle mouse move - update rectangle preview and crosshair"""

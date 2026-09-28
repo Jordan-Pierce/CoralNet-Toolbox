@@ -287,7 +287,8 @@ class Classify(Base):
 
             # Create a result processor
             results_processor = ResultsProcessor(self.main_window,
-                                                 self.class_mapping)
+                                                 self.class_mapping,
+                                                 excluded_class_names=self.excluded_class_names)
 
             # Process the classification results using the valid inputs
             # Pass the progress_bar parameter to avoid creating nested progress bars
@@ -339,11 +340,11 @@ class Classify(Base):
                     out = backend(im)
                 # Classification head output is already softmaxed (sums to 1).
                 probs = (out[0] if isinstance(out, (list, tuple)) else out)[0]
-                probs = probs.detach().float().cpu()
                 names = model.names
-                topk = min(5, probs.numel())
-                confs, idxs = probs.topk(topk)
-                return [(names[int(i)], float(c)) for c, i in zip(confs, idxs)]
+                # Same ranking the batch path uses, so live predictions leave
+                # out the same classes.
+                top_k = ResultsProcessor.top_k_probs(probs, names, self.excluded_class_names)
+                return [(names[i], c) for i, c in top_k]
         except Exception as e:
             print(f"Fast patch inference failed, falling back to high-level API: {e}")
 
@@ -356,8 +357,8 @@ class Classify(Base):
                             verbose=False)
             for r in results:
                 names = r.names
-                return [(names[int(i)], float(c))
-                        for i, c in zip(r.probs.top5, r.probs.top5conf)]
+                top_k = ResultsProcessor.top_k_probs(r.probs.data, names, self.excluded_class_names)
+                return [(names[i], c) for i, c in top_k]
         except Exception as e:
             print(f"Patch inference failed: {e}")
         return []

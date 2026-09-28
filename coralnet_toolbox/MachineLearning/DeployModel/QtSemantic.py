@@ -33,11 +33,17 @@ warnings.filterwarnings("ignore", category=UserWarning)
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-def _reconstruct_semantic_mask(results, model_class_names, label_window, mask_annotation_map, include_background=False):
+def _reconstruct_semantic_mask(results, model_class_names, label_window, mask_annotation_map, include_background=False,
+                               excluded_class_names=None):
     """
     Converts an Ultralytics Results object (instance format) back into a
     single semantic mask (H, W) with internal class IDs.
+
+    Pixels of a class in ``excluded_class_names`` are left unlabeled. They are
+    not handed to the next most likely class: only the winning class per pixel
+    reaches here, so there is no runner-up to give them to.
     """
+    excluded_class_names = excluded_class_names or ()
     # Prefer using a dense semantic mask if the model produced one
     if hasattr(results, 'semantic_mask') and results.semantic_mask is not None:
         sem = results.semantic_mask.data
@@ -67,6 +73,8 @@ def _reconstruct_semantic_mask(results, model_class_names, label_window, mask_an
 
             # Optionally ignore background class
             if not include_background and model_class_name.lower() == 'background':
+                continue
+            if model_class_name in excluded_class_names:
                 continue
 
             # Map model class to project label
@@ -103,6 +111,8 @@ def _reconstruct_semantic_mask(results, model_class_names, label_window, mask_an
 
         # Optionally ignore background class
         if not include_background and model_class_name.lower() == 'background':
+            continue
+        if model_class_name in excluded_class_names:
             continue
 
         label_obj = label_window.get_label_by_short_code(model_class_name, return_review=False)
@@ -229,7 +239,47 @@ class Semantic(Base):
         # widget may not exist on the first call.
         if hasattr(self, 'thresholds_widget'):
             self.thresholds_widget.set_area_enabled(vectorizing)
-    
+
+        self._sync_background_row()
+
+    def _background_class_name(self):
+        """The model's background class name as the model spells it, or None."""
+        return next((name for name in self.class_names if name.lower() == 'background'), None)
+
+    def _sync_background_row(self):
+        """Give the background row the Options checkbox's state, ticked and enabled.
+
+        The ticked state is copied here as well as on toggle because
+        _sync_semantic_prediction_options clears the Options checkbox with its
+        signals blocked. Ticking the row while auto-vectorize is on would switch
+        auto-vectorize off behind the user's back, so the row is locked
+        whenever the Options checkbox is.
+        """
+        background = self._background_class_name()
+        if background is None or not hasattr(self, 'predict_background_checkbox'):
+            return
+        self.set_class_included(background, self.predict_background_checkbox.isChecked())
+        checkbox = self.class_checkboxes.get(background)
+        if checkbox is not None:
+            checkbox.setEnabled(self.predict_background_checkbox.isEnabled())
+
+    def on_class_filter_changed(self, class_name, included):
+        """Mirror the background row onto the Options background checkbox.
+
+        The background row and that checkbox are one setting shown twice; the
+        other direction goes through _sync_semantic_prediction_options.
+        """
+        if (class_name == self._background_class_name()
+                and self.predict_background_checkbox.isChecked() != included):
+            self.predict_background_checkbox.setChecked(included)
+
+    def check_and_display_class_names(self, warn_missing=True):
+        """Build the labels table with the background row matching the Options checkbox."""
+        # Before the build too, so the row's checkbox is created in the right state
+        self._sync_background_row()
+        super().check_and_display_class_names(warn_missing=warn_missing)
+        self._sync_background_row()
+
     def setup_sam_layout(self):
         pass
 
@@ -499,6 +549,7 @@ class Semantic(Base):
                         getattr(self, 'predict_background_checkbox', None) is not None
                         and self.predict_background_checkbox.isChecked()
                     )
+                    excluded_class_names = set(self.excluded_class_names)
                     # Iterate in chunks of BATCH_SIZE to maximise GPU utilisation
                     for batch_start in range(0, len(work_items_data), self.BATCH_SIZE):
                         batch_data  = work_items_data[batch_start:batch_start + self.BATCH_SIZE]
@@ -529,6 +580,7 @@ class Semantic(Base):
                                 self.main_window.label_window,
                                 mask_annotation_map,
                                 include_background=include_bg,
+                                excluded_class_names=excluded_class_names,
                             )
 
                             # --- 3d. Update Main Annotation (streaming, per tile) ---

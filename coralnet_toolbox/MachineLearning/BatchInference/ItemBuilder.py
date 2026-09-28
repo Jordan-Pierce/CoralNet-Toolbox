@@ -12,16 +12,6 @@ def make_video_frame_path(video_path: str, frame_idx: int) -> str:
     return f"{video_path}::frame_{frame_idx}"
 
 
-def _has_work_areas(raster) -> bool:
-    has_work_areas = getattr(raster, "has_work_areas", None)
-    if callable(has_work_areas):
-        try:
-            return bool(has_work_areas())
-        except Exception:
-            return False
-    return bool(getattr(raster, "work_areas", None))
-
-
 def _get_work_areas(raster) -> list:
     get_work_areas = getattr(raster, "get_work_areas", None)
     if callable(get_work_areas):
@@ -89,7 +79,9 @@ def build_inference_items(image_paths: Iterable[str], raster_manager, inference_
                         source_kind=InferenceSourceKind.VIDEO_FRAME,
                     ))
 
-            elif use_tiles and _has_work_areas(raster):
+            elif use_tiles:
+                # Tiled runs only on work areas: a raster without any is skipped,
+                # not run whole (the dialog warns before the run starts).
                 for work_area in _get_work_areas(raster):
                     items.append(InferenceItem(
                         batch_key=image_path,

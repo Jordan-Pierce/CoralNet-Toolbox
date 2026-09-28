@@ -286,6 +286,8 @@ class ScaleTool(Tool):
 
         self.dialog.show()
         self.dialog.activateWindow()
+        # Again, now the measurement from last time has been reset.
+        self.report_state()
 
     def deactivate(self):
         if not self.active:
@@ -322,6 +324,17 @@ class ScaleTool(Tool):
                 self.end_point = scene_pos
                 self.is_drawing = False
                 self.calculate_scale()
+            self.report_state()
+
+    def status_hint(self):
+        """Say whether the next click starts or ends the measuring line."""
+        if self.is_drawing:
+            return "Left click to end the line  |  Backspace: cancel it"
+        if self.calculated_scale_value is not None:
+            return ("Set the known length in the dialog, then Apply"
+                    "  |  Left click to draw a new line"
+                    "  |  Backspace: clear it")
+        return "Left click, move, left click to draw a line across a known distance"
 
     def mouseMoveEvent(self, event: QMouseEvent):
         """Handle mouse move for drawing."""
@@ -351,6 +364,7 @@ class ScaleTool(Tool):
         if event.key() == Qt.Key_Backspace:
             self.stop_current_drawing()
             self.dialog.reset_fields()
+            self.report_state()
 
     def load_existing_scale(self):
         """Loads and displays existing scale data."""

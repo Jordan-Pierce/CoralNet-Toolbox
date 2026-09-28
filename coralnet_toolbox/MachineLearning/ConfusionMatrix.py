@@ -1,6 +1,8 @@
 import numpy as np
-import matplotlib.pyplot as plt
 import seaborn as sns
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.figure import Figure
+from matplotlib.patches import Rectangle
 from matplotlib.ticker import FuncFormatter
 import os
 import ujson as json
@@ -215,7 +217,15 @@ class ConfusionMatrixMetrics:
 
         # Dynamically adjust figure size based on number of classes but maintain square shape
         figsize = (8 + (self.num_classes // 2), 8 + (self.num_classes // 2))
-        plt.figure(figsize=figsize)
+
+        # A bare Agg figure, not pyplot: this runs on the training / evaluation QThread,
+        # and inside the app pyplot resolves to the QtAgg backend, so plt.figure() built
+        # a Qt window, toolbar and canvas off the GUI thread. That stalled a run here
+        # indefinitely. Agg never touches Qt, and the figure is never registered with
+        # pyplot, so there is nothing to close afterwards.
+        fig = Figure(figsize=figsize)
+        FigureCanvasAgg(fig)
+        ax = fig.add_subplot()
 
         def format_value(x):
             """Format values with K, M suffix for thousands and millions"""
@@ -236,28 +246,30 @@ class ConfusionMatrixMetrics:
                 annot[i, j] = format_value(cm[i, j])
 
         # Create the heatmap
-        ax = sns.heatmap(cm,
-                         annot=annot,
-                         fmt='',  # Empty format string as we're using custom annotations
-                         cmap='Blues',
-                         xticklabels=self.class_mapping.values(),
-                         yticklabels=self.class_mapping.values(),
-                         square=True,
-                         cbar_kws={'format': FuncFormatter(lambda x, p: format_value(x))})
+        sns.heatmap(cm,
+                    ax=ax,
+                    annot=annot,
+                    fmt='',  # Empty format string as we're using custom annotations
+                    cmap='Blues',
+                    xticklabels=self.class_mapping.values(),
+                    yticklabels=self.class_mapping.values(),
+                    square=True,
+                    cbar_kws={'format': FuncFormatter(lambda x, p: format_value(x))})
 
         # Highlight the diagonal squares with green perimeters
         for i in range(self.num_classes):
-            ax.add_patch(plt.Rectangle((i, i), 1, 1, fill=False, edgecolor='lightblue', lw=2))
+            ax.add_patch(Rectangle((i, i), 1, 1, fill=False, edgecolor='lightblue', lw=2))
 
-        plt.title(title)
-        plt.ylabel('True label')
-        plt.xlabel('Predicted label')
-        plt.xticks(rotation=45, ha='right')
-        plt.yticks(rotation=0)
+        ax.set_title(title)
+        ax.set_ylabel('True label')
+        ax.set_xlabel('Predicted label')
+        for label in ax.get_xticklabels():
+            label.set_rotation(45)
+            label.set_horizontalalignment('right')
+        ax.tick_params(axis='y', labelrotation=0)
 
         file_path = os.path.join(directory, filename)
-        plt.savefig(file_path, bbox_inches='tight')
-        plt.close()
+        fig.savefig(file_path, bbox_inches='tight')
 
     def save_normalized_confusion_matrix_png(self, directory, filename="cm_normalized.png"):
         """

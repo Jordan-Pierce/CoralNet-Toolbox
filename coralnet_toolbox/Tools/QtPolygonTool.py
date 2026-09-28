@@ -27,6 +27,15 @@ class PolygonTool(Tool):
     def activate(self):
         self.active = True
         self.annotation_window.setCursor(self.cursor)
+        self.report_state()
+
+    def status_hint(self):
+        """Say whether the next click starts or closes the polygon."""
+        if self.drawing_continuous:
+            return ("Move to trace, left click to close the polygon"
+                    "  |  Hold Ctrl and left click for straight segments"
+                    "  |  Backspace: cancel it")
+        return "Left click to start a polygon, then move to trace its outline"
 
     def deactivate(self):
         self.active = False
@@ -55,6 +64,7 @@ class PolygonTool(Tool):
             self.points.append(scene_pos)
             self.last_click_point = scene_pos
             self.create_cursor_annotation(scene_pos)
+            self.report_state()
         elif event.button() == Qt.LeftButton and self.drawing_continuous:
             scene_pos = self.annotation_window.mapToScene(event.pos())
             if self.ctrl_pressed and self.last_click_point:
@@ -70,6 +80,7 @@ class PolygonTool(Tool):
                 self.annotation_window.add_annotation_from_tool(annotation)
                 self.drawing_continuous = False
                 self.clear_cursor_annotation()
+                self.report_state()
         elif event.button() == Qt.RightButton and self.drawing_continuous:
             pass
         else:
@@ -96,6 +107,7 @@ class PolygonTool(Tool):
         """Handles key press events for canceling annotation or toggling straight line mode."""
         if event.key() == Qt.Key_Backspace:
             self.cancel_annotation()
+            self.report_state()
         elif event.key() == Qt.Key_Control:
             # Check if drawing is active and if Ctrl wasn't already pressed
             if self.drawing_continuous and not self.ctrl_pressed:

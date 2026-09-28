@@ -458,7 +458,11 @@ class Segment(Base):
         """
         Apply the model to the inputs.
         """
+        # Unticked classes are dropped inside the model call, before NMS: with
+        # agnostic NMS a box of an excluded class could otherwise suppress an
+        # overlapping box of a kept one, and still count against max_det.
         results_generator = self.loaded_model(inputs,
+                                              classes=self.allowed_class_ids(),
                                               agnostic_nms=True,
                                               conf=self.thresholds_widget.get_uncertainty_thresh(),
                                               iou=self.thresholds_widget.get_iou_thresh(),

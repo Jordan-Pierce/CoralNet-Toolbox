@@ -40,6 +40,18 @@ class PatchTool(Tool):
     def activate(self):
         self.active = True
         self.annotation_window.setCursor(self.cursor)
+        self.report_state()
+
+    def status_hint(self):
+        """Say how to place patches, and whether live classification is on."""
+        if self.live_classify_mode:
+            return ("Live classification on: hover to see the model's prediction"
+                    "  |  Left click to place a patch with it"
+                    "  |  Ctrl+wheel: patch size"
+                    "  |  Ctrl+1: turn live classification off")
+        return ("Left click to place a patch"
+                "  |  Ctrl+wheel: patch size"
+                "  |  Ctrl+1: turn live classification on")
 
     def deactivate(self):
         if self.live_classify_mode:
@@ -260,15 +272,13 @@ class PatchTool(Tool):
 
         if self.live_classify_mode:
             self._exit_live_classify()
-            main_window.status_bar.showMessage(
-                "Live classification mode disabled.", 4000)
         else:
             self.live_classify_mode = True
             self._last_prediction = None
             # Drop any plain cursor so the next move rebuilds a hydrated live one.
             self.clear_cursor_annotation()
-            main_window.status_bar.showMessage(
-                "Live classification mode enabled (Ctrl+1 to toggle).", 4000)
+        # The hint names the mode, so it doubles as the on/off confirmation.
+        self.report_state()
 
     def _exit_live_classify(self):
         """Clean up live classification state."""

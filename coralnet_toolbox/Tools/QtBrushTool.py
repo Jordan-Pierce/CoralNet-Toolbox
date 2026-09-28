@@ -228,6 +228,19 @@ class BrushTool(Tool):
             self._apply_brush(event)
         else:
             self._finish_stroke()
+        self.report_state()
+
+    # Verb the status hint uses for a stroke; EraseTool says "erase".
+    STROKE_VERB = "paint"
+
+    def status_hint(self):
+        """Say whether a stroke is running and how to size or reshape the brush."""
+        if self.painting:
+            return f"Move to {self.STROKE_VERB}, left click to stop  |  Ctrl+wheel: brush size"
+        other_shape = 'square' if self.shape == 'circle' else 'circle'
+        return (f"Left click to start, move to {self.STROKE_VERB}, left click again to stop"
+                "  |  Ctrl+wheel: brush size"
+                f"  |  Ctrl+Shift: {other_shape} brush")
 
     def mouseMoveEvent(self, event):
         super().mouseMoveEvent(event)
@@ -267,6 +280,7 @@ class BrushTool(Tool):
 
         if self.cursor_annotation:
             self.update_cursor_annotation(scene_pos)
+        self.report_state()
 
     def set_brush_size(self, size, propagate: bool = True):
         """Set brush diameter (in image pixels) and mirror it to the sibling tool.

@@ -9,7 +9,7 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (QFileDialog, QVBoxLayout, QPushButton, QLabel, QLineEdit,
                              QDialog, QApplication, QMessageBox, QGroupBox,
                              QHBoxLayout, QFormLayout, QComboBox, QSpinBox, QSlider,
-                             QStyle, QTabWidget, QWidget, QCheckBox)
+                             QStyle, QTabWidget, QWidget)
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Icons import get_window_icon
 
@@ -190,6 +190,7 @@ class ImportFrames(QDialog):
         controls_layout.addWidget(self.create_import_group())
         controls_layout.addWidget(self.create_output_group())
         controls_layout.addWidget(self.create_sample_group())
+        controls_layout.addWidget(self.create_annotations_group())
         controls_layout.addLayout(self.create_buttons_layout())
 
         main_layout.addLayout(controls_layout)
@@ -387,6 +388,26 @@ class ImportFrames(QDialog):
         group_box.setLayout(layout)
         return group_box
 
+    def create_annotations_group(self):
+        group_box = QGroupBox("Annotations")
+        layout = QFormLayout()
+
+        # Include-annotations option. When True, annotations on the source
+        # video frames are re-created on the newly imported still images during
+        # "Extract and Import". Only available in video-raster mode (launched from
+        # the ImageWindow context menu); when launched from the MainWindow menu
+        # there is no source raster, so the option is disabled.
+        self.include_annotations_combo = QComboBox()
+        self.include_annotations_combo.addItems(["True", "False"])
+        in_video_mode = self.video_raster is not None
+        self.include_annotations_combo.setCurrentText("True" if in_video_mode else "False")
+        self.include_annotations_combo.setEnabled(in_video_mode)
+        self.include_annotations_combo.setToolTip("If True, annotations from the source video will be copied to the extracted frames.\nAvailable only when extracting from an existing video with annotations.")
+        layout.addRow("Include Annotations:", self.include_annotations_combo)
+
+        group_box.setLayout(layout)
+        return group_box
+
     def on_tab_changed(self, index):
         if index == 0:
             self.current_tab = "range"
@@ -402,20 +423,6 @@ class ImportFrames(QDialog):
 
     def create_buttons_layout(self):
         buttons_layout = QVBoxLayout()
-
-        # Include-annotations option. When checked, annotations on the source
-        # video frames are re-created on the newly imported still images during
-        # "Extract and Import". Only available in video-raster mode (launched from
-        # the ImageWindow context menu); when launched from the MainWindow menu
-        # there is no source raster, so the option is disabled and greyed out.
-        self.include_annotations_checkbox = QCheckBox(
-            "Include annotations (re-create on imported frames)"
-        )
-        in_video_mode = self.video_raster is not None
-        self.include_annotations_checkbox.setChecked(in_video_mode)
-        self.include_annotations_checkbox.setEnabled(in_video_mode)
-        self.include_annotations_checkbox.setToolTip("If checked, annotations from the source video will be copied to the extracted frames.\nAvailable only when extracting from an existing video with annotations.")
-        buttons_layout.addWidget(self.include_annotations_checkbox)
 
         action_buttons_layout = QHBoxLayout()
 
@@ -835,7 +842,7 @@ class ImportFrames(QDialog):
             # In video-raster mode, optionally re-create the source video-frame
             # annotations on the newly imported still images.
             if (self.video_raster is not None and
-                    self.include_annotations_checkbox.isChecked()):
+                    self.include_annotations_combo.currentText() == "True"):
                 QApplication.setOverrideCursor(Qt.WaitCursor)
                 try:
                     cloned_count = self._clone_annotations_to_frames(self.last_frame_indices)
