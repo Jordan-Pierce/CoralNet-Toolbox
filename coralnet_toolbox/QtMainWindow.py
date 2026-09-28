@@ -1005,6 +1005,8 @@ class MainWindow(QMainWindow):
                                 "• A yellow crosshair suggests the most informative next point to\n"
                                 "  label; it updates after each click (or press N to refresh).\n"
                                 "• Space finalizes: creates a Polygon/Mask annotation; Backspace clears.\n"
+                                "• Shift+Space finalizes to the Mask and deletes the patches it agrees\n"
+                                "  with (same label at the patch center), so the mask fills them in.\n"
                                 "• A Feature model must be deployed first.\n"),
             
             "work_area": ("Work Area Tool\n\n"
@@ -1013,7 +1015,6 @@ class MainWindow(QMainWindow):
                           "\t• Or, press Spacebar to create a work area from the current view.\n"
                           "• Hold Ctrl+Shift to show delete buttons for existing work areas.\n"
                           "• Press Ctrl+Shift+Backspace to clear all work areas.\n"
-                          "• Hold Ctrl+Alt to temporarily view a work area of the current view.\n"
                           "• Work areas can be used with Tile Batch Inference and other batch operations.\n"
                           "• All work areas are automatically saved with the image in a Project (JSON) file."),
 

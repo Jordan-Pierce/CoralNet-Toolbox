@@ -519,6 +519,135 @@ class FeatureBatchInferenceTask(BatchInferenceTask):
                 pass
 
 
+class FeatureDensifyBatchInferenceTask(BatchInferenceTask):
+    """Densify each image's existing labels into its mask over a dense feature map.
+
+    Per image raster: extract features for the whole image, seed per-class
+    prototypes from its annotations and mask, classify every pixel, and write
+    the classes into the image's MaskAnnotation (see LabelPropagation, which the
+    Feature Select tool's multi-class mode shares). Batch edits are not
+    undoable, so replacing patches is opt-in and confirmed by the dialog.
+    """
+
+    name = "Feature Densify"
+    progress_title = "Densifying Patches"
+
+    # Long edge (px) the label map is classified at before a nearest resize to
+    # full resolution; bounds the [classes, H, W] float stack on large rasters.
+    MAX_CLASSIFY_EDGE = 2048
+
+    def run(self, progress_bar: Any) -> bool:
+        extractor = getattr(self.model_dialog, "loaded_model", None)
+        if extractor is None or not getattr(extractor, "supports_dense", False):
+            return False
+        raster_manager = getattr(self.dialog.image_window, "raster_manager", None)
+        if raster_manager is None:
+            return False
+
+        options = self.dialog.get_densify_options()
+        annotation_window = self.dialog.annotation_window
+        densified, replaced, kept, skipped = [], [], 0, 0
+
+        progress_bar.set_title(f"Densifying patches on {len(self.image_paths)} image(s)...")
+        progress_bar.start_progress(len(self.image_paths))
+        try:
+            for image_path in self.image_paths:
+                if progress_bar.wasCanceled():
+                    break
+                try:
+                    raster = raster_manager.get_raster(image_path)
+                    # Image rasters only: video frames and orthomosaics are out of scope.
+                    result = None
+                    if raster is not None and getattr(raster, "raster_type", "") == "ImageRaster":
+                        result = self._densify_image(raster, extractor, options)
+                    if result is None:
+                        skipped += 1
+                        continue
+                    densified.append(image_path)
+                    replaced.extend(result[0])
+                    kept += len(result[1])
+                except Exception as e:
+                    print(f"Densify failed for {image_path}: {e}")
+                    skipped += 1
+                finally:
+                    progress_bar.update_progress()
+        finally:
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
+
+        # Deleted once at the end: delete_annotations refreshes the UI per call.
+        if replaced:
+            annotation_window.delete_annotations(replaced, record_action=False)
+        for image_path in densified:
+            self.dialog.image_window.update_image_annotations(image_path)
+        annotation_window.viewport().update()
+
+        message = f"Densified {len(densified)} image(s)"
+        if options["replace_patches"]:
+            message += f", replaced {len(replaced)} patch(es), kept {kept} that disagree"
+        if skipped:
+            message += f"; skipped {skipped} (not an image raster, or too few seeded classes)"
+        self.dialog.main_window.status_bar.showMessage(message + ".", 10000)
+        return True
+
+    def _densify_image(self, raster, extractor, options):
+        """Densify one raster into its mask; ``(replaced, kept)`` or None if skipped."""
+        import cv2
+        import numpy as np
+        from PyQt5.QtCore import QRectF
+        from coralnet_toolbox.utilities import work_area_to_numpy
+        from coralnet_toolbox.Features.LabelPropagation import (
+            build_query_engine, classify, iter_seeds, write_prediction,
+        )
+
+        annotation_window = self.dialog.annotation_window
+        annotations = list(annotation_window.get_image_annotations(raster.image_path))
+        if not annotations and raster.mask_annotation is None:
+            return None
+
+        height, width = raster.height, raster.width
+        image = work_area_to_numpy(raster.rasterio_src, QRectF(0, 0, width, height))
+        if image is None or image.size == 0:
+            return None
+        engine, grid_hw = build_query_engine(extractor.extract_dense(image))
+        rect = (0.0, 0.0, float(width), float(height))
+
+        prototypes = {}
+        for label, cells, _ in iter_seeds(annotations, rect, grid_hw, raster.mask_annotation):
+            prototypes.setdefault(label.id, set()).update(cells)
+        if len(prototypes) < options["min_classes"]:
+            return None
+
+        scale = min(1.0, self.MAX_CLASSIFY_EDGE / max(height, width))
+        out_hw = (max(1, round(height * scale)), max(1, round(width * scale)))
+        label_map, keys = classify(engine, {k: list(v) for k, v in prototypes.items()},
+                                   grid_hw, out_hw, options["reject"])
+        if label_map is None:
+            return None
+
+        mask_annotation = annotation_window._get_mask_annotation_for_bake(raster.image_path)
+        if mask_annotation is None:
+            return None
+        # label_map is -1 for unlabeled, so shift by one into a class-id lookup.
+        lut = np.zeros(len(keys) + 1, dtype=np.uint8)
+        for k, key in enumerate(keys):
+            lut[k + 1] = mask_annotation.label_id_to_class_id_map.get(key, 0)
+        prediction = lut[label_map + 1]
+        if out_hw != (height, width):
+            prediction = cv2.resize(prediction, (width, height), interpolation=cv2.INTER_NEAREST)
+        if options["fill_unlabeled_only"]:
+            prediction[(mask_annotation.mask_data % mask_annotation.LOCK_BIT) != 0] = 0
+        if not prediction.any():
+            return None
+
+        return write_prediction(mask_annotation, prediction, annotations, rect,
+                                replace_patches=options["replace_patches"])
+
+
 class SamBatchInferenceTask(AsyncYoloBatchInferenceTask):
     """SAM / FastSAM segment-everything generator routed through the worker.
 
@@ -726,4 +855,6 @@ _TASKS = {
 def make_batch_inference_task(selected_model: str, dialog: Any, model_dialog: Any,
                               image_paths: list[str]) -> BatchInferenceTask:
     task_cls = _TASKS.get(selected_model, BatchInferenceTask)
+    if task_cls is FeatureBatchInferenceTask and dialog.get_densify_options() is not None:
+        task_cls = FeatureDensifyBatchInferenceTask
     return task_cls(dialog, model_dialog, image_paths)
