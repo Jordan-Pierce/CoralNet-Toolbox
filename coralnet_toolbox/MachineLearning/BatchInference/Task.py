@@ -528,10 +528,9 @@ class FeatureDensifyBatchInferenceTask(BatchInferenceTask):
     Orthomosaics need Tiled, since a whole mosaic squeezed into one model input
     is far too coarse. Per raster, in three passes:
 
-      1. extract every region's features, accumulating image-wide channel
-         statistics and the feature vectors under each seed;
-      2. standardize with those statistics, score every region against the
-         image-wide class prototypes, and decide which patches to replace;
+      1. extract every region's features and the feature vectors under each seed;
+      2. score every region against the image-wide class prototypes (nearest
+         neighbour per class), and decide which patches to replace;
       3. classify every region and paint the pixels it owns into the mask.
 
     A pixel in several regions belongs to the one it sits most centrally in
@@ -669,8 +668,8 @@ class FeatureDensifyBatchInferenceTask(BatchInferenceTask):
         import numpy as np
         from coralnet_toolbox.Features.QueryEngine import QueryEngine
         from coralnet_toolbox.Features.LabelPropagation import (
-            ChannelStats, annotations_in, iter_owned_seeds, owned_mask, owner_of,
-            partition_patches, patches_where, standardize_features, write_prediction,
+            annotations_in, iter_owned_seeds, owned_mask, owner_of,
+            partition_patches, patches_where, write_prediction,
         )
 
         windows = [window for window, _ in regions]
@@ -682,8 +681,10 @@ class FeatureDensifyBatchInferenceTask(BatchInferenceTask):
             return None, "no annotations"
         local = [annotations_in(annotations, window) for window in windows]
 
-        # Pass 1: features, image-wide channel statistics, seed vectors.
-        stats, seeds, cache, grids, cached = ChannelStats(), {}, [], [], 0
+        # Pass 1: features and seed vectors. Features stay raw (L2-normalized,
+        # not standardized; see LabelPropagation.standardize_features), so every
+        # region already shares one feature space.
+        seeds, cache, grids, cached = {}, [], [], 0
         for t, window in enumerate(windows):
             if progress_bar.wasCanceled():
                 return None, "canceled"
@@ -691,7 +692,6 @@ class FeatureDensifyBatchInferenceTask(BatchInferenceTask):
                 features = self._extract(raster, window, extractor)
                 grids.append(features.shape[:2])
                 features = features.reshape(-1, features.shape[2])
-                stats.add(features)
                 for label, cells, _ in iter_owned_seeds(local[t], windows, t, grids[t],
                                                         raster.mask_annotation, self.MAX_SEED_CELLS):
                     seeds.setdefault(label.id, []).append(features[cells])
@@ -704,19 +704,17 @@ class FeatureDensifyBatchInferenceTask(BatchInferenceTask):
             progress_bar.advance_progress(len(windows))
             return None, f"fewer than {options['min_classes']} seeded classes"
 
-        # Image-wide prototypes, in the shared standardized space.
-        channel_stats = stats.result()
-        centroids = QueryEngine.balance_vectors(
-            {key: standardize_features(np.concatenate(v), channel_stats) for key, v in seeds.items()})
+        # Image-wide prototypes: every seed vector, each class capped on its own count.
+        prototypes = QueryEngine.cap_vectors({key: np.concatenate(v) for key, v in seeds.items()})
         mask_annotation = annotation_window._get_mask_annotation_for_bake(raster.image_path)
         if mask_annotation is None:
             progress_bar.advance_progress(len(windows))
             return None, "no mask available"
         label_to_class = mask_annotation.label_id_to_class_id_map
-        # Score row k is centroids' k-th class; label maps are -1 when unlabeled,
+        # Score row k is prototypes' k-th class; label maps are -1 when unlabeled,
         # so shift by one into a class-id lookup.
-        lut = np.zeros(len(centroids) + 1, dtype=np.uint8)
-        for k, key in enumerate(centroids):
+        lut = np.zeros(len(prototypes) + 1, dtype=np.uint8)
+        for k, key in enumerate(prototypes):
             lut[k + 1] = label_to_class.get(key, 0)
 
         # Pass 2: score every region, and decide replacements before anything is
@@ -731,9 +729,8 @@ class FeatureDensifyBatchInferenceTask(BatchInferenceTask):
                     features = self._extract(raster, window, extractor)
                     features = features.reshape(-1, features.shape[2])
                 cache[t] = None
-                engine = QueryEngine(standardize_features(features, channel_stats),
-                                     np.ones(features.shape[0], dtype=bool))
-                scores.append(engine.scores_from_centroids(centroids)[0].astype(np.float16))
+                engine = QueryEngine(features, np.ones(features.shape[0], dtype=bool))
+                scores.append(engine.scores_from_prototypes(prototypes)[0].astype(np.float16))
                 if options["replace_patches"]:
                     patches = patches_where(local[t], lambda x, y: owner_of(x, y, windows) == t)
                     if patches:

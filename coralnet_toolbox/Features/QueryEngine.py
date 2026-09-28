@@ -72,10 +72,6 @@ class QueryEngine:
         self.positive_ids = set()
         self.negative_ids = set()
 
-        # Memoized per-class k-means centroids, keyed by (k, prototype ids).
-        # Bounded and simply cleared when full — entries are cheap to rebuild.
-        self._proto_cache = {}
-
         # Which backend produced the cached similarity; see is_calibrated().
         self._calibrated = False
 
@@ -440,117 +436,52 @@ class QueryEngine:
 
         return selected_ids
 
-    # Upper bound on the number of centroids a class is summarized to in
-    # class_scores. The effective count is min(this, smallest class's size) —
-    # see _balance_prototypes for why every class must get the SAME count.
-    PROTOTYPE_BUDGET = 32
-    # Max memoized clusterings held by _balance_prototypes before the cache is
-    # dropped wholesale.
-    _PROTO_CACHE_MAX = 64
-
-    # Cap on the rows actually fed to Lloyd iterations. Prototype sets are highly
-    # redundant (a seeded polygon contributes thousands of adjacent cells), so a
-    # strided subsample lands on effectively the same centroids for a fraction of
-    # the cost — this runs on every hover refresh.
-    _KMEANS_MAX_POINTS = 512
+    # Most prototype vectors one class is scored against. Each class is capped
+    # on its OWN count, never down to the smallest class's: a seeded polygon or
+    # mask class can cover thousands of cells, and an evenly strided subsample
+    # bounds the [N, P] product without measurably changing the result.
+    #
+    # Classes used to be balanced down to the smallest class's count (k-means
+    # centroids), on the theory that a class holding more prototypes wins pixels
+    # on count alone. Measured against ground-truth masks that was the single
+    # largest error in the pipeline: with one sparse class every other class
+    # collapsed to a few averaged centroids, and mIoU fell from 0.95 to 0.58
+    # (Shoe, patch seeds) and from 0.69 to 0.44 (Coralscapes); with mask seeds
+    # it fell from 0.79 to 0.42. Plain nearest neighbour (k=1) wins everywhere.
+    PROTOTYPE_CAP = 512
 
     @classmethod
-    def _spherical_kmeans(cls, X: np.ndarray, k: int, iters: int = 10) -> np.ndarray:
-        """Summarize [P, D] L2-normalized rows into exactly ``k`` unit centroids.
+    def _capped(cls, rows):
+        """Evenly strided subsample of ``rows`` down to ``PROTOTYPE_CAP``."""
+        if len(rows) <= cls.PROTOTYPE_CAP:
+            return rows
+        return rows[np.linspace(0, len(rows) - 1, cls.PROTOTYPE_CAP).astype(np.int64)]
 
-        Deterministic: strided-subsampled to ``_KMEANS_MAX_POINTS``, initialized
-        from ``k`` evenly-strided rows (no RNG), then Lloyd iterations under
-        cosine distance with centroids re-normalized each round. Empty clusters
-        keep their previous centroid. Returns [k, D].
-        """
-        P = X.shape[0]
-        if k >= P:
-            return X
-        if P > cls._KMEANS_MAX_POINTS:
-            X = X[np.linspace(0, P - 1, cls._KMEANS_MAX_POINTS).astype(int)]
-            P = X.shape[0]
-        centroids = X[np.linspace(0, P - 1, k).astype(int)].copy()
-        for _ in range(iters):
-            assign = np.argmax(X @ centroids.T, axis=1)     # [P]
-            moved = False
-            for c in range(k):
-                members = X[assign == c]
-                if members.shape[0] == 0:
-                    continue
-                m = members.mean(axis=0)
-                n = np.linalg.norm(m)
-                if n > 1e-12:
-                    m = m / n
-                    if not np.allclose(m, centroids[c]):
-                        moved = True
-                    centroids[c] = m
-            if not moved:
-                break
-        return centroids
+    def _class_prototypes(self, prototypes_by_class):
+        """``{class_key: [P, D] float32}`` prototype vectors, each class capped alone.
 
-    def _balance_prototypes(self, prototypes_by_class):
-        """Reduce every class to the SAME number of representative vectors.
-
-        ``class_scores`` scores a class by the MAX cosine to any of its
-        prototypes, and the expected maximum of K draws grows with K — so a class
-        holding more prototypes wins pixels purely on count. That is not a
-        hypothetical: ``FeatureSelectTool._seed_prototypes_from_annotations``
-        gives a polygon every feature cell it covers (hundreds to thousands)
-        while a PatchAnnotation contributes exactly one, so a single seeded
-        polygon would otherwise take the whole work area regardless of content.
-
-        The fix is to give each class exactly ``k = min(PROTOTYPE_BUDGET,
-        smallest class size)`` vectors, so the order statistics — and therefore
-        the bias — are identical across classes. Classes above that count are
-        SUMMARIZED by spherical k-means rather than truncated, so a big polygon
-        keeps its coverage (and its noisy edge cells get averaged away) instead
-        of losing all but the first few cells.
-
-        Returns ``{class_key: [k, D] float32}`` in the input's key order,
-        skipping classes whose ids are all out of range.
+        Ids are de-duplicated and sorted (raster order, so the strided cap spreads
+        over the whole seed); out-of-range ids are dropped, and so is a class
+        left with none. Key order is preserved.
         """
         N = self.features_np.shape[0]
-        cleaned = {}
-        for key, ids in prototypes_by_class.items():
-            valid_ids = sorted({int(i) for i in ids if 0 <= int(i) < N})
-            if valid_ids:
-                cleaned[key] = valid_ids
-        if not cleaned:
-            return {}
-
-        k = min(self.PROTOTYPE_BUDGET, min(len(v) for v in cleaned.values()))
-        k = max(1, k)
-
-        # Hover refreshes re-balance the same prototype sets many times a second
-        # (only the hovered class changes), so memoize the clustering on the
-        # exact (k, ids) it was computed from.
         out = {}
-        for key, ids in cleaned.items():
-            cache_key = (k, tuple(ids))
-            centroids = self._proto_cache.get(cache_key)
-            if centroids is None:
-                centroids = self._spherical_kmeans(self.features_np[ids], k)
-                if len(self._proto_cache) >= self._PROTO_CACHE_MAX:
-                    self._proto_cache.clear()
-                self._proto_cache[cache_key] = centroids
-            out[key] = centroids
+        for key, ids in prototypes_by_class.items():
+            valid_ids = np.array(sorted({int(i) for i in ids if 0 <= int(i) < N}), dtype=np.int64)
+            if valid_ids.size:
+                out[key] = self.features_np[self._capped(valid_ids)]
         return out
 
     @classmethod
-    def balance_vectors(cls, vectors_by_class):
-        """:meth:`_balance_prototypes` for prototype VECTORS rather than ids.
+    def cap_vectors(cls, vectors_by_class):
+        """:meth:`_class_prototypes` for prototype VECTORS rather than ids.
 
         For prototypes gathered outside this buffer, e.g. seeds collected across
         every tile of an image (see LabelPropagation). ``vectors_by_class`` maps
         ``class_key -> [P, D]`` L2-normalized rows; empty classes are dropped.
-        Returns ``{class_key: [k, D] float32}``, k the same for every class.
         """
-        cleaned = {key: np.asarray(v, dtype=np.float32)
-                   for key, v in vectors_by_class.items() if len(v)}
-        if not cleaned:
-            return {}
-        k = max(1, min(cls.PROTOTYPE_BUDGET, min(v.shape[0] for v in cleaned.values())))
-        return {key: cls._spherical_kmeans(v, k) for key, v in cleaned.items()}
+        return {key: cls._capped(np.asarray(v, dtype=np.float32))
+                for key, v in vectors_by_class.items() if len(v)}
 
     def class_scores(self, prototypes_by_class) -> Tuple[np.ndarray, list]:
         """Per-class max-pool cosine similarity over the feature buffer.
@@ -558,12 +489,7 @@ class QueryEngine:
         The multi-class counterpart of the binary ``_best_pos`` field: for each
         class, the max cosine of every element to ANY of that class's
         prototypes (the paper's FAISS ``k=1`` nearest-prototype, per class).
-
-        Prototypes are first balanced to an equal per-class count by
-        :meth:`_balance_prototypes` — without that, a class simply holding more
-        prototypes outscores the others regardless of content. Balancing also
-        bounds the ``[N, P]`` intermediate, which previously scaled with the
-        seeded polygon area (hundreds of MB per class on a dense grid).
+        See ``PROTOTYPE_CAP`` for how large prototype sets are bounded.
 
         Args:
             prototypes_by_class: mapping ``class_key -> list[element_id]``. Empty
@@ -575,19 +501,19 @@ class QueryEngine:
             similarity field for ``keys[k]``; ``keys`` is the class-key list in
             row order. Both empty when no class has prototypes.
         """
-        return self.scores_from_centroids(self._balance_prototypes(prototypes_by_class))
+        return self.scores_from_prototypes(self._class_prototypes(prototypes_by_class))
 
-    def scores_from_centroids(self, centroids_by_class) -> Tuple[np.ndarray, list]:
-        """Per-class max cosine of every element to that class's ``[k, D]`` centroids.
+    def scores_from_prototypes(self, prototypes_by_class) -> Tuple[np.ndarray, list]:
+        """Per-class max cosine of every element to that class's ``[P, D]`` vectors.
 
-        The scoring half of :meth:`class_scores`, for centroids that are already
-        balanced (``_balance_prototypes`` / :meth:`balance_vectors`). Returns
+        The scoring half of :meth:`class_scores`, for vectors that are already
+        capped (``_class_prototypes`` / :meth:`cap_vectors`). Returns
         ``(best [C, N] float32, keys)``.
         """
         N = self.features_np.shape[0]
         keys = []
         rows = []
-        for key, protos in centroids_by_class.items():
+        for key, protos in prototypes_by_class.items():
             keys.append(key)
             if self.use_torch:
                 p = torch.as_tensor(protos, dtype=torch.float32, device=self.device)

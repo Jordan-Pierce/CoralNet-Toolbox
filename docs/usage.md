@@ -486,7 +486,7 @@ All dock windows (Annotation Window, Labels Window, Rasters Window, Confidence W
       - **Extract Feature Maps**: Cache a dense feature map for each selected image
       - **Densify Patches**: Fill each image's mask from its existing labels (patches, polygons and mask classes seed a feature map; Review patches are ignored)
         - **Type**: Standard densifies the whole image; Tiled densifies only each work area, at full input resolution, and skips rasters without work areas (required for orthomosaics; create a tile grid with the Work Area Manager, ideally with at least 20% overlap). Prototypes are shared across all of an image's work areas, and each pixel in an overlap takes the work area it sits most centrally in
-        - **Reject Threshold**: Pixels less similar than this to every class stay unlabeled
+        - **Reject Threshold**: Pixels less similar than this to every class stay unlabeled (0, the default, labels every pixel)
         - **Minimum Classes**: Skip images whose labels seed fewer classes
         - **Only Fill Unlabeled Pixels**: Keep pixels the mask already labels
         - **Replace Matching Patches**: Delete each patch whose label the new mask holds at its center (cannot be undone)
@@ -754,11 +754,11 @@ The Explorer automatically caches extracted features to accelerate re-loading th
   - **Multi-class Mode** (one blob per label):
     - <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Assign the patch to the selected label (switch labels to add more classes)
     - <kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Undo that label's last point
-    - <kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd>: Adjust the reject threshold
+    - <kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd>: Adjust the reject threshold (off by default, so every pixel gets a label)
     - Preview is colored per label and tracks the annotation transparency slider
   - **Common Controls**:
     - <kbd>Ctrl</kbd> + <kbd>Alt</kbd>: Toggle between Binary and Multi-class mode
-    - <kbd>N</kbd>: Refresh the yellow crosshair point suggestion
+    - <kbd>N</kbd>: Refresh the yellow crosshair point suggestion (the patch the current points are least sure about)
     - <kbd>Space</kbd>: Finalize and create a Polygon / Mask annotation
     - <kbd>Shift</kbd> + <kbd>Space</kbd>: Finalize to the Mask and delete the patches it agrees with (same label at the patch center), so the mask fills them in. Undo restores both.
     - <kbd>Backspace</kbd>: Clear all points and start over

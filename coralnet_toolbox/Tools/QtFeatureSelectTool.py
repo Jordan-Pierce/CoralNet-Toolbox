@@ -80,7 +80,9 @@ class FeatureSelectTool(Tool):
         self.image_path = None
         self.original_width = None
         self.original_height = None
-        self.query_engine = None
+        self.query_engine = None         # binary mode (standardized features)
+        self._crop_fmap = None           # crop features, for the class engine
+        self._raw_engine = None          # multi-class mode (raw features)
         self.feat_h = None               # crop feature grid rows
         self.feat_w = None               # crop feature grid cols
 
@@ -96,12 +98,12 @@ class FeatureSelectTool(Tool):
         #   head_threshold — linear head, whose fitted decision boundary IS 0.5.
         # _active_threshold() picks the one in force; the wheel adjusts that one.
         #
-        # 0.25 rather than 0.5 for max-pool: measured across target sizes (~6%,
-        # ~25% and ~50% of the work area) it averages a clearly better IoU
-        # (0.748 vs 0.623). There is no universal optimum — the best cut tracks
-        # how much of the work area the target covers (0.58 for a small object,
-        # 0.14 for a large one), which is what Ctrl+wheel is for.
-        self.threshold = 0.25
+        # 0.55 for max-pool: against ground-truth masks it beat the previous 0.25
+        # on two datasets (IoU 0.87 vs 0.68 on Shoe, 0.26 vs 0.23 on Coralscapes,
+        # one click; the best cut rises to ~0.7 with three). There is no
+        # universal optimum (the best cut tracks how much of the work area the
+        # target covers), which is what Ctrl+wheel is for.
+        self.threshold = 0.55
         self.head_threshold = 0.5
         self.threshold_active = False
 
@@ -116,21 +118,18 @@ class FeatureSelectTool(Tool):
         self.class_labels = {}          # label_id -> Label (resolved at commit)
         self.class_colors = {}          # label_id -> (r, g, b) (for the overlay)
         # Reject floor on raw cosine similarity: pixels whose best-class score is
-        # below this stay unlabeled (separate from the binary `threshold`, which
-        # lives on the mapped [0,1] scale).
-        self.multiclass_threshold = 0.5
+        # below this stay unlabeled (separate from the binary `threshold`). 0 by
+        # default, so every pixel is labeled: a 0.5 floor left 14-17% of pixels
+        # unlabeled against ground truth for no gain in the ones it kept.
+        self.multiclass_threshold = 0.0
         # Cached last preview (index field + colors) so a transparency-slider
         # drag can re-blit the overlay without re-running classification.
         self._last_label_idx = None
         self._last_label_colors = []
 
         # ---- Active-learning point suggestion (press N) ----------------------
-        # Recommend where to click next by combining model uncertainty (1 - best
-        # similarity to any labeled prototype) with spatial distance from the
-        # existing clicks, after Raine et al. 2024. lambda weights uncertainty
-        # vs. distance; sigma controls the distance falloff (in feature-grid
-        # cells, derived per work area in suggest_next_point).
-        self.suggest_lambda = 2.2
+        # Recommend where to click next: the patch where the two best-scoring
+        # classes are closest (see suggest_next_point).
         self.suggestion_graphics = []
 
         # Output settings — synced from the feature deploy dialog.
@@ -214,7 +213,7 @@ class FeatureSelectTool(Tool):
             count = len(self.class_prototypes)
             return (f"Space: commit {count} class{'es' if count != 1 else ''}{absorb}"
                     "  |  Ctrl+click: add to the selected label, Ctrl+right-click: undo its last point"
-                    f"  |  Ctrl+wheel: reject threshold {self.multiclass_threshold:.2f}"
+                    f"  |  Ctrl+wheel: reject threshold {self._reject_text()}"
                     "  |  N: suggest a point"
                     "  |  Backspace: clear the prompts")
         positive, negative = len(self.positive_ids), len(self.negative_ids)
@@ -479,17 +478,30 @@ class FeatureSelectTool(Tool):
             self.annotation_window.setCursor(self.cursor)
             self.annotation_window.scene.update()
 
-    # Whether to z-standardize the crop's features per channel before querying.
-    # See LabelPropagation.standardize_features for why this is on by default.
-    STANDARDIZE_FEATURES = True
-
     def _build_query_engine(self, crop_fmap):
-        """Construct a QueryEngine over the [h, w, C] crop feature map."""
+        """Construct the QueryEngines over the [h, w, C] crop feature map.
+
+        The modes need different feature spaces (see
+        LabelPropagation.standardize_features), so there are two engines:
+          - ``query_engine`` (standardized): binary mode, which thresholds
+            similarity to the clicks.
+          - the class engine (raw features): multi-class nearest neighbour,
+            built on first use by _class_engine so binary-only use doesn't pay
+            for a second copy of the features.
+        """
         self.query_engine, (self.feat_h, self.feat_w) = build_query_engine(
-            crop_fmap, standardize=self.STANDARDIZE_FEATURES)
+            crop_fmap, standardize=True)
+        self._crop_fmap = crop_fmap
+        self._raw_engine = None
         self.positive_ids = []
         self.negative_ids = []
         self.threshold_active = False
+
+    def _class_engine(self):
+        """The raw-feature QueryEngine for multi-class scoring (built lazily)."""
+        if self._raw_engine is None and self._crop_fmap is not None:
+            self._raw_engine, _ = build_query_engine(self._crop_fmap)
+        return self._raw_engine
 
     def _persist_to_full_map(self, crop_fmap, left, top, right, bottom, extractor):
         """Best-effort: paste the crop features into the raster's full feature map.
@@ -596,6 +608,7 @@ class FeatureSelectTool(Tool):
                 pass
             self.working_area = None
         self.query_engine = None
+        self._crop_fmap = self._raw_engine = None
         self.feat_h = self.feat_w = None
         self.annotation_window.scene.update()
 
@@ -820,7 +833,7 @@ class FeatureSelectTool(Tool):
         Shared by the live preview and the commit so the two are pixel-identical.
         Returns (label_map [out_h, out_w] with -1 = unlabeled, keys).
         """
-        return classify(self.query_engine, proto, (self.feat_h, self.feat_w),
+        return classify(self._class_engine(), proto, (self.feat_h, self.feat_w),
                         (out_h, out_w), self.multiclass_threshold)
 
     def _update_label_overlay(self, hover_id=None):
@@ -998,13 +1011,20 @@ class FeatureSelectTool(Tool):
     def suggest_next_point(self, announce=True):
         """Recommend the most informative next patch to label and mark it.
 
-        Score = (distance + uncertainty·λ) / (1 + λ), per the paper: uncertainty
-        is ``1 - best cosine similarity to ANY labeled prototype`` (the model is
-        least sure where this is low), distance is a Gaussian-smoothed Euclidean
-        distance from the labeled cells (spread the clicks out). Already-labeled
-        cells are excluded; the argmax cell is drawn as a crosshair for the user
-        to confirm by clicking. ``announce`` controls the status-bar hint (off for
-        the automatic per-click refresh so it doesn't spam the bar).
+        The patch the current prompts are least decided about:
+          - multi-class: where the two best-scoring classes are closest (the
+            smallest margin between them). With a single class, its least
+            similar patch, which is likely a class not labeled yet.
+          - binary: the patch scoring closest to the active threshold, i.e. on
+            the edge of the current selection.
+
+        Measured against ground truth this beat the paper's rule (distance from
+        the labeled points plus 1 - similarity to them), which came last on both
+        datasets tested; the margin alone matched or beat random and grid
+        placement. Already-labeled cells are excluded; the argmax cell is drawn
+        as a crosshair for the user to confirm by clicking. ``announce``
+        controls the status-bar hint (off for the automatic per-click refresh so
+        it doesn't spam the bar).
         """
         if self.query_engine is None or self.working_area is None:
             return
@@ -1015,39 +1035,35 @@ class FeatureSelectTool(Tool):
                              "requesting a suggestion.")
             return
 
-        # Uncertainty: max cosine of each cell to ANY labeled prototype (one
-        # pseudo-class), then inverted. High where the model is least committed.
-        best, keys = self.query_engine.class_scores({"_all": seeds})
-        if not keys:
+        if self.mode == "multiclass":
+            best, keys = self._class_engine().class_scores(
+                {k: v for k, v in self.class_prototypes.items() if v})
+            if not keys:
+                return
+            if len(keys) >= 2:
+                top2 = np.partition(best, -2, axis=0)[-2:]
+                score = -(top2.max(axis=0) - top2.min(axis=0))
+            else:
+                score = -best[0]
+        else:
+            sim = self._compute_similarity()
+            if sim is None:
+                return
+            score = -np.abs(np.asarray(sim, dtype=np.float32) - self._active_threshold())
+
+        score = np.asarray(score, dtype=np.float32).copy()
+        seed_arr = np.asarray(seeds, dtype=np.int64)
+        score[seed_arr[(seed_arr >= 0) & (seed_arr < score.size)]] = -np.inf
+        score[~np.isfinite(score)] = -np.inf
+        if not np.isfinite(score).any():
             return
-        best_sim = np.asarray(best[0], dtype=np.float32)
-        uncertainty = np.clip(1.0 - best_sim, 0.0, None)
 
-        # Distance map over the crop feature grid, seeded at labeled cells.
-        labeled_flat = np.zeros(self.feat_h * self.feat_w, dtype=np.int32)
-        seed_arr = np.asarray(seeds, dtype=int)
-        seed_arr = seed_arr[(seed_arr >= 0) & (seed_arr < labeled_flat.size)]
-        labeled_flat[seed_arr] = 1
-        labeled_grid = labeled_flat.reshape(self.feat_h, self.feat_w)
-        sigma = max(2.0, 0.125 * max(self.feat_h, self.feat_w))
-        distance_ft = self._distance_mask(labeled_grid, sigma).reshape(-1)
-
-        merge = (distance_ft + uncertainty * self.suggest_lambda) / (1.0 + self.suggest_lambda)
-        merge[labeled_flat > 0] = -1.0  # never re-suggest a labeled cell
-
-        best_idx = int(np.argmax(merge))
+        best_idx = int(np.argmax(score))
         gy, gx = divmod(best_idx, self.feat_w)
         self._draw_suggestion(self._cell_to_scene_center(gx, gy))
         if announce:
             self._status("Feature Select: suggested next point (yellow crosshair) — "
                          "click it to confirm a label.", 5000)
-
-    @staticmethod
-    def _distance_mask(label_array, sigma):
-        """1 - exp(-d²/2σ²) over the EDT of the unlabeled cells (in [0, 1])."""
-        from scipy.ndimage import distance_transform_edt
-        dt = distance_transform_edt(label_array == 0)
-        return (1.0 - np.exp(-(dt ** 2) / (2.0 * (sigma ** 2)))).astype(np.float32)
 
     def _cell_to_scene_center(self, gx, gy):
         """Center of crop-grid cell (gx, gy) in scene coords (inverse of
@@ -1221,12 +1237,12 @@ class FeatureSelectTool(Tool):
         step = 0.02
         if self.mode == "multiclass":
             if event.angleDelta().y() > 0:
-                self.multiclass_threshold = min(1.0, self.multiclass_threshold + step)
+                self.multiclass_threshold = round(min(1.0, self.multiclass_threshold + step), 2)
             else:
-                self.multiclass_threshold = max(0.0, self.multiclass_threshold - step)
+                self.multiclass_threshold = round(max(0.0, self.multiclass_threshold - step), 2)
             self.threshold_active = True
             self.update_heatmap()
-            self._status(f"Feature Select reject threshold: {self.multiclass_threshold:.2f}", 2000)
+            self._status(f"Feature Select reject threshold: {self._reject_text()}", 2000)
             return
         delta = step if event.angleDelta().y() > 0 else -step
         if self._head_active():
@@ -1237,6 +1253,12 @@ class FeatureSelectTool(Tool):
         self.update_heatmap()
         self._status(f"Feature Select threshold: {self._active_threshold():.2f} "
                      f"({self._threshold_scale_hint()})", 2000)
+
+    def _reject_text(self):
+        """The multi-class reject threshold for display ('off' at 0)."""
+        if self.multiclass_threshold <= 0:
+            return "off"
+        return f"{self.multiclass_threshold:.2f}"
 
     def _head_active(self):
         """Whether the linear head produced the current scores (see is_calibrated)."""

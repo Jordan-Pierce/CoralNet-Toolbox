@@ -34,69 +34,38 @@ def _has_class(label):
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-def standardize_features(features, stats=None):
+def standardize_features(features):
     """Per-channel z-standardize [N, D] features over the region, re-L2.
 
-    Raw ViT patch tokens carry a large channel-wise mean plus a positional
-    component, so cosine similarity between ANY two patches of one image sits
-    high (~0.78 mean measured on DINOv2-with-registers) and varies with
-    spatial distance even when the content is identical. Two consequences:
-    the threshold has almost no usable range, and nearby-but-different
-    patches can outscore far-but-identical ones.
+    Raw ViT patch tokens carry a large channel-wise mean, so cosine similarity
+    between ANY two patches of one image sits high and a fixed threshold has
+    little usable range. Centering and scaling each channel by its statistics
+    across the region removes that shared offset.
 
-    Centering and scaling each channel by its statistics ACROSS THE REGION
-    removes that shared offset, so the remaining variation is what actually
-    distinguishes patches within this crop. Measured over four content pairs:
-    mean ROC-AUC 0.928 -> 0.953, correlation of similarity with spatial
-    distance on a homogeneous canvas -0.60 -> -0.29, and the fraction of the
-    work area passing a fixed threshold from one click tightens from a
-    content-dependent 20-80% to 10-22%.
+    Use it ONLY for thresholding similarity to positive clicks (binary mode
+    without negatives), where it measured better: IoU 0.87 vs 0.80 at the best
+    fixed threshold (Shoe), 0.34 vs 0.23 (Coralscapes). Do NOT use it when
+    classes compete (multi-class, densify, suggestions): the region's mean is
+    the dominant class, so standardizing turns that class's features into noise
+    and its pixels leak to the others (mIoU 0.79 -> 0.25 on Shoe from one
+    click per class).
 
-    NOTE: dropping leading principal components is the obvious next step and
-    is WRONG here — the class-discriminative signal lives in those components
-    (removing the top 1 or top 8 collapsed mean AUC to ~0.50, i.e. chance).
-
-    Statistics are region-local by design; they are deliberately NOT applied
-    to feature maps persisted to disk, which stay raw so they remain
-    comparable across crops. ``stats`` (a ``(mean, std)`` pair, see
-    ChannelStats) replaces them when several tiles of one image must share a
-    single feature space.
+    NOTE: dropping leading principal components is WRONG here: the
+    class-discriminative signal lives in those components (removing the top 1
+    or top 8 collapsed mean AUC to ~0.50, i.e. chance).
     """
     features = np.asarray(features, dtype=np.float32)
-    if stats is None:
-        mean, std = features.mean(axis=0), features.std(axis=0)
-    else:
-        mean, std = stats
-    features = (features - mean) / (std + 1e-6)
+    features = (features - features.mean(axis=0)) / (features.std(axis=0) + 1e-6)
     norms = np.linalg.norm(features, axis=1, keepdims=True)
     return features / np.maximum(norms, 1e-12)
 
 
-class ChannelStats:
-    """Running per-channel mean / std over feature chunks (float64 sums).
+def build_query_engine(feature_map, standardize=False):
+    """QueryEngine over an [h, w, C] feature map; returns ``(engine, (h, w))``.
 
-    Lets every tile of an image be standardized in one shared space, so class
-    prototypes gathered in one tile compare fairly against the others.
+    Raw (L2-normalized) features by default; see standardize_features for the
+    one case that should standardize.
     """
-
-    def __init__(self):
-        self.count, self.sum, self.sumsq = 0, 0.0, 0.0
-
-    def add(self, features):
-        features = np.asarray(features, dtype=np.float64)
-        self.count += features.shape[0]
-        self.sum = self.sum + features.sum(axis=0)
-        self.sumsq = self.sumsq + np.square(features).sum(axis=0)
-
-    def result(self):
-        """``(mean, std)`` as float32, for standardize_features."""
-        mean = self.sum / self.count
-        std = np.sqrt(np.maximum(self.sumsq / self.count - np.square(mean), 0.0))
-        return mean.astype(np.float32), std.astype(np.float32)
-
-
-def build_query_engine(feature_map, standardize=True):
-    """QueryEngine over an [h, w, C] feature map; returns ``(engine, (h, w))``."""
     from coralnet_toolbox.Features.QueryEngine import QueryEngine
 
     grid_hw = (int(feature_map.shape[0]), int(feature_map.shape[1]))
