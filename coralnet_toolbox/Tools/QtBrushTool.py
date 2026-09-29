@@ -176,7 +176,9 @@ class BrushTool(Tool):
             return
             
         label = self.annotation_window.selected_label
-        if self.requires_label and not label:
+        # Only starting a stroke needs a label; the click that ends one must
+        # always work, since the stroke already captured its label id.
+        if self.requires_label and not label and not self.painting:
             self.annotation_window.main_window.status_bar.showMessage(
                 "A label must be selected before using the brush tool.", 4000)
             return
