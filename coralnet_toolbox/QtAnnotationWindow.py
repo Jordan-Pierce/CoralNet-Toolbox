@@ -2266,11 +2266,13 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
             scene_pos: Position in scene coordinates. If provided, creates/updates
                       cursor annotation at this position. If None, clears the annotation.
         """
-        if self.selected_tool and self.active_image and self.selected_label:
+        tool = self.tools.get(self.selected_tool) if self.selected_tool else None
+        needs_label = getattr(tool, 'requires_label', True)
+        if tool and self.active_image and (self.selected_label or not needs_label):
             if scene_pos:
-                self.tools[self.selected_tool].update_cursor_annotation(scene_pos)
+                tool.update_cursor_annotation(scene_pos)
             else:
-                self.tools[self.selected_tool].clear_cursor_annotation()
+                tool.clear_cursor_annotation()
 
     def update_scene(self):
         """Update the graphics scene and its items."""

@@ -18,6 +18,9 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 class EraseTool(BrushTool):
     """A tool for erasing pixels on a MaskAnnotation layer. Inherits streaming/threading from BrushTool."""
+    # Always writes class 0; the selected label is irrelevant.
+    requires_label = False
+
     def __init__(self, annotation_window):
         super().__init__(annotation_window)
         # Note: Erase tool uses the exact same 'self.painting' flag from BrushTool to track the stroke.

@@ -130,6 +130,10 @@ class StrokeMathWorker(QRunnable):
 
 class BrushTool(Tool):
     """A tool for painting on a MaskAnnotation layer."""
+    # Brush paints the selected label's class; subclasses that don't need a
+    # label (EraseTool writes class 0) override this.
+    requires_label = True
+
     def __init__(self, annotation_window):
         super().__init__(annotation_window)
         
@@ -144,6 +148,7 @@ class BrushTool(Tool):
         self._accumulated_points = []
         self._stroke_history_action = None
         self._stroke_mask_annotation = None
+        self._stroke_label_id = None
         self._last_scratchpad_pos = None
         self._stroke_accumulated_indices = []
         
@@ -170,16 +175,17 @@ class BrushTool(Tool):
         if event.button() != Qt.LeftButton:
             return
             
-        if not self.annotation_window.selected_label:
+        label = self.annotation_window.selected_label
+        if self.requires_label and not label:
             self.annotation_window.main_window.status_bar.showMessage(
                 "A label must be selected before using the brush tool.", 4000)
             return
-        
+
         if not self.annotation_window.cursorInWindow(event.pos()):
             return
 
-        if not self.annotation_window.selected_label.is_visible:
-            self.annotation_window.selected_label.visibility_checkbox.setChecked(True)
+        if label and not label.is_visible:
+            label.visibility_checkbox.setChecked(True)
 
         if not self.painting and self._stroke_history_action is not None:
             return
@@ -192,35 +198,39 @@ class BrushTool(Tool):
             self._stroke_accumulated_indices.clear()
             self._last_scratchpad_pos = None
 
+            # Whole stroke keeps one label, even if it is deselected mid-stroke
+            self._stroke_label_id = label.id if label else ""  # signal is typed str
             self._stroke_mask_annotation = self.annotation_window.current_mask_annotation
             self._stroke_history_action = MaskEditAction(
                 self._stroke_mask_annotation,
                 description=f"{self.__class__.__name__} stroke",
             )
-            self.scratchpad_path = QPainterPath()
-            self.scratchpad_item = QGraphicsPathItem()
-            
-            label = self.annotation_window.selected_label
-            transparency = self.annotation_window.main_window.get_transparency_value()
-            
-            c = QColor(label.color)
-            c.setAlpha(transparency)
 
-            # Use a thick Pen instead of a filled polygon
-            pen = QPen(c)
-            pen.setWidth(self.brush_size)
-            if self.shape == 'circle':
-                pen.setCapStyle(Qt.RoundCap)
-                pen.setJoinStyle(Qt.RoundJoin)
-            else:
-                pen.setCapStyle(Qt.SquareCap)
-                pen.setJoinStyle(Qt.BevelJoin)
+            # Scratchpad trail is label-colored; eraser has no label and draws no trail
+            if label is not None:
+                self.scratchpad_path = QPainterPath()
+                self.scratchpad_item = QGraphicsPathItem()
 
-            self.scratchpad_item.setPen(pen)
-            self.scratchpad_item.setBrush(QBrush(Qt.NoBrush))
-            self.scratchpad_item.setZValue(3)
-            
-            self.annotation_window.scene.addItem(self.scratchpad_item)
+                transparency = self.annotation_window.main_window.get_transparency_value()
+
+                c = QColor(label.color)
+                c.setAlpha(transparency)
+
+                # Use a thick Pen instead of a filled polygon
+                pen = QPen(c)
+                pen.setWidth(self.brush_size)
+                if self.shape == 'circle':
+                    pen.setCapStyle(Qt.RoundCap)
+                    pen.setJoinStyle(Qt.RoundJoin)
+                else:
+                    pen.setCapStyle(Qt.SquareCap)
+                    pen.setJoinStyle(Qt.BevelJoin)
+
+                self.scratchpad_item.setPen(pen)
+                self.scratchpad_item.setBrush(QBrush(Qt.NoBrush))
+                self.scratchpad_item.setZValue(3)
+
+                self.annotation_window.scene.addItem(self.scratchpad_item)
             
             # 2. Start streaming chunks at 25 FPS
             self._sync_timer.start(40)
@@ -248,7 +258,8 @@ class BrushTool(Tool):
         scene_pos = self.annotation_window.mapToScene(event.pos())
         cursor_in_window = self.annotation_window.cursorInWindow(event.pos())
 
-        if (cursor_in_window and self.active and self.annotation_window.selected_label):
+        has_label = self.annotation_window.selected_label or not self.requires_label
+        if cursor_in_window and self.active and has_label:
             self.update_cursor_annotation(scene_pos)
 
             if self.cursor_move_callback:
@@ -468,7 +479,7 @@ class BrushTool(Tool):
         self._accumulated_points.clear()
         
         mask_annotation = self._stroke_mask_annotation or self.annotation_window.current_mask_annotation
-        if not mask_annotation or not self.annotation_window.selected_label:
+        if not mask_annotation or (self.requires_label and not self._stroke_label_id):
             if self._is_finishing_stroke and self._active_workers == 0:
                 self._cleanup_scratchpad()
                 self._commit_stroke_history_action()
@@ -488,7 +499,7 @@ class BrushTool(Tool):
             img_w=img_w, 
             img_h=img_h,
             mask_annotation=mask_annotation,
-            label_id=self.annotation_window.selected_label.id,
+            label_id=self._stroke_label_id,
             z_channel=z_channel
         )
         worker.signals.finished.connect(self._on_math_finished)
@@ -549,4 +560,5 @@ class BrushTool(Tool):
                     pass
         self._stroke_history_action = None
         self._stroke_mask_annotation = None
+        self._stroke_label_id = None
         self._is_finishing_stroke = False
