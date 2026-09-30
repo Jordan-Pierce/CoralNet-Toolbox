@@ -796,34 +796,12 @@ class Base(QDialog):
         self.label_table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
         self.label_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.label_table.verticalHeader().setVisible(False)
-        self.label_table.setToolTip(
-            "Verified counts only -- unverified annotations are model predictions, and\n"
-            "training on those would teach the model its own guesses.\n"
-            "Awaiting is how many predictions of that label are still unreviewed:\n"
-            "it is the answer to 'is there enough new material to train again?'.\n"
-            "A red split cell means that label has no examples there.\n"
-            f"Images are split {TRAIN_RATIO:.0%} train / {VAL_RATIO:.0%} val by a hash of "
-            "each image's path, so an image never moves between them from one round to the "
-            "next -- which would leak and inflate every metric after it.")
         header = self.label_table.horizontalHeader()
         header.setSectionResizeMode(COL_LABEL, QHeaderView.Stretch)
         for column in (COL_INCLUDE, COL_VERIFIED, COL_TRAIN,
                        COL_VAL, COL_IMAGES, COL_AWAITING):
             header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
         layout.addWidget(self.label_table, 1)
-
-        # Negative images have no label, so they cannot be a table row, and
-        # they are the part of the dataset a user is most likely to think is
-        # not being used.
-        self.background_label = QLabel("")
-        self.background_label.setWordWrap(True)
-        self.background_label.setToolTip(
-            "Images you marked negative. They train as background, teaching the model\n"
-            "there is nothing to find on them, and rounds do not predict on them.\n"
-            "An image you have not marked is left out of training, however long it has\n"
-            "been in the project: unannotated does not mean empty.\n"
-            "Marks last for this session. New Session clears them.")
-        layout.addWidget(self.background_label)
 
         # Stated up front rather than discovered after five rounds: if objects
         # are tiny relative to the image, full-image inference at imgsz cannot
@@ -834,34 +812,10 @@ class Base(QDialog):
         self.warning_label.setVisible(False)
         layout.addWidget(self.warning_label)
 
-        # The one place an image is marked negative. The Image Window's context
-        # menu used to offer it, and marks set there with no session open
-        # drifted away from what the session knew.
-        actions = QHBoxLayout()
-
-        self.mark_negative_button = QPushButton("Mark Negative")
-        self.mark_negative_button.setToolTip(
-            "Mark the images highlighted in the Rasters Window negative (or the open\n"
-            "image, if none are highlighted). They train as background and rounds do\n"
-            "not predict on them. Images with annotations of this task are skipped.\n"
-            "Only mark images you have looked at: an image nobody has annotated yet\n"
-            "is not empty, and training it as empty teaches the model to miss what is\n"
-            "there.")
-        self.mark_negative_button.clicked.connect(self.mark_images_negative)
-        actions.addWidget(self.mark_negative_button)
-
-        self.unmark_negative_button = QPushButton("Unmark Negative")
-        self.unmark_negative_button.setToolTip(
-            "Take the negative mark off the highlighted images (or the open image).")
-        self.unmark_negative_button.clicked.connect(self.unmark_images_negative)
-        actions.addWidget(self.unmark_negative_button)
-
         self.refresh_button = QPushButton("Refresh")
         self.refresh_button.setToolTip("Re-read the project and recount what would be trained on.")
         self.refresh_button.clicked.connect(lambda: self.refresh_dataset(quiet=False))
-        actions.addWidget(self.refresh_button)
-
-        layout.addLayout(actions)
+        layout.addWidget(self.refresh_button)
 
         group_box.setLayout(layout)
         return group_box
@@ -1308,6 +1262,33 @@ class Base(QDialog):
             "Opens its image if that is not the one already open.")
         self.next_button.clicked.connect(lambda: self.step_review(1))
         button_layout.addWidget(self.next_button)
+
+        # Past a separator because these answer for a whole image rather than
+        # for the annotation the four keys are on, and stay enabled when the
+        # queue is empty. The one place an image is marked negative: the Image
+        # Window's context menu used to offer it, and marks set there with no
+        # session open drifted away from what the session knew.
+        separator = QFrame()
+        separator.setFrameShape(QFrame.VLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        button_layout.addWidget(separator)
+
+        self.mark_negative_button = QPushButton("Mark Negative")
+        self.mark_negative_button.setToolTip(
+            "Mark the images highlighted in the Rasters Window negative (or the open\n"
+            "image, if none are highlighted). They train as background and rounds do\n"
+            "not predict on them. Images with annotations of this task are skipped.\n"
+            "Only mark images you have looked at: an image nobody has annotated yet\n"
+            "is not empty, and training it as empty teaches the model to miss what is\n"
+            "there.")
+        self.mark_negative_button.clicked.connect(self.mark_images_negative)
+        button_layout.addWidget(self.mark_negative_button)
+
+        self.unmark_negative_button = QPushButton("Unmark Negative")
+        self.unmark_negative_button.setToolTip(
+            "Take the negative mark off the highlighted images (or the open image).")
+        self.unmark_negative_button.clicked.connect(self.unmark_images_negative)
+        button_layout.addWidget(self.unmark_negative_button)
 
         layout.addLayout(button_layout)
 
@@ -2202,7 +2183,6 @@ class Base(QDialog):
             # concludes that no label is short of anything, and starts a round
             # the moment the dialog opens.
             self._auto_shortfall = self.auto_train_shortfall(verified)
-            self.update_background_label(groups, negatives)
             self.update_budget_range()
             self.update_size_warning(grouped)
             self.update_review_controls()
@@ -2296,23 +2276,6 @@ class Base(QDialog):
 
         return InPlaceTraining.InPlaceDataset(
             self.task, records_by_split, classes, cache_root=self.cache_root())
-
-    def update_background_label(self, groups, negatives):
-        """Say how many images train as background, and where they landed."""
-        if not negatives:
-            self.background_label.setText(
-                "No negative images. Unannotated images are left out of training unless "
-                "you mark them negative: highlight them in the Rasters Window and press "
-                "Mark Negative.")
-            return
-
-        negative_set = set(negatives)
-        train = sum(1 for path in groups.get('train', []) if path in negative_set)
-        val = sum(1 for path in groups.get('val', []) if path in negative_set)
-        plural = "image" if len(negatives) == 1 else "images"
-        self.background_label.setText(
-            f"{len(negatives)} negative {plural} ({train} train / {val} val): marked "
-            f"negative, so they train as empty.")
 
     def update_budget_range(self):
         """Cap the Image Budget at the number of images the project holds.

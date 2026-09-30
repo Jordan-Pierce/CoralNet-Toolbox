@@ -403,7 +403,7 @@ All dock windows (Annotation Window, Labels Window, Rasters Window, Confidence W
     **Mark Verified** confirms it; **Mark as Review** parks anything you cannot judge yet
   - An image with no annotations is left out of training: one nobody has annotated yet
     is not empty. To teach the model an image has nothing on it, highlight it in the
-    Rasters Window (or open it) and press **Mark Negative** in the session window. It
+    Rasters Window (or open it) and press **Mark Negative** on the **Session** tab. It
     then trains as a **background** image, and rounds do not predict on it. **Unmark
     Negative** takes the mark off. Marks last for the session; **New Session** clears them
   - **Image Budget**: how many un-reviewed images a round predicts on. Most of it goes to

@@ -2,8 +2,8 @@ import os
 import datetime
 from pathlib import Path
 
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QPixmap
+from PyQt5.QtCore import Qt, QPoint, QRect
+from PyQt5.QtGui import QPixmap, QPainter, QPalette
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QFormLayout,
                              QLineEdit, QPushButton, QFileDialog, QApplication,
                              QMessageBox, QLabel, QButtonGroup, QRadioButton, QComboBox)
@@ -67,6 +67,72 @@ def capture_high_res_pixmap(widget, scale=2.0):
     return pixmap
 
 
+def get_overlay_windows(main_window, exclude=()):
+    """Return the app's other visible windows over `main_window` as (window, rect), bottom to top.
+
+    Dialogs, floating dock panels and menus are separate top-level windows, so render() on the
+    main window never paints them. Rects are in main window coordinates. Tooltips and windows
+    that do not overlap the main window (e.g. on another monitor) are skipped.
+    """
+    origin = main_window.mapToGlobal(QPoint(0, 0))
+    main_rect = QRect(QPoint(0, 0), main_window.size())
+
+    overlays = []
+    for window in QApplication.topLevelWidgets():
+        if (window is main_window or window in exclude
+                or not window.isVisible() or window.isMinimized()
+                or window.windowType() == Qt.ToolTip
+                or window.testAttribute(Qt.WA_DontShowOnScreen)):
+            continue
+        rect = QRect(window.mapToGlobal(QPoint(0, 0)) - origin, window.size())
+        if rect.intersects(main_rect):
+            overlays.append((window, rect))
+
+    # Top-level order is not stacking order; put whatever currently has focus on top
+    def stacking_key(item):
+        window = item[0]
+        return (window is QApplication.activePopupWidget(),
+                window is QApplication.activeModalWidget(),
+                window is QApplication.activeWindow())
+
+    return sorted(overlays, key=stacking_key)
+
+
+def get_capture_bounds(main_window, overlays):
+    """Return the rect covering the main window and every overlay window, including its border."""
+    bounds = QRect(QPoint(0, 0), main_window.size())
+    for _, rect in overlays:
+        bounds = bounds.united(rect.adjusted(-1, -1, 1, 1))
+    return bounds
+
+
+def capture_application_pixmap(main_window, scale=2.0, exclude=()):
+    """Render the main window plus any open dialogs or floating panels over it, growing to fit them."""
+    base = capture_high_res_pixmap(main_window, scale)
+    overlays = get_overlay_windows(main_window, exclude)
+    if not overlays:
+        return base
+
+    bounds = get_capture_bounds(main_window, overlays)
+    dpr = base.devicePixelRatio()
+    canvas = QPixmap(bounds.size() * dpr)
+    canvas.setDevicePixelRatio(dpr)
+    canvas.fill(Qt.transparent)
+
+    # render() skips the frame the OS draws, so outline each window to separate it from what is behind
+    border = main_window.palette().color(QPalette.Dark)
+    painter = QPainter(canvas)
+    try:
+        painter.translate(-bounds.topLeft())
+        painter.drawPixmap(QPoint(0, 0), base)
+        for window, rect in overlays:
+            painter.fillRect(rect.adjusted(-1, -1, 1, 1), border)
+            painter.drawPixmap(rect.topLeft(), capture_high_res_pixmap(window, scale))
+    finally:
+        painter.end()
+    return canvas
+
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Main Dialog Class
 # ----------------------------------------------------------------------------------------------------------------------
@@ -113,7 +179,8 @@ class CaptureView(QDialog):
         layout = QVBoxLayout()
         info_text = (
             "Captures exactly what is currently on screen, at the current zoom, pan, and transparency.<br><br>"
-            "<b>Application Window:</b> the entire toolbox window, including all docked panels.<br>"
+            "<b>Application Window:</b> the entire toolbox window, including all docked panels, "
+            "plus any open dialogs or floating panels over it.<br>"
             "<b>Annotation View:</b> only the annotation canvas, without the frame or scroll bars.<br><br>"
             "<b>Ctrl+F1</b> captures instantly with the settings below, even while this dialog is closed. "
             "When saving to disk, each capture gets a new timestamped file name."
@@ -130,7 +197,8 @@ class CaptureView(QDialog):
         layout = QVBoxLayout()
 
         self.application_radio = QRadioButton("Application Window")
-        self.application_radio.setToolTip("Capture the entire toolbox window, including all docked panels.")
+        self.application_radio.setToolTip("Capture the entire toolbox window, including all docked panels,\n"
+                                          "plus any open dialogs or floating panels over it.")
         self.annotation_radio = QRadioButton("Annotation View")
         self.annotation_radio.setToolTip("Capture only the annotation canvas, exactly as it appears on screen.")
 
@@ -282,7 +350,11 @@ class CaptureView(QDialog):
     def update_output_size_label(self):
         """Show the pixel size the capture will have at the selected scale."""
         widget = self.get_source_widget()
-        size = widget.size() * (widget.devicePixelRatioF() * self.get_scale())
+        size = widget.size()
+        if widget is self.main_window:
+            overlays = get_overlay_windows(self.main_window, exclude=(self,))
+            size = get_capture_bounds(self.main_window, overlays).size()
+        size = size * (widget.devicePixelRatioF() * self.get_scale())
         megapixels = size.width() * size.height() / 1e6
         self.output_size_label.setText(f"{size.width()} × {size.height()} px ({megapixels:.1f} MP)")
 
@@ -324,7 +396,10 @@ class CaptureView(QDialog):
 
     def grab_pixmap(self):
         """Grab the pixmap for the currently selected source at the selected scale."""
-        return capture_high_res_pixmap(self.get_source_widget(), self.get_scale())
+        if self.is_annotation_source():
+            return capture_high_res_pixmap(self.annotation_window.viewport(), self.get_scale())
+        # Never include this dialog in its own capture, even when Ctrl+F1 fires while it is open
+        return capture_application_pixmap(self.main_window, self.get_scale(), exclude=(self,))
 
     def capture_to_destination(self, output_path=None):
         """Capture the selected source at the selected scale, to `output_path` or the clipboard.
