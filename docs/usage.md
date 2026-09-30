@@ -401,14 +401,16 @@ All dock windows (Annotation Window, Labels Window, Rasters Window, Confidence W
   - You can also review from the session window: **Previous** / **Next** walk what is
     waiting, least confident first, opening each image and centring the annotation.
     **Mark Verified** confirms it; **Mark as Review** parks anything you cannot judge yet
-  - An image you clear of predictions trains as a **background** image — deleting a wrong
-    box is how you teach the model there is nothing there. An image you simply never
-    annotated is left out of training rather than treated as empty
+  - An image with no annotations is left out of training: one nobody has annotated yet
+    is not empty. To teach the model an image has nothing on it, highlight it in the
+    Rasters Window (or open it) and press **Mark Negative** in the session window. It
+    then trains as a **background** image, and rounds do not predict on it. **Unmark
+    Negative** takes the mark off. Marks last for the session; **New Session** clears them
   - **Image Budget**: how many un-reviewed images a round predicts on. Most of it goes to
     images with nothing on them and the rest to images you have already worked on, so a
     round looks for new objects and checks itself where you are annotating
-  - A round skips the image open on the canvas and images already carrying predictions
-    you have not reviewed; a round that finds nothing tells you which. **Re-run
+  - A round skips the image open on the canvas, images marked negative, and images
+    already carrying predictions you have not reviewed; a round that finds nothing tells you which. **Re-run
     Predictions** predicts again at the current thresholds without training, which is the
     only way a threshold change takes effect before the next round. It reads the **Image
     Budget** as it stands, so raising the budget first reaches images the last round did
