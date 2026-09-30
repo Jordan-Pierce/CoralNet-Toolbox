@@ -195,6 +195,12 @@ All dock windows (Annotation Window, Labels Window, Rasters Window, Confidence W
         - Faster for large datasets, and split folders are kept, so base name conflicts cannot occur
         - A saved project references the original dataset folder and breaks if it is moved or deleted
       - Supports PNG, JPG, JPEG, JFIF, BMP, TIF, TIFF, and WebP images
+    - **Image Import Rule** (right side of the dialog): Choose which images are imported
+      - **Import only images with annotations** (default): skips images that have no label file or mask
+      - **Import all images found in dataset**: includes unlabeled images alongside labeled ones
+      - **Import images only, without annotations**: imports every image and ignores its label file or mask; no labels are created
+      - **Import a random subset**: draws that many images from whichever rule is selected
+    - **Classes to Import**: Uncheck classes to leave them out; Select All and Deselect All toggle the whole list
     - **Annotation Importing**: YOLO format annotations are converted and imported
       - Detection datasets: Bounding boxes converted to Rectangle annotations
       - Instance segmentation datasets: Polygon masks converted to Polygon annotations
@@ -219,7 +225,7 @@ All dock windows (Annotation Window, Labels Window, Rasters Window, Confidence W
       - Each pixel value is the class ID, matching the index in the YAML's `names`
       - Pixel value 255 is the reserved ignore label and is imported as background
       - A class named `background` at index 0 is treated as background, and no label is created for it
-      - Classes unchecked in Advanced Options are left as background
+      - Classes unchecked in Classes to Import are left as background
 
 - **Export**:
   - **Labels**:
