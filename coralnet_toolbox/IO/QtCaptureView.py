@@ -30,6 +30,18 @@ def get_default_filename():
     return datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + ".png"
 
 
+def get_unique_output_path(directory):
+    """Return an absolute timestamped path in `directory` that does not exist yet."""
+    stem, ext = os.path.splitext(get_default_filename())
+    path = os.path.abspath(os.path.join(directory, stem + ext))
+    # Two captures in the same second would otherwise overwrite each other
+    counter = 1
+    while os.path.exists(path):
+        path = os.path.abspath(os.path.join(directory, f"{stem}_{counter}{ext}"))
+        counter += 1
+    return path
+
+
 def clear_transient_overlays(annotation_window):
     """Clear the active tool's hover overlays so they are not baked into a capture.
 
@@ -102,7 +114,9 @@ class CaptureView(QDialog):
         info_text = (
             "Captures exactly what is currently on screen, at the current zoom, pan, and transparency.<br><br>"
             "<b>Application Window:</b> the entire toolbox window, including all docked panels.<br>"
-            "<b>Annotation View:</b> only the annotation canvas, without the frame or scroll bars."
+            "<b>Annotation View:</b> only the annotation canvas, without the frame or scroll bars.<br><br>"
+            "<b>Ctrl+F1</b> captures instantly with the settings below, even while this dialog is closed. "
+            "When saving to disk, each capture gets a new timestamped file name."
         )
         info_label = QLabel(info_text)
         info_label.setWordWrap(True)
@@ -141,8 +155,8 @@ class CaptureView(QDialog):
         self.scale_combo = QComboBox()
         for scale in (1, 2, 3, 4):
             self.scale_combo.addItem("1x (Screen)" if scale == 1 else f"{scale}x", float(scale))
-        self.scale_combo.setCurrentIndex(1)
-        self.scale_combo.setToolTip("Multiple of the on-screen resolution to render at. Also used by Ctrl+F1.\n"
+        self.scale_combo.setCurrentIndex(0)
+        self.scale_combo.setToolTip("Multiple of the on-screen resolution to render at.\n"
                                     "Text and outlines are redrawn sharper; icons and thumbnails are only enlarged.\n"
                                     "3x and 4x are for large prints or cropping into a small region.")
         self.scale_combo.currentIndexChanged.connect(self.update_output_size_label)
@@ -150,8 +164,6 @@ class CaptureView(QDialog):
 
         self.output_size_label = QLabel()
         layout.addRow("Output Size:", self.output_size_label)
-
-        layout.addRow(QLabel("<i>Ctrl+F1 captures the Application Window to the clipboard at this scale.</i>"))
 
         groupbox.setLayout(layout)
         parent_layout.addWidget(groupbox)
@@ -196,7 +208,8 @@ class CaptureView(QDialog):
 
         self.output_name_edit = QLineEdit()
         self.output_name_edit.setToolTip("Name of the image file to write.\n"
-                                         "Defaults to a timestamp; '.png' is added if no extension is given.")
+                                         "Defaults to a timestamp; '.png' is added if no extension is given.\n"
+                                         "Ctrl+F1 ignores this and always writes a new timestamped file.")
         layout.addRow("File Name:", self.output_name_edit)
 
         self.output_groupbox.setLayout(layout)
@@ -229,9 +242,13 @@ class CaptureView(QDialog):
         # Every open gets a fresh timestamp
         self.output_name_edit.setText(get_default_filename())
 
+    def has_image(self):
+        """Return True if an image is loaded in the annotation window."""
+        return bool(getattr(self.annotation_window, 'current_image_path', None))
+
     def update_ui_for_source_availability(self):
         """Disable the annotation view source when no image is loaded."""
-        has_image = bool(getattr(self.annotation_window, 'current_image_path', None))
+        has_image = self.has_image()
         self.annotation_radio.setEnabled(has_image)
 
         if has_image:
@@ -249,9 +266,16 @@ class CaptureView(QDialog):
         """Return the selected resolution scale."""
         return self.scale_combo.currentData()
 
+    def is_annotation_source(self):
+        """Return True if the annotation view is selected and has an image to capture.
+
+        Ctrl+F1 can fire after the image is closed, while the radio still says Annotation View.
+        """
+        return self.annotation_radio.isChecked() and self.has_image()
+
     def get_source_widget(self):
         """Return the widget for the currently selected source."""
-        if self.annotation_radio.isChecked():
+        if self.is_annotation_source():
             return self.annotation_window.viewport()
         return self.main_window
 
@@ -302,6 +326,46 @@ class CaptureView(QDialog):
         """Grab the pixmap for the currently selected source at the selected scale."""
         return capture_high_res_pixmap(self.get_source_widget(), self.get_scale())
 
+    def capture_to_destination(self, output_path=None):
+        """Capture the selected source at the selected scale, to `output_path` or the clipboard.
+
+        Returns the status message; raises on failure.
+        """
+        source_name = "Annotation View" if self.is_annotation_source() else "Application Window"
+
+        self.clear_transient_overlays()
+        QApplication.processEvents()
+
+        # Set the cursor only after the repaint, so the busy cursor is not captured
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            pixmap = self.grab_pixmap()
+            source_name += f" ({pixmap.width()}x{pixmap.height()})"
+
+            if output_path:
+                os.makedirs(os.path.dirname(output_path), exist_ok=True)
+                if not pixmap.save(output_path):
+                    raise IOError(f"Could not write the image to {output_path}")
+                return f"Captured {source_name} — Saved to {output_path}"
+
+            QApplication.clipboard().setPixmap(pixmap)
+            return f"Captured {source_name} — Copied to Clipboard"
+        finally:
+            QApplication.restoreOverrideCursor()
+
+    def quick_capture(self):
+        """Capture with the dialog's current settings without opening it (Ctrl+F1).
+
+        Saving to disk always writes a new timestamped file into the output directory;
+        the File Name field is only used by the Capture button.
+        """
+        output_path = None
+        if self.disk_radio.isChecked():
+            directory = self.output_dir_edit.text().strip() or str(get_screenshot_dir())
+            output_path = get_unique_output_path(directory)
+
+        return self.capture_to_destination(output_path)
+
     def run_capture_process(self):
         """Run the capture process for the selected source and destination."""
         to_disk = self.disk_radio.isChecked()
@@ -320,28 +384,10 @@ class CaptureView(QDialog):
                                        QMessageBox.Yes | QMessageBox.No) == QMessageBox.No:
                     return
 
-        source_name = "Annotation View" if self.annotation_radio.isChecked() else "Application Window"
-
         # Hide the dialog so it does not appear in its own capture
         self.hide()
-        self.clear_transient_overlays()
-        QApplication.processEvents()
-
-        # Set the cursor only after the repaint, so the busy cursor is not captured
-        QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            pixmap = self.grab_pixmap()
-            source_name += f" ({pixmap.width()}x{pixmap.height()})"
-
-            if to_disk:
-                os.makedirs(os.path.dirname(output_path), exist_ok=True)
-                if not pixmap.save(output_path):
-                    raise IOError(f"Could not write the image to {output_path}")
-                message = f"Captured {source_name} — Saved to {output_path}"
-            else:
-                QApplication.clipboard().setPixmap(pixmap)
-                message = f"Captured {source_name} — Copied to Clipboard"
-
+            message = self.capture_to_destination(output_path)
             self.main_window.status_bar.showMessage(message, 5000)
             self.accept()
 
@@ -349,8 +395,6 @@ class CaptureView(QDialog):
             # Bring the dialog back so the user is not left with a vanished window
             self.show()
             QMessageBox.critical(self, "Error", f"An error occurred during capture: {e}")
-        finally:
-            QApplication.restoreOverrideCursor()
 
     def closeEvent(self, event):
         """Handle the close event."""

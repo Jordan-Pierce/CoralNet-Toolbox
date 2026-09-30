@@ -4,8 +4,6 @@ from PyQt5.QtCore import Qt, QObject, QEvent
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QLineEdit, QAbstractSpinBox,
                              QPlainTextEdit, QTextEdit, QComboBox)
 
-from coralnet_toolbox.IO.QtCaptureView import capture_high_res_pixmap, clear_transient_overlays
-
 from coralnet_toolbox.Icons import get_window_icon
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -56,20 +54,12 @@ class GlobalEventFilter(QObject):
             self._status(f"{verb} {action.label}.")
 
     def capture_high_res_screenshot(self):
-        """Grab a supersampled screenshot of the app window and copy it to the clipboard."""
-        clear_transient_overlays(self.annotation_window)
-        QApplication.processEvents()
-        QApplication.setOverrideCursor(Qt.WaitCursor)
+        """Capture with the Capture View dialog's current source, scale, and destination."""
         try:
-            scale = self.main_window.capture_view_dialog.get_scale()
-            pixmap = capture_high_res_pixmap(self.main_window, scale=scale)
-            QApplication.clipboard().setPixmap(pixmap)
-            self._status(f"Captured Application Window ({pixmap.width()}x{pixmap.height()}) — Copied to Clipboard",
-                         5000)
+            message = self.main_window.capture_view_dialog.quick_capture()
+            self._status(message, 5000)
         except Exception as e:
-            self._status(f"Screenshot failed: {e}")
-        finally:
-            QApplication.restoreOverrideCursor()
+            self._status(f"Screenshot failed: {e}", 5000)
 
     def eventFilter(self, obj, event):
         try:
@@ -77,7 +67,7 @@ class GlobalEventFilter(QObject):
             if event.type() == QEvent.KeyPress:
                 if event.modifiers() & Qt.ControlModifier and not (event.modifiers() & Qt.ShiftModifier):
 
-                    # Handle hotkey for high-res app screenshot to clipboard
+                    # Handle hotkey for a capture using the Capture View dialog's settings
                     if event.key() == Qt.Key_F1:
                         self.capture_high_res_screenshot()
                         return True
