@@ -427,6 +427,12 @@ All dock windows (Annotation Window, Labels Window, Rasters Window, Confidence W
     **Deploy Model** always use the best model rather than the newest. The **Rounds**
     table reports mAP50 and mAP50-95, and **Change** is the column to read: it is blank
     when a round trained on different labels and is not comparable
+  - **PU Dataset** (Detect only) trains the project as positive-unlabeled: regions you
+    have not boxed are treated as unknown rather than as background, so the model is not
+    taught to ignore objects nobody has reached yet. It usually lowers mAP while raising
+    recall, so PU rounds are marked **(PU)** and only compared with other PU rounds. Best
+    on medium or larger models at large image sizes; not available for RT-DETR, YOLOv10
+    or YOLO26
   - **Stop** ends a running round after the current epoch, keeping what it trained
   - **New Session** forgets the rounds and starts over, and offers to clear out round
     folders left on disk. **Save Session** copies the best model, its results and a
@@ -463,6 +469,10 @@ All dock windows (Annotation Window, Labels Window, Rasters Window, Confidence W
   - **Train Model**: Train a machine learning model
     - **Classify**: Train classification model
     - **Detect**: Train object detection model
+      - **PU Dataset**: set True when the dataset is only partly annotated (real objects
+        left unboxed). Unboxed regions the model is fairly sure about are dropped from the
+        loss instead of being taught as background. Mosaic is turned off once it is active,
+        and the best-recall epoch is saved as `weights/recall_best.pt` beside `best.pt`
     - **Segment**: Train instance segmentation model
     - **Semantic**: Train semantic segmentation model
   - **Evaluate Model**: Evaluate a trained model

@@ -86,6 +86,7 @@ from coralnet_toolbox.Features.FeatureMapCodec import load_feature_vector
 from coralnet_toolbox.MachineLearning import InPlaceTraining
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 from coralnet_toolbox.MachineLearning.TrainModel.QtBase import TrainModelWorker
+from coralnet_toolbox.MachineLearning.PUDetection import pu_supported_name
 from coralnet_toolbox.MachineLearning.TrainModel.QtDetect import STANDARD_MODELS as DETECT_MODELS
 from coralnet_toolbox.MachineLearning.TrainModel.QtSegment import STANDARD_MODELS as SEGMENT_MODELS
 
@@ -142,6 +143,10 @@ TRAINING_DEFAULTS = {
     # through WeightedInMemoryDataset, which is what the MRO composition test
     # covers, so this costs nothing here.
     'weighted': True,
+    # Off by default, unlike weighted sampling: it changes what training
+    # optimises, costs a teacher forward pass per batch, and the measured edge
+    # needs a bigger model than a round wants to run. Offered, not assumed.
+    'pu_dataset': False,
     'val': True,
     'verbose': True,
     'exist_ok': True,
@@ -958,6 +963,41 @@ class Base(QDialog):
             "On by default here: an Active Learning project is uneven almost by\n"
             "definition early on, when one label has been drawn far more than the rest.")
         layout.addRow("Weighted Sampling:", self.weighted_combo)
+
+        # Detection only: the ignore band masks anchors of the detection loss,
+        # which is not what a segmentation round trains through. Absent rather
+        # than disabled for segment, so it is not a question with no answer.
+        self.pu_dataset_combo = None
+        if self.task == 'detect':
+            # Kept so update_pu_availability can restore it after a model
+            # that cannot run PU has replaced it with the reason.
+            self.pu_dataset_tooltip = (
+                "Train the project as a positive-unlabeled dataset: regions you have not\n"
+                "boxed are treated as unknown rather than as guaranteed background.\n\n"
+                "This is the normal state of an Active Learning project. You confirm what\n"
+                "the round put in front of you and leave the rest of the frame alone, so\n"
+                "real objects sit unlabeled in images that count as fully reviewed. A slow\n"
+                "average of the model marks regions it is fairly confident about, and where\n"
+                "you drew nothing those are dropped from the loss instead of teaching the\n"
+                "model that nothing is there. Your labels are never added to.\n\n"
+                "Costs a forward pass per batch and a second copy of the model in memory,\n"
+                "and turns mosaic off for the epochs it is active.\n\n"
+                "Two things to know before turning it on. The measured benefit needs a\n"
+                "medium or larger model at a large image size; at nano, which is the\n"
+                "default here, it came out level with or slightly behind normal training.\n"
+                "And it usually lowers mAP while raising recall, because finding an\n"
+                "unlabeled object scores as a false positive. PU rounds are therefore\n"
+                "only ever compared with other PU rounds, and are marked (PU) in the\n"
+                "Rounds table.")
+            self.pu_dataset_combo = bool_combo(TRAINING_DEFAULTS['pu_dataset'],
+                                               self.pu_dataset_tooltip)
+            self.pu_dataset_label = QLabel("PU Dataset:")
+            layout.addRow(self.pu_dataset_label, self.pu_dataset_combo)
+            # create_model_group() has already run, so the combo exists to
+            # watch. Browse writes into it too, so this covers both ways the
+            # model can change.
+            self.model_combo.currentTextChanged.connect(self.update_pu_availability)
+            self.update_pu_availability()
 
         self.freeze_layers_spinbox = QDoubleSpinBox()
         self.freeze_layers_spinbox.setRange(0.0, 1.0)
@@ -2277,6 +2317,41 @@ class Base(QDialog):
         return InPlaceTraining.InPlaceDataset(
             self.task, records_by_split, classes, cache_root=self.cache_root())
 
+    def update_pu_availability(self, *args):
+        """Grey PU Dataset out for a model that cannot run it.
+
+        Off as well as disabled, so a stale "True" cannot survive behind a
+        greyed-out box and reach a round that never asked for it.
+
+        Only the names in the dropdown are recognised. A path typed or browsed
+        in stays enabled, because a filename proves nothing and an earlier
+        session's best.pt is the most ordinary thing to continue from. Warm
+        start substitutes such a checkpoint on its own anyway, so the real check
+        has to happen against the built model -- it does, in
+        TrainModelWorker.setup_pu_training, which fails the round with the
+        reason rather than training something other than what was asked for.
+        """
+        if getattr(self, 'pu_dataset_combo', None) is None:
+            return
+
+        model = self.model_combo.currentText()
+        supported, reason = pu_supported_name(model)
+
+        self.pu_dataset_combo.setEnabled(supported)
+        self.pu_dataset_label.setEnabled(supported)
+        if supported:
+            self.pu_dataset_combo.setToolTip(self.pu_dataset_tooltip)
+        else:
+            self.pu_dataset_combo.setCurrentText("False")
+            self.pu_dataset_combo.setToolTip(
+                "Not available for {}.\n{}".format(os.path.basename(str(model)), reason))
+
+    def pu_dataset_requested(self):
+        """Whether the next round trains as positive-unlabeled."""
+        combo = getattr(self, 'pu_dataset_combo', None)
+        return bool(combo is not None and combo.isEnabled()
+                    and combo.currentText() == "True")
+
     def update_budget_range(self):
         """Cap the Image Budget at the number of images the project holds.
 
@@ -2632,6 +2707,10 @@ class Base(QDialog):
             # The model's class names are exactly these, in this order, so the
             # prediction pass needs them to map detections back onto labels.
             'labels': list(dataset.names),
+            # Recorded on the round, not read back off the widget later: the
+            # user can toggle it mid-session and round_improved has to know how
+            # each round was actually trained.
+            'pu_dataset': bool(params.get('pu_dataset')),
             'stopped': False,
         }
 
@@ -2918,6 +2997,7 @@ class Base(QDialog):
             'dropout': self.dropout_spinbox.value(),
             'freeze_layers': self.freeze_layers_spinbox.value(),
             'weighted': self.weighted_combo.currentText() == "True",
+            'pu_dataset': self.pu_dataset_requested(),
             'single_cls': self.single_class_combo.currentText() == "True",
             'mask_ratio': self.mask_ratio_spinbox.value(),
             'workers': self.workers_spinbox.value(),
@@ -2950,6 +3030,9 @@ class Base(QDialog):
             'project': getattr(self.main_window, 'current_project_path', '') or '',
             'best_round': entry.get('round'),
             'labels': list(entry.get('labels') or []),
+            # How the saved model was trained, which `settings` cannot say: that
+            # is the widget now, and the toggle can change mid-session.
+            'pu_dataset': bool(entry.get('pu_dataset')),
             'metrics': {
                 'precision': entry.get('precision'),
                 'recall': entry.get('recall'),
@@ -2970,6 +3053,7 @@ class Base(QDialog):
                 'map5095': record.get('map5095'),
                 'fitness': record.get('fitness'),
                 'epoch': record.get('epoch'),
+                'pu_dataset': bool(record.get('pu_dataset')),
                 'stopped': record.get('stopped'),
                 'labels': list(record.get('labels') or []),
             } for record in self.round_history],
@@ -3324,6 +3408,8 @@ class Base(QDialog):
             'single_cls': self.single_class_combo.currentText() == "True",
             'mask_ratio': self.mask_ratio_spinbox.value(),
             'weighted': self.weighted_combo.currentText() == "True",
+            # Ours, not Ultralytics': the worker pops it before model.train().
+            'pu_dataset': self.pu_dataset_requested(),
             'freeze_layers': self.freeze_layers_spinbox.value(),
             'dropout': self.dropout_spinbox.value(),
             'optimizer': self.optimizer_combo.currentText(),
@@ -3439,11 +3525,21 @@ class Base(QDialog):
     def round_improved(self):
         """Whether the round just recorded beat the best comparable one before it.
 
-        Comparable means the same label set: a round that added a class is a
-        different measurement, not a worse one, so it is always adopted. So is
-        a round with no metric at all -- validation turned off, or results.csv
-        unreadable -- because refusing to adopt on missing evidence would leave
-        a session that can never adopt anything.
+        Comparable means the same label set **and** the same training mode: a
+        round that added a class is a different measurement, not a worse one,
+        so it is always adopted. So is a round with no metric at all --
+        validation turned off, or results.csv unreadable -- because refusing to
+        adopt on missing evidence would leave a session that can never adopt
+        anything.
+
+        PU Dataset rounds count as a different mode for the same reason, and it
+        matters more than it looks. PU trades mAP for recall on purpose: a model
+        that starts finding objects nobody boxed is scored down for it, because
+        those finds land against val labels that do not contain them. So the
+        first PU round almost always reports a lower mAP than the plain rounds
+        before it, and comparing the two would leave the session permanently
+        refusing to adopt a PU round and quietly predicting with the old model.
+        PU rounds are ranked against PU rounds.
         """
         if len(self.round_history) < 2:
             return True
@@ -3455,12 +3551,18 @@ class Base(QDialog):
 
         comparable = [entry for entry in self.round_history[:-1]
                       if Base.round_score(entry) is not None
-                      and entry.get('labels') == latest.get('labels')]
+                      and Base.rounds_comparable(entry, latest)]
         if not comparable:
             return True
 
         best = max(comparable, key=Base.round_score)
         return metric > Base.round_score(best)
+
+    @staticmethod
+    def rounds_comparable(entry, other):
+        """Whether two rounds' scores measure the same thing: same labels, same mode."""
+        return (entry.get('labels') == other.get('labels')
+                and bool(entry.get('pu_dataset')) == bool(other.get('pu_dataset')))
 
     def record_outcome(self, **fields):
         """Fold what a post-round pass produced into this round's summary."""
@@ -3605,6 +3707,11 @@ class Base(QDialog):
         """
         scored = [entry for entry in self.round_history
                   if Base.round_score(entry) is not None]
+        # Within the latest round's training mode only: a PU round's mAP drop
+        # against a plain round is the trade it was asked to make, not a loss.
+        if scored:
+            pu = bool(scored[-1].get('pu_dataset'))
+            scored = [entry for entry in scored if bool(entry.get('pu_dataset')) == pu]
         if len(scored) < 2:
             return BLANK_STAT
         change = self.metric_delta(Base.round_score(scored[-1]),
@@ -4062,6 +4169,7 @@ class Base(QDialog):
             'epoch': metrics.get('epoch'),
             'weights': weights,
             'labels': pending['labels'],
+            'pu_dataset': bool(pending.get('pu_dataset')),
             'stopped': bool(pending.get('stopped')),
         })
 
@@ -4071,13 +4179,17 @@ class Base(QDialog):
     def populate_history_table(self):
         """Rebuild the Rounds table from the recorded history."""
         self.history_table.setRowCount(0)
-        previous = None
-        previous_labels = None
+        # The last scored round of each training mode, as (score, labels). A
+        # PU round is compared with the PU round before it, never with a plain
+        # one -- the same rule round_improved adopts by.
+        previous_by_mode = {False: (None, None), True: (None, None)}
         for entry in self.round_history:
             row = self.history_table.rowCount()
             self.history_table.insertRow(row)
 
             score = self.round_score(entry)
+            pu = bool(entry.get('pu_dataset'))
+            previous, previous_labels = previous_by_mode[pu]
 
             def cell(key):
                 value = entry.get(key)
@@ -4112,14 +4224,14 @@ class Base(QDialog):
             # thin thing to read it from.
             self.color_delta_cell(row, values[HIST_DELTA])
 
-            if entry.get('stopped'):
+            tags = [tag for tag, on in (("PU", pu), ("stopped", entry.get('stopped'))) if on]
+            if tags:
                 item = self.history_table.item(row, HIST_ROUND)
                 if item is not None:
-                    item.setText(f"{values[HIST_ROUND]} (stopped)")
+                    item.setText(f"{values[HIST_ROUND]} ({', '.join(tags)})")
 
             if score is not None:
-                previous = score
-                previous_labels = entry.get('labels')
+                previous_by_mode[pu] = (score, entry.get('labels'))
 
     def color_delta_cell(self, row, text):
         """Colour one Change cell by which way the round went.
