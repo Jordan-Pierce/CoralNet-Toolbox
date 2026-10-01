@@ -86,7 +86,8 @@ from coralnet_toolbox.Features.FeatureMapCodec import load_feature_vector
 from coralnet_toolbox.MachineLearning import InPlaceTraining
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 from coralnet_toolbox.MachineLearning.TrainModel.QtBase import TrainModelWorker
-from coralnet_toolbox.MachineLearning.PUDetection import pu_supported_name
+from coralnet_toolbox.MachineLearning.PUDetection import (PU_MODELS_NOTE, pu_supported_model,
+                                                         pu_unavailable_tooltip)
 from coralnet_toolbox.MachineLearning.TrainModel.QtDetect import STANDARD_MODELS as DETECT_MODELS
 from coralnet_toolbox.MachineLearning.TrainModel.QtSegment import STANDARD_MODELS as SEGMENT_MODELS
 
@@ -988,7 +989,8 @@ class Base(QDialog):
                 "And it usually lowers mAP while raising recall, because finding an\n"
                 "unlabeled object scores as a false positive. PU rounds are therefore\n"
                 "only ever compared with other PU rounds, and are marked (PU) in the\n"
-                "Rounds table.")
+                "Rounds table.\n\n"
+                + PU_MODELS_NOTE)
             self.pu_dataset_combo = bool_combo(TRAINING_DEFAULTS['pu_dataset'],
                                                self.pu_dataset_tooltip)
             self.pu_dataset_label = QLabel("PU Dataset:")
@@ -2323,19 +2325,20 @@ class Base(QDialog):
         Off as well as disabled, so a stale "True" cannot survive behind a
         greyed-out box and reach a round that never asked for it.
 
-        Only the names in the dropdown are recognised. A path typed or browsed
-        in stays enabled, because a filename proves nothing and an earlier
-        session's best.pt is the most ordinary thing to continue from. Warm
-        start substitutes such a checkpoint on its own anyway, so the real check
-        has to happen against the built model -- it does, in
-        TrainModelWorker.setup_pu_training, which fails the round with the
-        reason rather than training something other than what was asked for.
+        The dropdown's families are refused by name. A path typed or browsed in
+        is refused only when its run's args.yaml says it was trained from one of
+        them, because a filename proves nothing and an earlier session's best.pt
+        is the most ordinary thing to continue from. Warm start substitutes such
+        a checkpoint on its own anyway, so the real check has to happen against
+        the built model -- it does, in TrainModelWorker.setup_pu_training, which
+        fails the round with the reason rather than training something other
+        than what was asked for.
         """
         if getattr(self, 'pu_dataset_combo', None) is None:
             return
 
         model = self.model_combo.currentText()
-        supported, reason = pu_supported_name(model)
+        supported, reason, source = pu_supported_model(model)
 
         self.pu_dataset_combo.setEnabled(supported)
         self.pu_dataset_label.setEnabled(supported)
@@ -2343,8 +2346,7 @@ class Base(QDialog):
             self.pu_dataset_combo.setToolTip(self.pu_dataset_tooltip)
         else:
             self.pu_dataset_combo.setCurrentText("False")
-            self.pu_dataset_combo.setToolTip(
-                "Not available for {}.\n{}".format(os.path.basename(str(model)), reason))
+            self.pu_dataset_combo.setToolTip(pu_unavailable_tooltip(model, reason, source))
 
     def pu_dataset_requested(self):
         """Whether the next round trains as positive-unlabeled."""

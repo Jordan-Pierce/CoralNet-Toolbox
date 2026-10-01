@@ -31,7 +31,8 @@ from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedClassificat
 from coralnet_toolbox.MachineLearning.EvaluateModel.QtBase import EvaluateModelWorker
 from coralnet_toolbox.MachineLearning.RunLog import capture_run_log
 from coralnet_toolbox.MachineLearning.PUDetection import (
-    PUDetectionTrainer, pu_close_mosaic, pu_supported_name, supports_pu)
+    PU_MODELS_NOTE, PUDetectionTrainer, pu_close_mosaic, pu_supported_model,
+    pu_unavailable_tooltip, supports_pu)
 
 from coralnet_toolbox.Icons import get_window_icon
 
@@ -914,7 +915,7 @@ class Base(QDialog):
                 "usually lowers mAP while raising recall, because a find nobody labeled\n"
                 "scores as a false positive. The epoch with the best recall is kept as\n"
                 "weights/recall_best.pt beside best.pt.\n\n"
-                "Not available for RT-DETR, YOLOv10 or YOLO26.")
+                + PU_MODELS_NOTE)
             self.pu_dataset_combo.setToolTip(self.pu_dataset_tooltip)
             self.pu_dataset_label = QLabel("PU Dataset:")
             form_layout.addRow(self.pu_dataset_label, self.pu_dataset_combo)
@@ -1018,17 +1019,18 @@ class Base(QDialog):
         behind a greyed-out box would send `pu_dataset` on the next run of a
         model that had nothing to do with the choice.
 
-        This is the name check, which only recognises the families in the
-        dropdown. A browsed .pt stays enabled -- its filename proves nothing,
-        and refusing PU for an earlier run's best.pt would rule out the most
-        ordinary case there is. The model itself is checked for real once it has
-        been built, in TrainModelWorker.setup_pu_training.
+        The dropdown's families are refused by name. A browsed .pt is refused
+        only when its run's args.yaml says it was trained from one of them;
+        its filename alone proves nothing, and refusing PU for an earlier run's
+        best.pt on a guess would rule out the most ordinary case there is. The
+        model itself is checked for real once it has been built, in
+        TrainModelWorker.setup_pu_training.
         """
         if getattr(self, 'pu_dataset_combo', None) is None:
             return
 
         model, _ = self.selected_model()
-        supported, reason = pu_supported_name(model)
+        supported, reason, source = pu_supported_model(model)
 
         self.pu_dataset_combo.setEnabled(supported)
         self.pu_dataset_label.setEnabled(supported)
@@ -1036,8 +1038,7 @@ class Base(QDialog):
             self.pu_dataset_combo.setToolTip(self.pu_dataset_tooltip)
         else:
             self.pu_dataset_combo.setCurrentText("False")
-            self.pu_dataset_combo.setToolTip(
-                "Not available for {}.\n{}".format(os.path.basename(str(model)), reason))
+            self.pu_dataset_combo.setToolTip(pu_unavailable_tooltip(model, reason, source))
 
     def pu_dataset_requested(self):
         """Whether this run should train as positive-unlabeled."""

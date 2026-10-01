@@ -50,8 +50,10 @@ import os
 import re
 import math
 import shutil
+import textwrap
 from copy import deepcopy
 
+import yaml
 import torch
 
 from ultralytics.models.yolo.detect.train import DetectionTrainer
@@ -78,6 +80,20 @@ WARMUP_FRACTION = 0.12  # GT-only epochs before the teacher is worth listening t
 # both weighted zero -- and mAP is exactly the number PU is expected to spend.
 # Without this the run can train past its own best model and never save it.
 RECALL_CHECKPOINT = 'recall_best.pt'
+
+# The families the anchor-based v8 loss covers, as a user reads them. Every
+# community detection config ends in that same Detect head, so they qualify too.
+PU_FAMILIES = "YOLOv3u, YOLOv5u, YOLOv8, YOLOv9, YOLO11 or YOLO12"
+
+# What the dialogs append to the PU Dataset tooltip, enabled or not, so the
+# models it works with are stated rather than left to be found by elimination.
+PU_MODELS_NOTE = ("Works with: YOLOv3u, YOLOv5u, YOLOv8, YOLOv9, YOLO11, YOLO12, and the\n"
+                  "community detection models.\n"
+                  "Not available for: RT-DETR, YOLOv10, YOLO26.")
+
+# How far back pu_supported_model follows a checkpoint's run records. A warm
+# started Active Learning round is a chain of best.pt files, one per round.
+MAX_LINEAGE = 16
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -144,15 +160,15 @@ def supports_pu(model):
     if 'RTDETR' in head_name.upper():
         return False, ("RT-DETR trains through DETR-style Hungarian matching over "
                        "queries, which has no anchors for the ignore band to mask. "
-                       "Use a YOLO detection model.")
+                       f"Use a {PU_FAMILIES} model instead.")
     # one2one_cv2 is the test DetectionModel.init_criterion itself uses to pick
     # E2ELoss (8.4.153). The end2end flag alone is not enough: a YOLO26 head
     # reports end2end False and still trains through E2ELoss.
     if (getattr(head, 'one2one_cv2', None) is not None
             or getattr(inner, 'end2end', False) or 'v10' in head_name.lower()):
         return False, ("End-to-end models (YOLOv10, YOLO26) train through E2ELoss, "
-                       "a pair of losses this does not wrap. Use a YOLOv8, YOLOv9, "
-                       "YOLO11 or YOLO12 model.")
+                       f"a pair of losses this does not wrap. Use a {PU_FAMILIES} "
+                       "model instead.")
     if not all(hasattr(head, attr) for attr in ('stride', 'nc', 'reg_max')):
         return False, (f"This model's head ({head_name}) is not the anchor-based "
                        "detection head the ignore band masks.")
@@ -195,6 +211,99 @@ def pu_supported_name(name):
         if pattern.search(base):
             return False, reason
     return True, ""
+
+
+def _trained_from(path):
+    """The model a checkpoint was trained from, per its run's args.yaml, or None.
+
+    Ultralytics writes args.yaml into every run folder, beside the weights/
+    folder that holds best.pt, and its ``model`` entry is what the run was
+    started from. That is the record of what is inside a checkpoint, and it
+    costs a small YAML read rather than unpickling the model.
+    """
+    path = str(path or "").strip()
+    if not path or not os.path.isfile(path):
+        return None
+
+    folder = os.path.dirname(os.path.abspath(path))
+    # weights/best.pt keeps its record one level up; a checkpoint copied out
+    # with its results (Save Session) keeps it alongside
+    if os.path.basename(folder).lower() == 'weights':
+        folder = os.path.dirname(folder)
+
+    args_path = os.path.join(folder, 'args.yaml')
+    if not os.path.isfile(args_path):
+        return None
+    try:
+        with open(args_path, 'r') as file:
+            args = yaml.safe_load(file)
+    except Exception:
+        return None
+
+    parent = args.get('model') if isinstance(args, dict) else None
+    return str(parent) if parent else None
+
+
+def pu_supported_model(model):
+    """:func:`pu_supported_name`, extended back through a checkpoint's lineage.
+
+    Returns ``(supported, reason, source)``, where ``source`` is the name that
+    settled it: the model itself, or the model an earlier run trained it from.
+
+    A browsed ``best.pt`` says nothing by its name, but its run folder records
+    what it was trained from, and that model may itself be an earlier run's
+    checkpoint. Following those records refuses a fine tuned YOLO26 the same as
+    the dropdown entry it came from. Still one-sided, like the name check: a
+    checkpoint with no record is allowed, and :func:`supports_pu` decides once
+    the model is built.
+    """
+    current = str(model or "").strip()
+    seen = set()
+    for _ in range(MAX_LINEAGE):
+        supported, reason = pu_supported_name(current)
+        if not supported:
+            if current != str(model or "").strip():
+                reason = "It was trained from {}. {}".format(os.path.basename(current), reason)
+            return False, reason, current
+
+        parent = _trained_from(current)
+        if not parent:
+            break
+        key = os.path.normcase(os.path.abspath(parent)) if os.path.isfile(parent) else parent
+        if key in seen:
+            break
+        seen.add(key)
+        current = parent
+
+    return True, "", str(model or "").strip()
+
+
+# The size letter of a refused family, so the suggestion keeps the model the
+# same size. YOLOv10's b (balanced) sits between m and l; l is the nearer offer.
+_REFUSED_SIZE = re.compile(r'yolo_?v?(?:10|26)([nsmblx])|rtdetr-([lx])', re.I)
+
+
+def pu_alternative(name):
+    """The YOLO11 model of the same size as a refused one, or None if unknown."""
+    match = _REFUSED_SIZE.search(os.path.basename(str(name or "")))
+    if not match:
+        return None
+    size = (match.group(1) or match.group(2)).lower()
+    return "yolo11{}.pt".format('l' if size == 'b' else size)
+
+
+def pu_unavailable_tooltip(model, reason, source):
+    """The PU Dataset tooltip for a model that cannot run it: why, and what can."""
+    name = os.path.basename(str(model or "")) or "this model"
+    lines = ["Not available for {}.".format(name),
+             textwrap.fill(reason, width=78),
+             "",
+             PU_MODELS_NOTE]
+
+    alternative = pu_alternative(source)
+    if alternative:
+        lines.append("Try {} instead: the same size, and it supports PU Dataset.".format(alternative))
+    return "\n".join(lines)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
