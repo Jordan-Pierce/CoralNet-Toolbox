@@ -1839,15 +1839,28 @@ class MaskAnnotation(Annotation):
             return [QPointF(x, y) for x, y in contour_array.reshape(-1, 2).tolist()]
 
         def _is_axis_aligned_quad(points, tolerance=1.0):
+            """True for four points tracing an axis-aligned rectangle.
+
+            Edges have to alternate horizontal and vertical. Checking only that
+            each edge is one or the other passed a narrow diamond -- every edge
+            is within a pixel of vertical -- and replaced it with its bounding
+            box, a rectangle twice its area.
+            """
             if len(points) != 4:
                 return False
             coordinates = [(point.x(), point.y()) for point in points]
+            horizontal = []
             for index in range(4):
                 x1, y1 = coordinates[index]
                 x2, y2 = coordinates[(index + 1) % 4]
-                if not (abs(x2 - x1) <= tolerance or abs(y2 - y1) <= tolerance):
-                    return False
-            return True
+                dx, dy = abs(x2 - x1), abs(y2 - y1)
+                if dy <= tolerance and dy < dx:
+                    horizontal.append(True)
+                elif dx <= tolerance and dx < dy:
+                    horizontal.append(False)
+                else:
+                    return False  # slanted, or a diagonal pixel step
+            return all(horizontal[i] != horizontal[(i + 1) % 4] for i in range(4))
 
         def _build_annotation(label, exterior_points, hole_points_list):
             if len(exterior_points) == 4 and not hole_points_list and _is_axis_aligned_quad(exterior_points):

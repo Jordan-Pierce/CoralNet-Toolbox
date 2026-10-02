@@ -6,7 +6,7 @@ import uuid
 import random
 from contextlib import contextmanager
 
-from PyQt5.QtCore import QMimeData, QTimer, Qt, pyqtSignal, QRectF, pyqtProperty
+from PyQt5.QtCore import QMimeData, QTimer, Qt, pyqtSignal, QRectF, pyqtProperty, QEvent
 from PyQt5.QtGui import (QColor, QPainter, QPen, QBrush, QFontMetrics, QLinearGradient, QDrag)
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QToolButton, QWidget, QHBoxLayout,
                              QVBoxLayout, QColorDialog, QLineEdit, QDialog, 
@@ -582,7 +582,8 @@ class LabelWindow(QWidget):
         self.edit_label_button.clicked.connect(self.open_edit_label_dialog)
         self.bulk_map_button.clicked.connect(self.open_bulk_map_dialog)
         self.delete_label_button.clicked.connect(self.delete_active_label)
-        self.labelSelected.connect(self.annotation_window.set_selected_label)
+        # labelSelected -> AnnotationWindow.set_selected_label is wired once, in
+        # MainWindow. Connecting it here as well ran every relabel twice.
 
         # Initialize labels
         self.labels = []
@@ -700,7 +701,29 @@ class LabelWindow(QWidget):
         
         self.scroll_area.setWidget(self.scroll_content)
         self.layout.addWidget(self.scroll_area)
-        
+
+        # Clicking a label hands the keyboard back to the canvas. A label has no
+        # focus policy of its own, so Qt gives a click's focus to the first
+        # parent that takes it -- this scroll area -- and Space (SAM, See
+        # Anything, Feature Select) and Select's Ctrl+C / Ctrl+X then went to
+        # the label list, where they do nothing, until the canvas was clicked.
+        self.scroll_area.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        """Pass click focus on the label list through to the canvas."""
+        if (obj is self.scroll_area and event.type() == QEvent.FocusIn
+                and event.reason() == Qt.MouseFocusReason):
+            # Deferred: moving focus from inside its own FocusIn is re-entrant
+            QTimer.singleShot(0, self._return_focus_to_canvas)
+        return super().eventFilter(obj, event)
+
+    def _return_focus_to_canvas(self):
+        try:
+            if self.annotation_window.isVisible():
+                self.annotation_window.setFocus(Qt.OtherFocusReason)
+        except RuntimeError:
+            pass  # window teardown
+
     # --- DOCK WRAPPER HOOKS ---
 
     def create_action_toolbar(self) -> QToolBar:

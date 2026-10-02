@@ -129,6 +129,9 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
         self.rasterized_annotations_cache = []  # Caches vector annotations during mask mode
         self.selected_label = None  # Flag to check if an active label is set
         self.selected_tool = None  # Store the current tool state
+        # Last tool given up for Select; Ctrl+Alt returns to it (see
+        # MainWindow.switch_back_to_tool)
+        self.tool_before_select = None
         self._syncing_selection = False  # Flag to prevent selection sync loops
         self._skip_phantom_refresh = False  # Flag to coalesce phantom rebuilds
         # Streaming inference mode: when True, new annotations are saved to the
@@ -1785,6 +1788,8 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
             return
         
         self.selected_tool = tool
+        if tool == "select" and previous_tool and previous_tool != "select":
+            self.tool_before_select = previous_tool
 
         # --- OPTIMIZED LOGIC FOR MASK/VECTOR MODE SWITCHING (DO NOT CHANGE) ---
         # Determine if we are entering or leaving mask editing mode

@@ -432,6 +432,13 @@ class SelectTool(Tool):
             elif event.key() == Qt.Key_Space:
                 self.update_with_top_machine_confidence()
 
+        # 1-5 pick that rank's bar in the Confidence Window, which hands the
+        # keyboard back here once clicked. Plain digits only: Ctrl+1..6 run the
+        # deployed models (GlobalEventFilter).
+        elif not (int(modifiers) & ~int(Qt.KeypadModifier)) and Qt.Key_1 <= event.key() <= Qt.Key_5:
+            if not event.isAutoRepeat():
+                self.annotation_window.main_window.confidence_window.select_rank(event.key() - Qt.Key_1)
+
     @staticmethod
     def _is_ctrl_shift_down(event: QKeyEvent) -> bool:
         """True when Ctrl and Shift are both held, given this key press.

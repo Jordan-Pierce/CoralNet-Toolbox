@@ -179,6 +179,16 @@ class MainWindow(QMainWindow):
     areaModeChanged = pyqtSignal(str)  # Signal to emit the area threshold's unit
     boundaryToleranceChanged = pyqtSignal(bool)  # Signal to emit whether to keep detections on boundaries
 
+    # Annotation types each drawing tool can make; Ctrl+Alt from Select returns
+    # to one of these (see switch_back_to_tool)
+    TOOL_OUTPUT_TYPES = {
+        "patch": ("PatchAnnotation",),
+        "rectangle": ("RectangleAnnotation",),
+        "polygon": ("PolygonAnnotation", "MultiPolygonAnnotation"),
+        "sam": ("PolygonAnnotation", "RectangleAnnotation"),
+        "see_anything": ("PolygonAnnotation", "RectangleAnnotation"),
+    }
+
     def __init__(self, __version__):
         super().__init__()
         
@@ -2252,7 +2262,12 @@ class MainWindow(QMainWindow):
                     self.import_images.dragMoveEvent(event)
                 
     def switch_back_to_tool(self):
-        """Switches back to the tool used to create the currently selected annotation."""        
+        """Ctrl+Alt: switch to Select, or from Select back to an annotation tool.
+
+        From Select this returns to the tool that was left for it, unless that
+        tool could not have made the selected annotation; then it picks the tool
+        for the annotation's type.
+        """
         # Get the currently selected tool from AnnotationWindow
         selected_tool = self.annotation_window.get_selected_tool()
         
@@ -2273,16 +2288,28 @@ class MainWindow(QMainWindow):
         if selected_tool != "select":
             self.choose_specific_tool("select")
             return
-        
+
         # Get the currently selected annotation type
         annotation_type = self.annotation_window.get_selected_annotation_type()
-        
+        annotation_type = annotation_type.__name__ if annotation_type is not None else None
+
+        # Go back to the tool that was given up for Select when it could have
+        # made the selected annotation, or when there is no single annotation to
+        # go by. Choosing by type alone sent a SAM user to the Polygon tool,
+        # whose crosshair looks the same but which has no work area, so Space
+        # appeared to do nothing.
+        previous_tool = self.annotation_window.tool_before_select
+        previous_outputs = self.TOOL_OUTPUT_TYPES.get(previous_tool)
+        # Video mode disables some of them; the toolbar button says which
+        previous_action = getattr(self, f"{previous_tool}_tool_action", None)
+        if previous_outputs and previous_action is not None and previous_action.isEnabled() and \
+                (annotation_type is None or annotation_type in previous_outputs):
+            self.choose_specific_tool(previous_tool)
+            return
+
         if annotation_type is None:
             return
-        
-        # Convert the annotation type to a string
-        annotation_type = str(annotation_type.__name__)
-        
+
         if annotation_type == "PatchAnnotation":
             self.choose_specific_tool("patch")
         elif annotation_type == "RectangleAnnotation":
