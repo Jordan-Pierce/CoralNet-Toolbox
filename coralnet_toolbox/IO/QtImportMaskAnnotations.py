@@ -1,13 +1,14 @@
 import warnings
 
 import os
+import ujson as json
 
 import numpy as np
 from PIL import Image
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QPainter, QPen
-from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox,
+from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QFormLayout,
                              QComboBox, QLineEdit, QPushButton, QFileDialog,
                              QApplication, QMessageBox, QLabel, QTableWidgetItem,
                              QWidget, QTableWidget, QHeaderView, QAbstractItemView)
@@ -81,6 +82,9 @@ class ImportMaskAnnotations(QDialog):
         self.detected_mode = None  # 'semantic' (1-channel) or 'rgb' (3-channel)
         self.unique_values = []  # List of unique values found in masks
         self.mapping_widgets = {}  # Maps value -> QComboBox for label selection
+        self.pending_labels = {}  # Short code -> label dict, for mapped labels the project lacks
+        self.auto_mapping_path = ""  # Class mapping found next to the masks, not chosen by hand
+        self.scan_status_text = ""  # Scan summary, kept so the mapping summary can follow it
 
         # Main layout for the dialog
         self.main_layout = QVBoxLayout(self)
@@ -121,7 +125,10 @@ class ImportMaskAnnotations(QDialog):
             "• Mask filenames must match project image filenames "
             "(e.g., <code>img_01.png</code> matches <code>img_01.jpg</code>)<br>"
             "• Mask dimensions must exactly match the corresponding image dimensions<br>"
-            "• Only <code>.png</code> files are supported"
+            "• Only <code>.png</code> files are supported<br><br>"
+            "<b>Class Mapping (optional):</b> A <code>class_mapping.json</code> written by Export Masks fills in "
+            "the table for you, and adds any labels it names that the project does not have yet. One saved next "
+            "to the selected masks is picked up automatically."
         )
         info_label = QLabel(info_text)
         info_label.setWordWrap(True)
@@ -132,21 +139,33 @@ class ImportMaskAnnotations(QDialog):
     def setup_input_layout(self, parent_layout=None):
         """Set up the input directory and scan layout."""
         groupbox = QGroupBox("Input")
-        layout = QVBoxLayout()
+        layout = QFormLayout()
 
         # Directory/file selection
         input_layout = QHBoxLayout()
-        masks_label = QLabel("Masks:")
         self.input_path_edit = QLineEdit()
         self.input_path_edit.setPlaceholderText("Select PNG mask files...")
         self.input_path_edit.setToolTip("Path(s) to PNG mask files.\nMultiple files can be selected, separated by semicolons.")
         self.browse_button = QPushButton("Browse...")
         self.browse_button.clicked.connect(self.browse_input)
         self.browse_button.setToolTip("Browse for PNG mask files to import.")
-        input_layout.addWidget(masks_label)
         input_layout.addWidget(self.input_path_edit)
         input_layout.addWidget(self.browse_button)
-        layout.addLayout(input_layout)
+        layout.addRow("Masks:", input_layout)
+
+        # Optional class mapping, which fills in the value to label table after a scan
+        mapping_layout = QHBoxLayout()
+        self.mapping_path_edit = QLineEdit()
+        self.mapping_path_edit.setPlaceholderText("Optional class_mapping.json...")
+        self.mapping_path_edit.setToolTip("A class_mapping.json written by Export Masks.\n"
+                                          "Its values fill in the mapping table after a scan.\n"
+                                          "One saved next to the selected masks is picked up automatically.")
+        self.mapping_browse_button = QPushButton("Browse...")
+        self.mapping_browse_button.clicked.connect(self.browse_class_mapping)
+        self.mapping_browse_button.setToolTip("Browse for a class mapping JSON file.")
+        mapping_layout.addWidget(self.mapping_path_edit)
+        mapping_layout.addWidget(self.mapping_browse_button)
+        layout.addRow("Class Mapping:", mapping_layout)
 
         groupbox.setLayout(layout)
         parent_layout.addWidget(groupbox)
@@ -216,6 +235,51 @@ class ImportMaskAnnotations(QDialog):
         )
         if file_paths:
             self.input_path_edit.setText(";".join(file_paths))
+            self.auto_detect_class_mapping(file_paths)
+
+    def browse_class_mapping(self):
+        """Open file dialog to select a class mapping file, applying it if masks are scanned."""
+        start_dir = os.path.dirname(self.mapping_path_edit.text().strip())
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Class Mapping File",
+            start_dir,
+            "JSON Files (*.json);;All Files (*)"
+        )
+        if not file_path:
+            return
+
+        # Chosen by hand, so a later mask selection must not replace it
+        self.auto_mapping_path = ""
+        self.mapping_path_edit.setText(file_path)
+
+        # Rebuild the table so selections from a previous mapping do not linger
+        if self.mapping_widgets:
+            self.populate_mapping_table()
+
+    def auto_detect_class_mapping(self, mask_files):
+        """
+        Pick up the class mapping Export Masks saved next to the masks.
+
+        Only fills the field when it is empty or holds an earlier automatic pick, so a
+        file the user chose by hand is never replaced.
+        """
+        current = self.mapping_path_edit.text().strip()
+        if current and current != self.auto_mapping_path:
+            return
+
+        found = ""
+        if mask_files:
+            mask_dir = os.path.dirname(mask_files[0])
+            # color_legend.json is what Visualization exports wrote before class_mapping.json
+            for name in ("class_mapping.json", "color_legend.json"):
+                candidate = os.path.join(mask_dir, name).replace("\\", "/")
+                if os.path.isfile(candidate):
+                    found = candidate
+                    break
+
+        self.auto_mapping_path = found
+        self.mapping_path_edit.setText(found)
 
     def get_mask_files(self):
         """Get list of mask files from the input path."""
@@ -240,6 +304,9 @@ class ImportMaskAnnotations(QDialog):
         if not mask_files:
             QMessageBox.warning(self, "No Files", "No PNG mask files found. Please select valid mask files.")
             return
+
+        # Mask paths may have been typed rather than browsed
+        self.auto_detect_class_mapping(mask_files)
 
         # Build image path mapping (basename without extension -> full path)
         image_path_map = {}
@@ -366,8 +433,9 @@ class ImportMaskAnnotations(QDialog):
             status_parts.append(f"detected {len(self.unique_values)} unique value(s)")
             mode_str = "1-channel/semantic" if self.detected_mode == 'semantic' else "3-channel/RGB"
             status_parts.append(f"mode: {mode_str}")
-        
-        self.status_label.setText(" | ".join(status_parts))
+
+        self.scan_status_text = " | ".join(status_parts)
+        self.status_label.setText(self.scan_status_text)
 
         # Populate the mapping table
         if self.valid_mask_pairs and self.unique_values:
@@ -386,6 +454,7 @@ class ImportMaskAnnotations(QDialog):
         
         self.mapping_table.setRowCount(0)
         self.mapping_widgets = {}
+        self.pending_labels = {}
 
         # Build label options for combobox
         label_options = ["Ignore / Background"]
@@ -438,6 +507,188 @@ class ImportMaskAnnotations(QDialog):
             
             self.mapping_table.setCellWidget(row, 1, combo)
             self.mapping_widgets[value] = combo
+
+        self.apply_class_mapping()
+
+    def apply_class_mapping(self):
+        """Set each detected value's label from the class mapping file, if one is given."""
+        self.status_label.setText(self.scan_status_text)
+
+        mapping_path = self.mapping_path_edit.text().strip()
+        if not mapping_path or not self.mapping_widgets:
+            return
+
+        try:
+            value_to_label, duplicate_count = self.read_class_mapping(mapping_path)
+        except Exception as e:
+            QMessageBox.warning(self, "Class Mapping Not Applied",
+                                f"Could not read the class mapping file:\n{mapping_path}\n\n{e}")
+            return
+
+        matched_count = 0
+        for value, combo in self.mapping_widgets.items():
+            key = value if self.detected_mode == 'semantic' else tuple(int(c) for c in value)
+            if key not in value_to_label:
+                continue
+
+            matched_count += 1
+            label_dict = value_to_label[key]
+            if label_dict is None:
+                combo.setCurrentIndex(0)  # The file's background
+                continue
+
+            label_code = self.resolve_mapping_label(label_dict)
+            if not label_code:
+                continue
+
+            # A label the project lacks becomes a choice in every row, so it can be picked anywhere
+            if label_code in self.pending_labels:
+                for other_combo in self.mapping_widgets.values():
+                    if other_combo.findText(label_code) == -1:
+                        other_combo.addItem(label_code)
+
+            combo.setCurrentIndex(combo.findText(label_code))
+
+        mapping_parts = [f"class mapping: {matched_count} of {len(self.mapping_widgets)} value(s) matched"]
+        if self.pending_labels:
+            mapping_parts.append(f"{len(self.pending_labels)} new label(s) to add on import")
+        if duplicate_count:
+            mapping_parts.append(f"{duplicate_count} value(s) shared by several labels, first kept")
+        self.status_label.setText(" | ".join([self.scan_status_text] + mapping_parts))
+
+    def read_class_mapping(self, mapping_path):
+        """
+        Read a class mapping file into {mask value: label dict} for the detected mask mode.
+
+        Accepts the class_mapping.json Export Masks writes, whose entries carry an integer
+        "index" (Semantic, SfM) or an RGB "color" (Visualization), and the older
+        color_legend.json, which maps a label code straight to [R, G, B]. The background
+        maps to None so it stays on Ignore / Background. Where several labels share a
+        value (SfM masks, typically) the first one wins.
+
+        Returns:
+            tuple: (value_to_label dict, number of values claimed by more than one label)
+        """
+        with open(mapping_path, 'r') as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            raise ValueError("Expected a JSON object keyed by label code.")
+
+        value_key = 'index' if self.detected_mode == 'semantic' else 'color'
+        value_to_label = {}
+        duplicates = set()
+
+        for name, entry in data.items():
+            if str(name).startswith('_'):
+                continue  # Settings, such as the Overlay blend record in color_legend.json
+
+            if isinstance(entry, dict):
+                raw_value = entry.get(value_key)
+                label = entry.get('label')
+            else:
+                raw_value = entry
+                label = name
+
+            value = self._parse_mapping_value(raw_value)
+            if value is None:
+                continue  # Not a value these masks can hold, e.g. a color for 1-channel masks
+
+            if not isinstance(label, dict):
+                # Only a code is known: the background, or a color_legend.json entry, whose
+                # color is the label's own since Visualization draws labels in their colors
+                code = str(label).strip()
+                if code.lower() == 'background':
+                    label = None
+                elif value_key == 'color':
+                    label = {'short_label_code': code, 'color': list(value)}
+                else:
+                    label = {'short_label_code': code}
+
+            if value in value_to_label:
+                duplicates.add(value)
+                continue
+            value_to_label[value] = label
+
+        return value_to_label, len(duplicates)
+
+    def _parse_mapping_value(self, raw_value):
+        """Return a mapping entry's value in the form the detected values take, or None."""
+        if self.detected_mode == 'semantic':
+            if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
+                return None
+            return int(raw_value)
+
+        if isinstance(raw_value, (list, tuple)) and len(raw_value) >= 3:
+            try:
+                return tuple(int(channel) for channel in raw_value[:3])
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    def _find_project_label(self, short_label_code):
+        """Return the project label with this short code (case-insensitive), or None."""
+        code = short_label_code.strip().lower()
+        for label in self.label_window.labels:
+            if label.short_label_code.strip().lower() == code:
+                return label
+        return None
+
+    def resolve_mapping_label(self, label_dict):
+        """
+        Return the short code a mapping entry resolves to in this project.
+
+        The label's ID is tried first, so a label renamed since the export still matches.
+        A label the project does not have is queued in pending_labels and only created
+        when the import runs, so a cancelled dialog leaves the project untouched.
+        """
+        code = str(label_dict.get('short_label_code') or '').strip()
+        if not code:
+            return None
+
+        label_id = label_dict.get('id')
+        if label_id:
+            for label in self.label_window.labels:
+                if label.id == label_id:
+                    return label.short_label_code
+
+        existing = self._find_project_label(code)
+        if existing is not None:
+            return existing.short_label_code
+
+        self.pending_labels.setdefault(code, label_dict)
+        return code
+
+    def get_or_create_label(self, short_label_code):
+        """
+        Return the project label for a combo choice, creating it if the mapping queued it.
+
+        Returns:
+            tuple: (label or None, whether a label was created)
+        """
+        existing = self._find_project_label(short_label_code)
+        if existing is not None:
+            return existing, False
+
+        label_dict = self.pending_labels.get(short_label_code)
+        if label_dict is None:
+            return None, False
+
+        color = None
+        raw_color = label_dict.get('color')
+        if isinstance(raw_color, (list, tuple)) and len(raw_color) >= 3:
+            try:
+                color = QColor(*[int(channel) for channel in raw_color[:4]])
+            except (TypeError, ValueError):
+                color = None
+
+        label = self.label_window.add_label_if_not_exists(
+            short_label_code,
+            label_dict.get('long_label_code') or short_label_code,
+            color=color,
+            label_id=label_dict.get('id'),
+            refresh_ui=False
+        )
+        return label, True
 
     def validate_inputs(self):
         """Validate that we have valid data for import."""
@@ -503,15 +754,6 @@ class ImportMaskAnnotations(QDialog):
             else:
                 return  # Cancelled
 
-        # Build the value -> label mapping
-        value_to_label = {}
-        for value, combo in self.mapping_widgets.items():
-            if combo.currentIndex() > 0:  # Not "Ignore / Background"
-                label_code = combo.currentText()
-                label = self.label_window.get_label_by_short_code(label_code)
-                if label:
-                    value_to_label[value] = label
-
         # Filter pairs based on conflict handling
         pairs_to_process = []
         for mask_path, raster in self.valid_mask_pairs:
@@ -520,9 +762,23 @@ class ImportMaskAnnotations(QDialog):
             pairs_to_process.append((mask_path, raster))
 
         if not pairs_to_process:
-            QMessageBox.information(self, "Nothing to Import", 
+            QMessageBox.information(self, "Nothing to Import",
                                     "No masks to import after applying conflict settings.")
             return
+
+        # Build the value -> label mapping. Labels the class mapping named but the project
+        # lacks are created here, once the import is certain to run.
+        value_to_label = {}
+        labels_created = False
+        for value, combo in self.mapping_widgets.items():
+            if combo.currentIndex() > 0:  # Not "Ignore / Background"
+                label, created = self.get_or_create_label(combo.currentText())
+                labels_created = labels_created or created
+                if label:
+                    value_to_label[value] = label
+
+        if labels_created:
+            self.label_window.refresh_after_batch_add()
 
         # Get current labels for MaskAnnotation initialization
         project_labels = list(self.label_window.labels)

@@ -2266,11 +2266,13 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
             scene_pos: Position in scene coordinates. If provided, creates/updates
                       cursor annotation at this position. If None, clears the annotation.
         """
-        if self.selected_tool and self.active_image and self.selected_label:
+        tool = self.tools.get(self.selected_tool) if self.selected_tool else None
+        needs_label = getattr(tool, 'requires_label', True)
+        if tool and self.active_image and (self.selected_label or not needs_label):
             if scene_pos:
-                self.tools[self.selected_tool].update_cursor_annotation(scene_pos)
+                tool.update_cursor_annotation(scene_pos)
             else:
-                self.tools[self.selected_tool].clear_cursor_annotation()
+                tool.clear_cursor_annotation()
 
     def update_scene(self):
         """Update the graphics scene and its items."""
@@ -4515,13 +4517,14 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
                 # Refresh the phantom layer NOW that the annotation is fully removed from
                 # all dicts, so the ghost is immediately erased.
                 self.refresh_phantom_annotations()
-                # Ensure scene and viewport are updated and events are processed
+                # Schedule the repaint; do not pump events. Undo and redo reach
+                # here, so a pump let the next Ctrl+Z run a second undo inside
+                # this one, and a merge or split undo repainted per annotation.
                 try:
                     self.scene.update()
                 except Exception:
                     pass
                 self.viewport().update()
-                QApplication.processEvents()
 
     def delete_annotations(self, annotations, record_action=True):
         """Delete a list of annotations (Ultimate Bulk Optimization)."""
@@ -4646,8 +4649,12 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
             # signal blocking, and a single consolidated UI refresh.
             self.delete_annotations(labeled_annotations)
 
-    def delete_image_annotations(self, image_path):
-        """Delete all annotations associated with a specific image path (Bulk Optimized)."""
+    def delete_image_annotations(self, image_path, record_action=True):
+        """Delete all annotations associated with a specific image path (Bulk Optimized).
+
+        record_action=False when the image itself is going: an undo would
+        re-add annotations to an image the project no longer has.
+        """
         raster = self.main_window.image_window.raster_manager.get_raster(image_path)
 
         # For VideoRaster base paths, annotations live under ::frame_ virtual keys.
@@ -4656,7 +4663,7 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
             prefix = image_path + '::frame_'
             frame_keys = [k for k in list(self.image_annotations_dict.keys()) if k.startswith(prefix)]
             for frame_key in frame_keys:
-                self.delete_image_annotations(frame_key)
+                self.delete_image_annotations(frame_key, record_action=record_action)
             # Per-frame masks are keyed by frame index on the raster, not by a
             # path in image_annotations_dict, so the loop above never reaches
             # them — and for a mask-only video there are no frame keys to loop
@@ -4689,7 +4696,7 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
         
         if annotations_to_delete:
             # 3. Use bulk delete to handle internal dictionaries and viewer updates
-            self.delete_annotations(annotations_to_delete)
+            self.delete_annotations(annotations_to_delete, record_action=record_action)
 
         # 4. Handle Mask/Semantic Reset
         frame_idx = self._video_frame_index(image_path)
@@ -4713,7 +4720,7 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
     def delete_image(self, image_path):
         """Delete an image and all its associated annotations."""
         # Delete all annotations associated with image path
-        self.delete_image_annotations(image_path)
+        self.delete_image_annotations(image_path, record_action=False)
         # Delete the image
         if self.current_image_path == image_path:
             self.scene.clear()

@@ -187,7 +187,9 @@ class ExportMaskAnnotations(QDialog):
             "<b>4. Overlay (Image + Color Mask):</b> Blends the color mask over the original image, using the "
             "current transparency value from the Annotation Window. This is the bulk equivalent of a screenshot. "
             "Unannotated areas keep their original pixels, and images with no annotations export as an unmodified "
-            "copy of the source."
+            "copy of the source.<br><br>"
+            "Every mode except Overlay also saves a <b>class_mapping.json</b> next to the masks, recording the value "
+            "or color each label was given. Import Mask Annotations reads it back to fill in its mapping."
         )
         info_label = QLabel(info_text)
         info_label.setWordWrap(True)
@@ -983,23 +985,11 @@ class ExportMaskAnnotations(QDialog):
 
     def export_metadata(self, output_path):
         """Export metadata files based on the mode."""
-        if self.mask_mode == 'semantic':
-            class_mapping = {}
-            if self.label_table.cellWidget(0, 0).findChild(QCheckBox).isChecked():
-                background_label = "background"
-                background_index = self.label_table.cellWidget(0, 2).value()
-                class_mapping[background_label] = {
-                    "label": background_label,
-                    "index": background_index
-                }
-            
-            for label, value in self.labels_to_render:
-                class_mapping[label.short_label_code] = {"label": label.to_dict(), "index": value}
-            
-            with open(os.path.join(output_path, "class_mapping.json"), 'w') as f:
-                json.dump(class_mapping, f, indent=4)
-        
-        elif self._is_color_mode():
+        # Overlay is a picture rather than data, so it has no values to map back to labels
+        if self.mask_mode != 'overlay':
+            self.export_class_mapping(output_path)
+
+        if self._is_color_mode():
             color_legend = {}
             if self.mask_mode == 'overlay':
                 # Record the blend settings so an export can be reproduced later
@@ -1019,7 +1009,30 @@ class ExportMaskAnnotations(QDialog):
             with open(os.path.join(output_path, "color_legend.json"), 'w') as f:
                 json.dump(color_legend, f, indent=4)
 
-        # No metadata file needed for SfM mode
+    def export_class_mapping(self, output_path):
+        """
+        Write class_mapping.json, recording the mask value each label was rasterized with.
+
+        Semantic and SfM entries carry an integer "index", Visualization entries an RGB
+        "color". Import Mask Annotations reads this file back to fill in its value to
+        label table, and the full label dict lets it recreate labels a project lacks.
+        """
+        key = 'color' if self._is_color_mode() else 'index'
+
+        def encode(value):
+            if key == 'color':
+                return [int(channel) for channel in value[:3]]
+            return int(value)
+
+        class_mapping = {}
+        if self.label_table.cellWidget(0, 0).findChild(QCheckBox).isChecked():
+            class_mapping["background"] = {"label": "background", key: encode(self.background_value)}
+
+        for label, value in self.labels_to_render:
+            class_mapping[label.short_label_code] = {"label": label.to_dict(), key: encode(value)}
+
+        with open(os.path.join(output_path, "class_mapping.json"), 'w') as f:
+            json.dump(class_mapping, f, indent=4)
 
     def get_annotations_for_image(self, image_path, label, flatten=True):
         """

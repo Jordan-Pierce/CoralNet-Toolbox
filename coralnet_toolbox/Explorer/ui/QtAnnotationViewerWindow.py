@@ -222,7 +222,21 @@ class AnnotationViewerWindow(QWidget):
         ]
         self.type_filter_combo.set_options(type_opts)
         toolbar.addWidget(self.type_filter_combo)
-        
+
+        # Verified status filter - 'All' covers both. Values match the display
+        # text because the combo's button shows the selected values.
+        status_label = QLabel("Status:")
+        toolbar.addWidget(status_label)
+
+        self.verified_filter_combo = MultiSelectCombo()
+        self.verified_filter_combo.setFixedWidth(80)
+        self.verified_filter_combo.setToolTip("Filter by verified status (multi-select)")
+        self.verified_filter_combo.set_options([
+            ("Verified", "Verified"),
+            ("Unverified", "Unverified"),
+        ])
+        toolbar.addWidget(self.verified_filter_combo)
+
         toolbar.addSeparator()
 
         # Initialize filter options now that the controls exist
@@ -660,7 +674,8 @@ class AnnotationViewerWindow(QWidget):
         selected_images = self._get_selected_images()
         selected_types = self._get_selected_types()
         selected_labels = self._get_selected_labels()
-        
+        selected_verified = self._get_selected_verified()
+
         # Get annotations from AnnotationWindow
         if not hasattr(self.annotation_window, 'annotations_dict'):
             self.all_data_items = []
@@ -685,7 +700,12 @@ class AnnotationViewerWindow(QWidget):
             # Check label filter
             if selected_labels and label_code not in selected_labels:
                 continue
-            
+
+            # Check verified status filter
+            status = "Verified" if ann.verified else "Unverified"
+            if selected_verified and status not in selected_verified:
+                continue
+
             filtered_annotations.append(ann)
         
         # Ensure cropped images are available. If any are missing, run
@@ -929,6 +949,12 @@ class AnnotationViewerWindow(QWidget):
             except Exception:
                 return None
     
+    def _get_selected_verified(self):
+        """Get list of selected verified statuses ('Verified', 'Unverified'), or None for all."""
+        if not hasattr(self, 'verified_filter_combo'):
+            return None
+        return self.verified_filter_combo.selected_values()
+
     def _ensure_cropped_images(self, annotations):
         """Ensure cropped images are available for annotations."""
         # If the user has not applied the filter, avoid creating crops to

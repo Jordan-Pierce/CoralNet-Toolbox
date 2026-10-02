@@ -1061,12 +1061,17 @@ class PolygonAnnotation(Annotation):
         # Resolve the Label instance and pass it to the constructor.
         label = label_window.get_label_by_short_code(data.get('label_short_code'))
 
+        # simplify=False: these points were cleaned up when the polygon was first
+        # made, and saved as they are. Re-running the shapely pass here was most
+        # of the time it takes to open a project (~11 s of 17 s for 100k
+        # annotations), to remove nothing.
         annotation = cls(
             points=points,
             holes=holes,
             label=label,
             image_path=data.get('image_path'),
-            transparency=data.get('transparency', 128)
+            transparency=data.get('transparency', 128),
+            simplify=False,
         )
         
         # Set the UUID if present

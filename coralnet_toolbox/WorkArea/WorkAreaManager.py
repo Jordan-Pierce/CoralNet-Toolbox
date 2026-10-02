@@ -666,7 +666,8 @@ class WorkAreaManager(QDialog):
         # Clear any preview tiles from the scene as well
         self.clear_tiles()
 
-        QMessageBox.information(self, "Tiles Deleted", f"Successfully deleted {deleted_count} tile(s) from {count} image{'s' if count != 1 else ''}.")
+        self.main_window.status_bar.showMessage(
+            f"Deleted {deleted_count} tile(s) from {count} image{'s' if count != 1 else ''}.", 5000)
 
     def generate_tile_work_areas(self, params, image_path):
         """

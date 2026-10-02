@@ -21,11 +21,12 @@ Three rules matter more than the rest:
     out of update_machine_confidence, so this dialog does not have to arrange
     it -- but the loop depends on it, so it is pinned by a test rather than
     assumed.
-  * An image a person **reviewed and cleared** trains as background. Deleting a
-    false positive is the only way the user can say "there is nothing there",
-    and an image with no annotations is otherwise dropped from the dataset
-    entirely -- so the correction would be silently discarded and the model
-    would keep making it. Review state is tracked per image on the raster.
+  * An image with no annotations trains only if the user **marked it negative**
+    in this dialog, and then trains as background. Unannotated does not mean
+    empty: most of a project is unannotated because nobody has got to it yet,
+    and training that as empty teaches the model to miss what is there --
+    starting with the images the next round predicts on. The marks are kept on
+    this dialog, not the raster, and rounds never predict on a marked image.
 
 The dialog is modeless. That is load-bearing rather than a preference: Previous
 and Next move the canvas from one waiting annotation to the next, and the review
@@ -44,12 +45,12 @@ below 1047. Setup is what you decide before the first round; Session is what
 changes as rounds run. Train and the ready line sit outside both, since a Train
 button that disappears when you switch tabs would be worse than the height was.
 
-A session is ephemeral. Round history, the frozen class order and each image's
-review state live for as long as the application does and are not written into
-the project file. That is a decision rather than an omission: the history
-describes one sitting's experiment, and a review state that outlived it would
-make a mistaken "reviewed" permanent -- an image training as empty in every
-future session with nothing on screen to explain why.
+A session is ephemeral. Round history, the frozen class order and the images
+marked negative live for as long as the application does and are not written
+into the project file. That is a decision rather than an omission: the history
+describes one sitting's experiment, and a negative mark that outlived it would
+make a mistaken one permanent -- an image training as empty in every future
+session with nothing on screen to explain why.
 
 Scope: detection and instance segmentation, plain image rasters. See
 ACTIVE_LEARNING_PLAN.md.
@@ -85,6 +86,8 @@ from coralnet_toolbox.Features.FeatureMapCodec import load_feature_vector
 from coralnet_toolbox.MachineLearning import InPlaceTraining
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 from coralnet_toolbox.MachineLearning.TrainModel.QtBase import TrainModelWorker
+from coralnet_toolbox.MachineLearning.PUDetection import (PU_MODELS_NOTE, pu_supported_model,
+                                                         pu_unavailable_tooltip)
 from coralnet_toolbox.MachineLearning.TrainModel.QtDetect import STANDARD_MODELS as DETECT_MODELS
 from coralnet_toolbox.MachineLearning.TrainModel.QtSegment import STANDARD_MODELS as SEGMENT_MODELS
 
@@ -141,6 +144,10 @@ TRAINING_DEFAULTS = {
     # through WeightedInMemoryDataset, which is what the MRO composition test
     # covers, so this costs nothing here.
     'weighted': True,
+    # Off by default, unlike weighted sampling: it changes what training
+    # optimises, costs a teacher forward pass per batch, and the measured edge
+    # needs a bigger model than a round wants to run. Offered, not assumed.
+    'pu_dataset': False,
     'val': True,
     'verbose': True,
     'exist_ok': True,
@@ -390,12 +397,8 @@ STATE_TOOLTIP = {
 # epoch as the mAPs, so a round that traded one for the other is visible rather
 # than reading as an unexplained drop. Segmentation shows the mask figures under
 # the same headings; see read_metrics.
-HISTORY_HEADERS = ["Round", "Train Images", "Background", "Annotations",
+HISTORY_HEADERS = ["Round", "Train Images", "Negatives", "Annotations",
                    "Precision", "Recall", "mAP50", "mAP50-95", "Change"]
-
-# Per-image Active Learning review state, stored on the raster.
-REVIEW_PENDING = 'pending'
-REVIEW_REVIEWED = 'reviewed'
 
 # What counts as a plot worth keeping beside a saved model. Ultralytics writes
 # its curves and confusion matrices at the top level of a run directory.
@@ -458,7 +461,7 @@ class SessionResetPrompt(QDialog):
     in the application, so removing them is the default.
     """
 
-    def __init__(self, rounds, reviewed, mine, mine_count, stale, stale_count, parent=None):
+    def __init__(self, rounds, negatives, mine, mine_count, stale, stale_count, parent=None):
         super().__init__(parent)
         self.setWindowTitle("New Session")
         self.setWindowIcon(get_window_icon("coralnet.svg"))
@@ -468,18 +471,18 @@ class SessionResetPrompt(QDialog):
         discarded = []
         if rounds:
             discarded.append(f"{rounds} round{'s' if rounds != 1 else ''} of history")
-        if reviewed:
-            discarded.append(f"the review state on {reviewed} image"
-                             f"{'s' if reviewed != 1 else ''}")
+        if negatives:
+            discarded.append(f"the negative mark on {negatives} image"
+                             f"{'s' if negatives != 1 else ''}")
         summary = ", ".join(discarded) if discarded else "nothing yet -- no rounds have run"
 
         heading = QLabel(
             f"<b>Start a new session?</b><br><br>"
             f"Discards {summary}, and the best model this session produced.<br><br>"
             f"Your annotations are untouched -- including predictions waiting for "
-            f"review and everything you have confirmed. Images you cleared as "
-            f"background stop counting as background, because that is a fact about "
-            f"this session rather than about the image.")
+            f"review and everything you have confirmed. Images marked negative are "
+            f"unmarked, because marks belong to the session and are not saved with "
+            f"the project.")
         heading.setWordWrap(True)
         layout.addWidget(heading)
 
@@ -596,6 +599,14 @@ class Base(QDialog):
         # images this does not contain, so the budget moves across the project
         # instead of landing on the same emptiest handful every time.
         self.predicted_ever = set()
+
+        # Images the user marked negative for this dialog's task: the only
+        # unannotated images that train, as background, and ones no round
+        # predicts on. Set with Mark Negative and nowhere else. Kept here rather
+        # than on the raster, and never saved: a mistaken mark written into the
+        # project would train the image as empty in every future session with
+        # nothing on screen to say why.
+        self.negative_paths = set()
 
         # Why images were passed over by the last acquisition pass, so a round
         # that predicted on nothing can say what it skipped rather than leaving
@@ -791,33 +802,12 @@ class Base(QDialog):
         self.label_table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
         self.label_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.label_table.verticalHeader().setVisible(False)
-        self.label_table.setToolTip(
-            "Verified counts only -- unverified annotations are model predictions, and\n"
-            "training on those would teach the model its own guesses.\n"
-            "Awaiting is how many predictions of that label are still unreviewed:\n"
-            "it is the answer to 'is there enough new material to train again?'.\n"
-            "A red split cell means that label has no examples there.\n"
-            f"Images are split {TRAIN_RATIO:.0%} train / {VAL_RATIO:.0%} val by a hash of "
-            "each image's path, so an image never moves between them from one round to the "
-            "next -- which would leak and inflate every metric after it.")
         header = self.label_table.horizontalHeader()
         header.setSectionResizeMode(COL_LABEL, QHeaderView.Stretch)
         for column in (COL_INCLUDE, COL_VERIFIED, COL_TRAIN,
                        COL_VAL, COL_IMAGES, COL_AWAITING):
             header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
         layout.addWidget(self.label_table, 1)
-
-        # Background images have no label, so they cannot be a table row, and
-        # they are the part of the dataset a user is most likely to think is
-        # not being used.
-        self.background_label = QLabel("")
-        self.background_label.setWordWrap(True)
-        self.background_label.setToolTip(
-            "Images you reviewed that ended up with nothing on them. They train as\n"
-            "background, which is how deleting a false positive teaches the model.\n"
-            "An image nobody has reviewed is never counted here, however long it has\n"
-            "been in the project: unannotated does not mean empty.")
-        layout.addWidget(self.background_label)
 
         # Stated up front rather than discovered after five rounds: if objects
         # are tiny relative to the image, full-image inference at imgsz cannot
@@ -975,6 +965,42 @@ class Base(QDialog):
             "definition early on, when one label has been drawn far more than the rest.")
         layout.addRow("Weighted Sampling:", self.weighted_combo)
 
+        # Detection only: the ignore band masks anchors of the detection loss,
+        # which is not what a segmentation round trains through. Absent rather
+        # than disabled for segment, so it is not a question with no answer.
+        self.pu_dataset_combo = None
+        if self.task == 'detect':
+            # Kept so update_pu_availability can restore it after a model
+            # that cannot run PU has replaced it with the reason.
+            self.pu_dataset_tooltip = (
+                "Train the project as a positive-unlabeled dataset: regions you have not\n"
+                "boxed are treated as unknown rather than as guaranteed background.\n\n"
+                "This is the normal state of an Active Learning project. You confirm what\n"
+                "the round put in front of you and leave the rest of the frame alone, so\n"
+                "real objects sit unlabeled in images that count as fully reviewed. A slow\n"
+                "average of the model marks regions it is fairly confident about, and where\n"
+                "you drew nothing those are dropped from the loss instead of teaching the\n"
+                "model that nothing is there. Your labels are never added to.\n\n"
+                "Costs a forward pass per batch and a second copy of the model in memory,\n"
+                "and turns mosaic off for the epochs it is active.\n\n"
+                "Two things to know before turning it on. The measured benefit needs a\n"
+                "medium or larger model at a large image size; at nano, which is the\n"
+                "default here, it came out level with or slightly behind normal training.\n"
+                "And it usually lowers mAP while raising recall, because finding an\n"
+                "unlabeled object scores as a false positive. PU rounds are therefore\n"
+                "only ever compared with other PU rounds, and are marked (PU) in the\n"
+                "Rounds table.\n\n"
+                + PU_MODELS_NOTE)
+            self.pu_dataset_combo = bool_combo(TRAINING_DEFAULTS['pu_dataset'],
+                                               self.pu_dataset_tooltip)
+            self.pu_dataset_label = QLabel("PU Dataset:")
+            layout.addRow(self.pu_dataset_label, self.pu_dataset_combo)
+            # create_model_group() has already run, so the combo exists to
+            # watch. Browse writes into it too, so this covers both ways the
+            # model can change.
+            self.model_combo.currentTextChanged.connect(self.update_pu_availability)
+            self.update_pu_availability()
+
         self.freeze_layers_spinbox = QDoubleSpinBox()
         self.freeze_layers_spinbox.setRange(0.0, 1.0)
         self.freeze_layers_spinbox.setSingleStep(0.01)
@@ -1100,7 +1126,7 @@ class Base(QDialog):
             "those groups are chosen to be as unalike as possible, so a budget of ten is\n"
             "not spent on ten pictures of the same thing.\n"
             "Images already carrying predictions you have not reviewed are skipped, and\n"
-            "so is the image open on the canvas.")
+            "so are images marked negative and the image open on the canvas.")
         layout.addRow("Image Budget:", self.budget_spinbox)
 
         self.auto_train_combo = bool_combo(
@@ -1278,6 +1304,33 @@ class Base(QDialog):
             "Opens its image if that is not the one already open.")
         self.next_button.clicked.connect(lambda: self.step_review(1))
         button_layout.addWidget(self.next_button)
+
+        # Past a separator because these answer for a whole image rather than
+        # for the annotation the four keys are on, and stay enabled when the
+        # queue is empty. The one place an image is marked negative: the Image
+        # Window's context menu used to offer it, and marks set there with no
+        # session open drifted away from what the session knew.
+        separator = QFrame()
+        separator.setFrameShape(QFrame.VLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        button_layout.addWidget(separator)
+
+        self.mark_negative_button = QPushButton("Mark Negative")
+        self.mark_negative_button.setToolTip(
+            "Mark the images highlighted in the Rasters Window negative (or the open\n"
+            "image, if none are highlighted). They train as background and rounds do\n"
+            "not predict on them. Images with annotations of this task are skipped.\n"
+            "Only mark images you have looked at: an image nobody has annotated yet\n"
+            "is not empty, and training it as empty teaches the model to miss what is\n"
+            "there.")
+        self.mark_negative_button.clicked.connect(self.mark_images_negative)
+        button_layout.addWidget(self.mark_negative_button)
+
+        self.unmark_negative_button = QPushButton("Unmark Negative")
+        self.unmark_negative_button.setToolTip(
+            "Take the negative mark off the highlighted images (or the open image).")
+        self.unmark_negative_button.clicked.connect(self.unmark_images_negative)
+        button_layout.addWidget(self.unmark_negative_button)
 
         layout.addLayout(button_layout)
 
@@ -1487,7 +1540,10 @@ class Base(QDialog):
         looking at is the one they most likely meant. The automatic pass after a
         round leaves it alone; this one should not.
         """
-        image_paths = list(self.last_predicted_images)[:max(0, budget)]
+        # An image marked negative since the last round is not predicted on
+        # again, any more than a round would pick it.
+        image_paths = [path for path in self.last_predicted_images
+                       if path not in self.negative_paths][:max(0, budget)]
         if len(image_paths) >= budget:
             # Still sets last_skipped when acquisition runs below, so the
             # outcome line can explain an empty result. Nothing was skipped on
@@ -1624,8 +1680,8 @@ class Base(QDialog):
         self.new_session_button = QPushButton("New Session")
         self.new_session_button.setToolTip(
             "Forget this session's rounds and start over.\n"
-            "The round history, the best model and the review state on every image\n"
-            "are discarded. Your annotations -- including predictions you have\n"
+            "The round history, the best model and the negative marks are\n"
+            "discarded. Your annotations -- including predictions you have\n"
             "already confirmed -- are untouched.\n"
             "Also where round folders left on disk can be cleared out.")
         self.new_session_button.clicked.connect(self.new_session)
@@ -1898,25 +1954,6 @@ class Base(QDialog):
 
         return grouped
 
-    def review_state(self, raster):
-        """This task's Active Learning review state for one raster."""
-        states = getattr(raster, 'active_learning', None)
-        return states.get(self.task) if isinstance(states, dict) else None
-
-    def set_review_state(self, raster, state):
-        """Record this task's review state on a raster, creating the dict.
-
-        A manual bulk "Mark Empty" used to be reachable from the Image Window's
-        context menu, pulled out for the same reason as the split pin above.
-        TODO: add a bulk mark-empty / clear-review control here, scoped to this
-        session's highlighted images.
-        """
-        if raster is None:
-            return
-        if not isinstance(getattr(raster, 'active_learning', None), dict):
-            raster.active_learning = {}
-        raster.active_learning[self.task] = state
-
     def image_rasters(self):
         """Yield (image_path, raster) for the plain image rasters in the project.
 
@@ -1930,77 +1967,116 @@ class Base(QDialog):
                 continue
             yield image_path, raster
 
-    def note_predicted(self, image_path, added):
-        """Record that a round put `added` predictions on this image.
-
-        The one guard against an unannotated image being trained as empty, so it
-        is a named method rather than a condition inside the prediction loop.
-
-        Only an image that was actually given something becomes pending, and
-        only a pending image can ever be promoted to reviewed. An image the model
-        found nothing on has nothing on it for anyone to accept or reject, so no
-        action the user could take on it would amount to saying it is empty --
-        and it must not be inferred from their silence. Marking every image in
-        the budget instead, which is what this replaced, turned a project's
-        unannotated majority into background images after a single round.
-        """
-        if added <= 0:
-            return
-        raster = self.image_window.raster_manager.get_raster(image_path)
-        if raster is not None and self.review_state(raster) is None:
-            self.set_review_state(raster, REVIEW_PENDING)
-
-    def promote_pending(self):
-        """Move images the user has finished with from pending to reviewed.
-
-        Pending means a round put predictions on this image and they are waiting
-        on somebody. Once nothing unverified is left, that somebody has been
-        through it -- they confirmed some, deleted others, or both -- so it is
-        reviewed, and if nothing survived it is a confirmed negative. Inferring
-        that beats asking: the user already said it by clearing the image, and a
-        dialog asking them to say it again would be dismissed.
-
-        What makes the inference safe is that only an image the model actually
-        put something on is ever pending. An earlier version marked every image
-        in the budget, so an image the model found nothing on -- which is most
-        of them early on, and which nobody has looked at -- went pending,
-        immediately had nothing unverified, and was promoted to a background
-        image on the next recount. The model was then taught that unannotated
-        images are empty, which for most projects is the opposite of true: they
-        are unannotated, not empty.
-        """
-        allowed_types = InPlaceTraining.TASK_ANNOTATION_TYPES.get(self.task, ())
-        for image_path, raster in self.image_rasters():
-            if self.review_state(raster) != REVIEW_PENDING:
-                continue
-            annotations = self.annotation_window.get_image_annotations(image_path)
-            unverified = any(isinstance(a, allowed_types) and not getattr(a, 'verified', True)
-                             for a in annotations)
-            if not unverified:
-                self.set_review_state(raster, REVIEW_REVIEWED)
-
     def negative_images(self, grouped):
-        """Reviewed images that ended up with nothing on them.
+        """Images marked negative that still have nothing of this task on them.
 
-        These are the images that make deleting a false positive mean anything.
-        Without them an image the user cleared is simply absent from the
-        dataset, which says nothing at all, and the model goes on predicting the
-        same thing there every round.
+        The only unannotated images that train. An image nobody marked is left
+        out rather than trained as empty, however long it has sat unannotated.
         """
         negatives = []
-        for image_path, raster in self.image_rasters():
-            if image_path in grouped:
+        for image_path, _raster in self.image_rasters():
+            if image_path not in self.negative_paths or image_path in grouped:
                 continue
-            if self.review_state(raster) != REVIEW_REVIEWED:
-                continue
-            # Marking an image reviewed by hand while predictions are still
-            # sitting on it says "I have been here", not "there is nothing
-            # here". Training it as background would contradict annotations the
-            # user has not actually rejected.
-            if self.unverified_annotations(image_path):
+            # Anything of this task on the image means it is not empty, not
+            # only what trains: a prediction still awaiting review, or one
+            # parked as Review, says "something may be here". The mark stays,
+            # so deleting them makes the image a negative again.
+            if self.task_annotations(image_path):
                 continue
             negatives.append(image_path)
         return negatives
+
+    def task_annotations(self, image_path):
+        """Every annotation of this task's types on one image, in any state."""
+        allowed_types = InPlaceTraining.TASK_ANNOTATION_TYPES.get(self.task, ())
+        return [annotation for annotation in self.annotation_window.get_image_annotations(image_path)
+                if isinstance(annotation, allowed_types)]
+
+    def target_images(self):
+        """(paths, description) for Mark Negative and Unmark Negative to act on.
+
+        The rows highlighted in the Rasters Window, or the open image when none
+        are. The description names which, since the confirmation must say it.
+        """
+        paths = list(self.image_window.table_model.get_highlighted_paths())
+        if paths:
+            return paths, f"{len(paths)} highlighted image{'s' if len(paths) != 1 else ''}"
+        current = getattr(self.annotation_window, 'current_image_path', None)
+        if current:
+            return [current], f"the open image ({os.path.basename(current)})"
+        return [], ""
+
+    def mark_images_negative(self):
+        """Mark the target images negative: they train as background, and no
+        round predicts on them."""
+        paths, described = self.target_images()
+        if not paths:
+            QMessageBox.information(self, "Mark Negative",
+                                    "Highlight images in the Rasters Window, or open one, first.")
+            return
+
+        raster_manager = self.image_window.raster_manager
+        eligible, annotated, unsupported, already = [], 0, 0, 0
+        for path in paths:
+            raster = raster_manager.get_raster(path)
+            if raster is None or getattr(raster, 'raster_type', '') != 'ImageRaster':
+                unsupported += 1
+            elif self.task_annotations(path):
+                annotated += 1
+            elif path in self.negative_paths:
+                already += 1
+            else:
+                eligible.append(path)
+
+        skipped = []
+        if annotated:
+            skipped.append(f"{annotated} with {TASK_LABELS[self.task].lower()} annotations "
+                           f"on them (delete those first if they are all wrong)")
+        if already:
+            skipped.append(f"{already} already marked negative")
+        if unsupported:
+            skipped.append(f"{unsupported} video or orthomosaic")
+        skipped_text = ("\n\nSkipped: " + "; ".join(skipped) + ".") if skipped else ""
+
+        if not eligible:
+            QMessageBox.information(self, "Mark Negative",
+                                    f"Nothing to mark among {described}.{skipped_text}")
+            return
+
+        count = len(eligible)
+        noun = described if len(paths) == 1 else f"{count} image{'s' if count != 1 else ''}"
+        answer = QMessageBox.question(
+            self, "Mark Negative",
+            f"Mark {noun} negative for {TASK_LABELS[self.task]}?\n\n"
+            f"They will train as background, teaching the model there is nothing to find "
+            f"on them, and rounds will not predict on them. Only mark images you have "
+            f"looked at: an image nobody has annotated yet is not empty.{skipped_text}",
+            QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel)
+        if answer != QMessageBox.Yes:
+            return
+
+        self.negative_paths.update(eligible)
+        self.refresh_dataset(quiet=False)
+        self.show_status(f"Active Learning: {count} image{'s' if count != 1 else ''} "
+                         f"marked negative.")
+
+    def unmark_images_negative(self):
+        """Take the negative mark off the target images."""
+        paths, described = self.target_images()
+        if not paths:
+            QMessageBox.information(self, "Unmark Negative",
+                                    "Highlight images in the Rasters Window, or open one, first.")
+            return
+
+        cleared = [path for path in paths if path in self.negative_paths]
+        if not cleared:
+            self.show_status(f"Active Learning: none of {described} is marked negative.")
+            return
+
+        self.negative_paths.difference_update(cleared)
+        self.refresh_dataset(quiet=False)
+        self.show_status(f"Active Learning: {len(cleared)} image{'s' if len(cleared) != 1 else ''} "
+                         f"no longer marked negative.")
 
     def awaiting_summary(self):
         """Everything about the review queue, from one walk of the annotations.
@@ -2124,8 +2200,6 @@ class Base(QDialog):
         if not quiet:
             QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            self.promote_pending()
-
             grouped = self.project_annotations()
             self.awaiting = self.awaiting_summary()
             awaiting = self.awaiting['per_label']
@@ -2151,7 +2225,6 @@ class Base(QDialog):
             # concludes that no label is short of anything, and starts a round
             # the moment the dialog opens.
             self._auto_shortfall = self.auto_train_shortfall(verified)
-            self.update_background_label(groups, negatives)
             self.update_budget_range()
             self.update_size_warning(grouped)
             self.update_review_controls()
@@ -2246,22 +2319,40 @@ class Base(QDialog):
         return InPlaceTraining.InPlaceDataset(
             self.task, records_by_split, classes, cache_root=self.cache_root())
 
-    def update_background_label(self, groups, negatives):
-        """Say how many images train as background, and where they landed."""
-        if not negatives:
-            self.background_label.setText(
-                "No background images. An image only becomes one when you review it and "
-                "leave nothing on it - an image that is simply unannotated is left out "
-                "of training, not trained as empty.")
+    def update_pu_availability(self, *args):
+        """Grey PU Dataset out for a model that cannot run it.
+
+        Off as well as disabled, so a stale "True" cannot survive behind a
+        greyed-out box and reach a round that never asked for it.
+
+        The dropdown's families are refused by name. A path typed or browsed in
+        is refused only when its run's args.yaml says it was trained from one of
+        them, because a filename proves nothing and an earlier session's best.pt
+        is the most ordinary thing to continue from. Warm start substitutes such
+        a checkpoint on its own anyway, so the real check has to happen against
+        the built model -- it does, in TrainModelWorker.setup_pu_training, which
+        fails the round with the reason rather than training something other
+        than what was asked for.
+        """
+        if getattr(self, 'pu_dataset_combo', None) is None:
             return
 
-        negative_set = set(negatives)
-        train = sum(1 for path in groups.get('train', []) if path in negative_set)
-        val = sum(1 for path in groups.get('val', []) if path in negative_set)
-        plural = "image" if len(negatives) == 1 else "images"
-        self.background_label.setText(
-            f"{len(negatives)} background {plural} ({train} train / {val} val): you "
-            f"reviewed these and left nothing on them, so they train as empty.")
+        model = self.model_combo.currentText()
+        supported, reason, source = pu_supported_model(model)
+
+        self.pu_dataset_combo.setEnabled(supported)
+        self.pu_dataset_label.setEnabled(supported)
+        if supported:
+            self.pu_dataset_combo.setToolTip(self.pu_dataset_tooltip)
+        else:
+            self.pu_dataset_combo.setCurrentText("False")
+            self.pu_dataset_combo.setToolTip(pu_unavailable_tooltip(model, reason, source))
+
+    def pu_dataset_requested(self):
+        """Whether the next round trains as positive-unlabeled."""
+        combo = getattr(self, 'pu_dataset_combo', None)
+        return bool(combo is not None and combo.isEnabled()
+                    and combo.currentText() == "True")
 
     def update_budget_range(self):
         """Cap the Image Budget at the number of images the project holds.
@@ -2388,7 +2479,7 @@ class Base(QDialog):
             return False, self.split_advice("no validation images", total)
         if not grouped:
             if negatives:
-                return False, "only background images - confirm some annotations to train on"
+                return False, "only negative images; confirm some annotations to train on"
             return False, "no annotations on the included labels"
         return True, ""
 
@@ -2618,6 +2709,10 @@ class Base(QDialog):
             # The model's class names are exactly these, in this order, so the
             # prediction pass needs them to map detections back onto labels.
             'labels': list(dataset.names),
+            # Recorded on the round, not read back off the widget later: the
+            # user can toggle it mid-session and round_improved has to know how
+            # each round was actually trained.
+            'pu_dataset': bool(params.get('pu_dataset')),
             'stopped': False,
         }
 
@@ -2904,6 +2999,7 @@ class Base(QDialog):
             'dropout': self.dropout_spinbox.value(),
             'freeze_layers': self.freeze_layers_spinbox.value(),
             'weighted': self.weighted_combo.currentText() == "True",
+            'pu_dataset': self.pu_dataset_requested(),
             'single_cls': self.single_class_combo.currentText() == "True",
             'mask_ratio': self.mask_ratio_spinbox.value(),
             'workers': self.workers_spinbox.value(),
@@ -2936,6 +3032,9 @@ class Base(QDialog):
             'project': getattr(self.main_window, 'current_project_path', '') or '',
             'best_round': entry.get('round'),
             'labels': list(entry.get('labels') or []),
+            # How the saved model was trained, which `settings` cannot say: that
+            # is the widget now, and the toggle can change mid-session.
+            'pu_dataset': bool(entry.get('pu_dataset')),
             'metrics': {
                 'precision': entry.get('precision'),
                 'recall': entry.get('recall'),
@@ -2956,6 +3055,7 @@ class Base(QDialog):
                 'map5095': record.get('map5095'),
                 'fitness': record.get('fitness'),
                 'epoch': record.get('epoch'),
+                'pu_dataset': bool(record.get('pu_dataset')),
                 'stopped': record.get('stopped'),
                 'labels': list(record.get('labels') or []),
             } for record in self.round_history],
@@ -3160,17 +3260,17 @@ class Base(QDialog):
 
         return removed, freed
 
-    def reviewed_image_count(self):
-        """How many images carry a review state for this task."""
-        return sum(1 for _path, raster in self.image_rasters()
-                   if self.review_state(raster) is not None)
+    def negative_mark_count(self):
+        """How many of the project's images are marked negative for this task."""
+        return sum(1 for image_path, _raster in self.image_rasters()
+                   if image_path in self.negative_paths)
 
     def new_session(self):
         """Discard this session and start a fresh one, with the disk clean-up.
 
         The dialog is built once per task on the MainWindow and re-shown, so
         closing it never ended a session: the round counter, the best model and
-        every image's review state carried straight into what looked like a new
+        every negative mark carried straight into what looked like a new
         sitting. This is the seam that actually ends one.
 
         The clean-up rides along here because this is the only moment the answer
@@ -3184,13 +3284,13 @@ class Base(QDialog):
             return
 
         rounds = len(self.round_history)
-        reviewed = self.reviewed_image_count()
+        negatives = self.negative_mark_count()
         mine = self.weights_on_disk(self.session_run_dirs())
         stale = self.stale_round_weights()
 
         prompt = SessionResetPrompt(
             rounds=rounds,
-            reviewed=reviewed,
+            negatives=negatives,
             mine=sum(size for _dir, size in mine),
             mine_count=len(mine),
             stale=sum(size for _dir, size in stale),
@@ -3220,8 +3320,7 @@ class Base(QDialog):
         Annotations are deliberately not touched -- not the predictions waiting
         for review, and certainly not what the user has confirmed. What goes is
         the session's own bookkeeping: the rounds, the model they produced, and
-        the per-image review state that says which images have been through the
-        loop.
+        the images marked negative.
         """
         self.round_history = []
         self.best_round = None
@@ -3235,11 +3334,7 @@ class Base(QDialog):
         # The frozen class order goes too. It exists to keep round n+1's class
         # indices lined up with round n's weights, and there are no weights now.
         self.class_memory = []
-
-        for _image_path, raster in self.image_rasters():
-            states = getattr(raster, 'active_learning', None)
-            if isinstance(states, dict):
-                states.pop(self.task, None)
+        self.negative_paths = set()
 
         self.populate_history_table()
         self.rerun_button.setEnabled(False)
@@ -3315,6 +3410,8 @@ class Base(QDialog):
             'single_cls': self.single_class_combo.currentText() == "True",
             'mask_ratio': self.mask_ratio_spinbox.value(),
             'weighted': self.weighted_combo.currentText() == "True",
+            # Ours, not Ultralytics': the worker pops it before model.train().
+            'pu_dataset': self.pu_dataset_requested(),
             'freeze_layers': self.freeze_layers_spinbox.value(),
             'dropout': self.dropout_spinbox.value(),
             'optimizer': self.optimizer_combo.currentText(),
@@ -3430,11 +3527,21 @@ class Base(QDialog):
     def round_improved(self):
         """Whether the round just recorded beat the best comparable one before it.
 
-        Comparable means the same label set: a round that added a class is a
-        different measurement, not a worse one, so it is always adopted. So is
-        a round with no metric at all -- validation turned off, or results.csv
-        unreadable -- because refusing to adopt on missing evidence would leave
-        a session that can never adopt anything.
+        Comparable means the same label set **and** the same training mode: a
+        round that added a class is a different measurement, not a worse one,
+        so it is always adopted. So is a round with no metric at all --
+        validation turned off, or results.csv unreadable -- because refusing to
+        adopt on missing evidence would leave a session that can never adopt
+        anything.
+
+        PU Dataset rounds count as a different mode for the same reason, and it
+        matters more than it looks. PU trades mAP for recall on purpose: a model
+        that starts finding objects nobody boxed is scored down for it, because
+        those finds land against val labels that do not contain them. So the
+        first PU round almost always reports a lower mAP than the plain rounds
+        before it, and comparing the two would leave the session permanently
+        refusing to adopt a PU round and quietly predicting with the old model.
+        PU rounds are ranked against PU rounds.
         """
         if len(self.round_history) < 2:
             return True
@@ -3446,12 +3553,18 @@ class Base(QDialog):
 
         comparable = [entry for entry in self.round_history[:-1]
                       if Base.round_score(entry) is not None
-                      and entry.get('labels') == latest.get('labels')]
+                      and Base.rounds_comparable(entry, latest)]
         if not comparable:
             return True
 
         best = max(comparable, key=Base.round_score)
         return metric > Base.round_score(best)
+
+    @staticmethod
+    def rounds_comparable(entry, other):
+        """Whether two rounds' scores measure the same thing: same labels, same mode."""
+        return (entry.get('labels') == other.get('labels')
+                and bool(entry.get('pu_dataset')) == bool(other.get('pu_dataset')))
 
     def record_outcome(self, **fields):
         """Fold what a post-round pass produced into this round's summary."""
@@ -3542,8 +3655,8 @@ class Base(QDialog):
             parts.append("the image you have open")
         if skipped.get('awaiting'):
             parts.append(f"{skipped['awaiting']} already awaiting review")
-        if skipped.get('background'):
-            parts.append(f"{skipped['background']} confirmed empty")
+        if skipped.get('negative'):
+            parts.append(f"{skipped['negative']} marked negative")
         if not parts:
             return ""
         return "Skipped: " + ", ".join(parts) + ". "
@@ -3596,6 +3709,11 @@ class Base(QDialog):
         """
         scored = [entry for entry in self.round_history
                   if Base.round_score(entry) is not None]
+        # Within the latest round's training mode only: a PU round's mAP drop
+        # against a plain round is the trade it was asked to make, not a loss.
+        if scored:
+            pu = bool(scored[-1].get('pu_dataset'))
+            scored = [entry for entry in scored if bool(entry.get('pu_dataset')) == pu]
         if len(scored) < 2:
             return BLANK_STAT
         change = self.metric_delta(Base.round_score(scored[-1]),
@@ -4053,6 +4171,7 @@ class Base(QDialog):
             'epoch': metrics.get('epoch'),
             'weights': weights,
             'labels': pending['labels'],
+            'pu_dataset': bool(pending.get('pu_dataset')),
             'stopped': bool(pending.get('stopped')),
         })
 
@@ -4062,13 +4181,17 @@ class Base(QDialog):
     def populate_history_table(self):
         """Rebuild the Rounds table from the recorded history."""
         self.history_table.setRowCount(0)
-        previous = None
-        previous_labels = None
+        # The last scored round of each training mode, as (score, labels). A
+        # PU round is compared with the PU round before it, never with a plain
+        # one -- the same rule round_improved adopts by.
+        previous_by_mode = {False: (None, None), True: (None, None)}
         for entry in self.round_history:
             row = self.history_table.rowCount()
             self.history_table.insertRow(row)
 
             score = self.round_score(entry)
+            pu = bool(entry.get('pu_dataset'))
+            previous, previous_labels = previous_by_mode[pu]
 
             def cell(key):
                 value = entry.get(key)
@@ -4103,14 +4226,14 @@ class Base(QDialog):
             # thin thing to read it from.
             self.color_delta_cell(row, values[HIST_DELTA])
 
-            if entry.get('stopped'):
+            tags = [tag for tag, on in (("PU", pu), ("stopped", entry.get('stopped'))) if on]
+            if tags:
                 item = self.history_table.item(row, HIST_ROUND)
                 if item is not None:
-                    item.setText(f"{values[HIST_ROUND]} (stopped)")
+                    item.setText(f"{values[HIST_ROUND]} ({', '.join(tags)})")
 
             if score is not None:
-                previous = score
-                previous_labels = entry.get('labels')
+                previous_by_mode[pu] = (score, entry.get('labels'))
 
     def color_delta_cell(self, row, text):
         """Colour one Change cell by which way the round went.
@@ -4334,7 +4457,7 @@ class Base(QDialog):
         current = None if include_current else getattr(self.annotation_window,
                                                        'current_image_path', None)
 
-        skipped = {'open': 0, 'awaiting': 0, 'background': 0}
+        skipped = {'open': 0, 'negative': 0, 'awaiting': 0}
         untouched = []
         working = []
         # Every annotated image, eligible or not: the set diversity measures
@@ -4349,16 +4472,16 @@ class Base(QDialog):
             if current is not None and image_path == current:
                 skipped['open'] += 1
                 continue
+            if image_path in self.negative_paths:
+                # The user said there is nothing here. Predicting anyway would
+                # propose exactly what they have ruled out.
+                skipped['negative'] += 1
+                continue
 
             unverified = sum(1 for a in annotations if not getattr(a, 'verified', True))
             if unverified:
                 # Already carrying work for the user; do not pile more on.
                 skipped['awaiting'] += 1
-                continue
-            if self.review_state(raster) == REVIEW_REVIEWED and not annotations:
-                # A confirmed background image. Predicting on it again would
-                # re-propose exactly what the user just deleted.
-                skipped['background'] += 1
                 continue
 
             entry = (1 if image_path in self.predicted_ever else 0,
@@ -4765,7 +4888,6 @@ class Base(QDialog):
                 if annotations:
                     self.annotation_window.add_annotations(annotations)
                     added += len(annotations)
-                self.note_predicted(image_path, len(annotations))
             except Exception as e:
                 print(f"Warning: could not add annotations for {image_path}: {e}")
 

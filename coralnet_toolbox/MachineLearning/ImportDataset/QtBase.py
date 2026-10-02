@@ -13,7 +13,7 @@ from PyQt5.QtCore import Qt, QPointF, QObject, QThread, pyqtSignal
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QVBoxLayout, QGroupBox,
                              QLabel, QLineEdit, QDialog, QPushButton, QDialogButtonBox,
                              QGridLayout, QScrollArea, QFrame, QCheckBox, QRadioButton,
-                             QToolButton, QSpinBox, QHBoxLayout)
+                             QSpinBox, QHBoxLayout, QWidget, QSizePolicy)
 
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
@@ -377,7 +377,10 @@ class DatasetProcessor(QObject):
             source_image_label_map = self._find_source_files()
 
             if not source_image_label_map:
-                self.error.emit("No valid image/label pairs found in the dataset.")
+                if self.image_import_policy == 'annotated_only':
+                    self.error.emit("No valid image/label pairs found in the dataset.")
+                else:
+                    self.error.emit("No images found in the dataset.")
                 return
 
             # --- Step 2: Copy files with progress reporting ---
@@ -423,14 +426,21 @@ class DatasetProcessor(QObject):
 
         Each image keeps whatever sidecar it was paired with, so the annotations
         follow their image automatically.
+
+        'images_only' discovers like 'all' and then drops every sidecar, so the
+        later stages see no labels or masks at all: nothing is parsed, no mask
+        is copied, and no annotation is created.
         """
         sidecar_kind = 'masks' if self.task == 'semantic' else 'labels'
         # Only a copying import has an output folder to keep out of its own scan.
         exclude_dirs = [self.output_folder] if self.output_folder else []
+        images_only = self.image_import_policy == 'images_only'
         source_map = discover_dataset_files(self.yaml_path,
-                                            image_import_policy=self.image_import_policy,
+                                            image_import_policy='all' if images_only else self.image_import_policy,
                                             exclude_dirs=exclude_dirs,
                                             sidecar_kind=sidecar_kind)
+        if images_only:
+            source_map = dict.fromkeys(source_map)
 
         if self.sample_size and self.sample_size < len(source_map):
             # Sorted first so the draw depends only on the seed and not on the
@@ -624,7 +634,6 @@ class Base(QDialog):
 
         self.setWindowIcon(get_window_icon("coralnet.svg"))
         self.setWindowTitle("Import Dataset")
-        self.resize(500, 450)
 
         self.task = None
         self.progress_bar = None
@@ -632,17 +641,39 @@ class Base(QDialog):
         self.worker = None
         self.output_folder = None
         self.sample_size = None
+        self.images_only = False
         self.class_checkboxes = []
 
-        self.layout = QVBoxLayout(self)
+        # Two columns over a full-width button box. self.layout is the left
+        # column, which is where the subclasses' info and options groups land;
+        # the right column holds the image rules and the class list.
+        root_layout = QVBoxLayout(self)
+        columns_layout = QHBoxLayout()
+        root_layout.addLayout(columns_layout)
+
+        left_widget = QWidget()
+        left_widget.setMinimumWidth(480)
+        self.layout = QVBoxLayout(left_widget)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        columns_layout.addWidget(left_widget, 3)
+
+        right_widget = QWidget()
+        right_widget.setMinimumWidth(320)
+        self.right_layout = QVBoxLayout(right_widget)
+        self.right_layout.setContentsMargins(0, 0, 0, 0)
+        columns_layout.addWidget(right_widget, 2)
+
         self.setup_info_layout()
         self.setup_options_layout()
         self.setup_yaml_layout()
         self.setup_output_layout()
-        self.setup_buttons_layout()
+        self.layout.addStretch()
+        self.setup_import_rules_layout()
+        self.setup_buttons_layout(root_layout)
 
-        self.advanced_options_toggle.setEnabled(False)
-        self.advanced_options_frame.setVisible(False)
+        # The left column sets the height: the class list ignores its own size
+        # hint, so a long list scrolls instead of stretching the dialog.
+        self.resize(1200, self.sizeHint().height())
 
     def setup_info_layout(self):
         """
@@ -720,29 +751,22 @@ class Base(QDialog):
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
-        self.advanced_options_toggle = QToolButton()
-        self.advanced_options_toggle.setText("Advanced Options")
-        self.advanced_options_toggle.setCheckable(True)
-        self.advanced_options_toggle.setStyleSheet("QToolButton { border: none; }")
-        self.advanced_options_toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        self.advanced_options_toggle.setArrowType(Qt.RightArrow)
-        self.advanced_options_toggle.toggled.connect(self.toggle_advanced_options)
-        self.advanced_options_toggle.setToolTip("Expand to access image import rules, class filtering, and annotation format options.")
-        self.layout.addWidget(self.advanced_options_toggle)
-
-        self.advanced_options_frame = QFrame()
-        self.advanced_options_frame.setFrameShape(QFrame.StyledPanel)
-        advanced_layout = QVBoxLayout(self.advanced_options_frame)
-
+    def setup_import_rules_layout(self):
+        """Set up the right column: which images to import, and which classes."""
         image_rule_box = QGroupBox("Image Import Rule")
         image_rule_layout = QVBoxLayout()
         self.import_annotated_images_radio = QRadioButton("Import only images with annotations")
         self.import_annotated_images_radio.setToolTip("Only import images that have corresponding annotation label files.\nSkips images without labels.")
         self.import_all_images_radio = QRadioButton("Import all images found in dataset")
         self.import_all_images_radio.setToolTip("Import all images found in the dataset, with or without annotations.\nUseful for datasets with partially-labeled images.")
+        self.import_images_only_radio = QRadioButton("Import images only, without annotations")
+        self.import_images_only_radio.setToolTip("Import all images found in the dataset and ignore their label files or masks.\n"
+                                                 "Useful for annotating from scratch or testing a model on unseen images.")
+        self.import_images_only_radio.toggled.connect(self.update_annotation_widgets)
         self.import_annotated_images_radio.setChecked(True)
         image_rule_layout.addWidget(self.import_annotated_images_radio)
         image_rule_layout.addWidget(self.import_all_images_radio)
+        image_rule_layout.addWidget(self.import_images_only_radio)
 
         # Sampling is applied on top of whichever rule is selected above, so the
         # subset is drawn from the images that rule already accepted.
@@ -765,19 +789,49 @@ class Base(QDialog):
         image_rule_layout.addLayout(sample_row)
 
         image_rule_box.setLayout(image_rule_layout)
-        advanced_layout.addWidget(image_rule_box)
+        self.right_layout.addWidget(image_rule_box)
 
-        class_filter_box = QGroupBox("Classes to Import")
+        self.class_filter_box = QGroupBox("Classes to Import")
         class_filter_layout = QVBoxLayout()
+
+        class_buttons_row = QHBoxLayout()
+        self.select_all_classes_button = QPushButton("Select All")
+        self.select_all_classes_button.setToolTip("Check every class.")
+        self.select_all_classes_button.clicked.connect(lambda: self.set_all_classes_checked(True))
+        self.deselect_all_classes_button = QPushButton("Deselect All")
+        self.deselect_all_classes_button.setToolTip("Uncheck every class.")
+        self.deselect_all_classes_button.clicked.connect(lambda: self.set_all_classes_checked(False))
+        class_buttons_row.addWidget(self.select_all_classes_button)
+        class_buttons_row.addWidget(self.deselect_all_classes_button)
+        class_filter_layout.addLayout(class_buttons_row)
+
         self.class_scroll_area = QScrollArea()
         self.class_scroll_area.setWidgetResizable(True)
+        # Ignored vertically so the list never drives the dialog's height: it
+        # takes whatever the left column leaves, and scrolls past that.
+        self.class_scroll_area.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Ignored)
+        self.class_scroll_area.setMinimumHeight(80)
         self.class_widget = QFrame()
         self.class_layout = QVBoxLayout(self.class_widget)
+        self.class_layout.setAlignment(Qt.AlignTop)
         self.class_scroll_area.setWidget(self.class_widget)
         class_filter_layout.addWidget(self.class_scroll_area)
-        class_filter_box.setLayout(class_filter_layout)
-        advanced_layout.addWidget(class_filter_box)
-        self.layout.addWidget(self.advanced_options_frame)
+        self.class_filter_box.setLayout(class_filter_layout)
+        self.right_layout.addWidget(self.class_filter_box, 1)
+
+    def set_all_classes_checked(self, checked):
+        """Check or uncheck every class in the Classes to Import list."""
+        for checkbox in self.class_checkboxes:
+            checkbox.setChecked(checked)
+
+    def update_annotation_widgets(self):
+        """Grey out the annotation settings when no annotations are imported."""
+        importing_annotations = not self.import_images_only_radio.isChecked()
+        self.class_filter_box.setEnabled(importing_annotations)
+        # Semantic dialogs do not build the format combo.
+        import_as_combo = getattr(self, 'import_as_combo', None)
+        if import_as_combo is not None:
+            import_as_combo.setEnabled(importing_annotations)
 
     def update_output_widgets(self):
         """Grey out the destination fields when nothing is being written."""
@@ -789,12 +843,8 @@ class Base(QDialog):
                        self.output_folder_name):
             widget.setEnabled(copying)
 
-    def toggle_advanced_options(self, checked):
-        self.advanced_options_toggle.setArrowType(Qt.DownArrow if checked else Qt.RightArrow)
-        self.advanced_options_frame.setVisible(checked)
-
-    def setup_buttons_layout(self):
-        """Set up the OK/Cancel button box."""
+    def setup_buttons_layout(self, parent_layout):
+        """Set up the OK/Cancel button box beneath both columns."""
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         ok_button = self.button_box.button(QDialogButtonBox.Ok)
         cancel_button = self.button_box.button(QDialogButtonBox.Cancel)
@@ -802,10 +852,10 @@ class Base(QDialog):
         cancel_button.setToolTip("Close this dialog without importing.")
         self.button_box.accepted.connect(self.start_processing)
         self.button_box.rejected.connect(self.reject)
-        self.layout.addWidget(self.button_box)
+        parent_layout.addWidget(self.button_box)
 
     def browse_data_yaml(self):
-        """Open a file dialog to select the data YAML file and populate advanced options."""
+        """Open a file dialog to select the data YAML file and populate the class list."""
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getOpenFileName(
             self, 
@@ -855,12 +905,10 @@ class Base(QDialog):
                 self.class_layout.addWidget(checkbox)
                 self.class_checkboxes.append(checkbox)
 
-            self.advanced_options_toggle.setEnabled(True)
             self.update_dataset_summary(file_path, len(names_to_display))
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to read or parse YAML file:\n{e}")
-            self.advanced_options_toggle.setEnabled(False)
             self.dataset_summary_label.setText("No dataset selected.")
 
     def update_dataset_summary(self, yaml_path, class_count):
@@ -974,15 +1022,17 @@ class Base(QDialog):
             # already have, which is what the project will reference.
             self.output_folder = None
 
-        excluded_classes = set()
-        if self.advanced_options_toggle.isEnabled():
-            for cb in self.class_checkboxes:
-                if not cb.isChecked():
-                    excluded_classes.add(cb.text())
-                
-        image_import_policy = 'all' if self.import_all_images_radio.isChecked() else 'annotated_only'
-        # Kept on the dialog so the completion message can mention the subset.
-        self.sample_size = self.sample_size_spinbox.value() if self.sample_subset_checkbox.isChecked() else None
+        excluded_classes = {cb.text() for cb in self.class_checkboxes if not cb.isChecked()}
+
+        if self.import_images_only_radio.isChecked():
+            image_import_policy = 'images_only'
+        elif self.import_all_images_radio.isChecked():
+            image_import_policy = 'all'
+        else:
+            image_import_policy = 'annotated_only'
+        # Kept on the dialog so the completion message can describe the import.
+        self.images_only = image_import_policy == 'images_only'
+        self.sample_size =self.sample_size_spinbox.value() if self.sample_subset_checkbox.isChecked() else None
         # Semantic imports have no geometry to choose a representation for,
         # so those dialogs do not build the combo at all.
         if getattr(self, 'import_as_combo', None) is None:
@@ -1102,8 +1152,9 @@ class Base(QDialog):
             self.annotation_window.add_annotations(newly_created_annotations)
 
         # An in-place import has no folder of its own to write the sidecar into;
-        # File > Export > Annotations (JSON) covers it on demand.
-        if self.output_folder:
+        # File > Export > Annotations (JSON) covers it on demand. With nothing
+        # created there is nothing to write either.
+        if self.output_folder and newly_created_annotations:
             progress_bar.set_title("Exporting annotations.json...")
             self._export_annotations_to_json(newly_created_annotations, self.output_folder)
 
@@ -1124,6 +1175,8 @@ class Base(QDialog):
             self.annotation_window.load_annotations()
 
         summary_message = "Dataset has been successfully imported."
+        if self.images_only:
+            summary_message += f"\n\nImported {len(added_paths)} image(s) without annotations."
         if self.sample_size:
             summary_message += f"\n\nImported a random subset of {len(image_paths)} image(s)."
         if duplicates_removed:
@@ -1182,7 +1235,9 @@ class Base(QDialog):
                 added_paths.append(path)
             progress_bar.update_progress()
 
-        class_id_to_label = self.get_class_id_to_label()
+        # Only create the YAML's labels when there are masks to use them;
+        # an images-only import should not fill the label window.
+        class_id_to_label = self.get_class_id_to_label() if raw_records else {}
         project_labels = list(self.main_window.label_window.labels)
 
         errors = list(parsing_errors)
@@ -1240,7 +1295,11 @@ class Base(QDialog):
             self.annotation_window.load_annotations()
             self.annotation_window.load_mask_annotation()
 
-        summary_message = f"Dataset has been successfully imported ({imported} mask(s))."
+        if self.images_only:
+            summary_message = (f"Dataset has been successfully imported "
+                               f"({len(added_paths)} image(s) without masks).")
+        else:
+            summary_message = f"Dataset has been successfully imported ({imported} mask(s))."
         if self.sample_size:
             summary_message += f"\n\nImported a random subset of {len(image_paths)} image(s)."
         if errors:

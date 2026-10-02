@@ -1238,47 +1238,29 @@ class EmbeddingViewerWindow(QWidget):
             embedding_params['metric'] = 'euclidean'
             embedding_params['skip_scaling'] = True
 
-        # Block LDA if only one class/label is selected in the annotation viewer
-        try:
-            if embedding_params.get('technique') == 'LDA':
-                annotation_viewer = getattr(self.main_window, 'annotation_viewer_window', None)
-                selected_labels = None
-                if annotation_viewer is not None:
-                    # Prefer the viewer's filter selection if available
-                    try:
-                        selected_labels = annotation_viewer._get_selected_labels()
-                    except Exception:
-                        selected_labels = None
-
-                # If label filter is not restrictive, infer labels from the annotations
-                labels_in_data = set()
-                for ann in annotations:
-                    try:
-                        lbl = getattr(ann, 'label', None)
-                        if lbl is None:
-                            continue
-                        code = getattr(lbl, 'short_label_code', None) or getattr(lbl, 'code', None) or str(lbl)
-                        labels_in_data.add(code)
-                    except Exception:
-                        continue
-
-                # Decide how many unique labels are effectively selected
-                if selected_labels is None:
-                    n_labels = len(labels_in_data)
-                else:
-                    # selected_labels may be a list of label codes
-                    n_labels = len(selected_labels)
-
-                if n_labels < 2:
-                    QMessageBox.warning(
-                        self,
-                        "LDA Not Available",
-                        "LDA requires at least two distinct classes. Select multiple labels in the Annotation Gallery or include multiple classes in the working set."
-                    )
-                    return
-        except Exception:
-            # If anything goes wrong during this check, fail-safe: allow pipeline to continue
-            pass
+        # LDA is supervised. Snapshot the labels here on the GUI thread, aligned
+        # with data_items, because the reduction runs on the worker thread and
+        # must not read self.current_data_items (that still holds the previous
+        # run's items) or open dialogs. The worker keeps data_items' order.
+        # Only verified labels (or a pending Explorer relabel, which is a user
+        # decision) are ground truth. Unverified ones are fit as Review, so LDA
+        # excludes them from fitting but still projects them; their displayed
+        # label and color are untouched.
+        if embedding_params.get('technique') == 'LDA':
+            lda_labels = tuple(
+                getattr(item.effective_label, 'short_label_code', REVIEW_LABEL)
+                if (item.annotation.verified or item.has_preview_changes())
+                else REVIEW_LABEL
+                for item in data_items
+            )
+            if len(set(lda_labels) - {REVIEW_LABEL}) < 2:
+                QMessageBox.warning(
+                    self,
+                    "LDA Not Available",
+                    "LDA requires at least two distinct classes among verified annotations. Verify annotations from at least two labels, or include more verified classes in the working set."
+                )
+                return
+            embedding_params['lda_labels'] = lda_labels
 
         # Generate model key for caching
         model_key = self._get_model_cache_key(model_name)
@@ -2195,9 +2177,9 @@ class EmbeddingViewerWindow(QWidget):
     def _compute_reduction_fingerprint(self, features, params):
         """Compute a fingerprint of all inputs the reduction result depends on.
 
-        Captures the feature matrix bytes/shape, the reduction params, and (for the
-        supervised LDA technique only) the current labels. Returns a hex digest, or
-        None if a fingerprint can't be computed (which disables caching for this call).
+        Captures the feature matrix bytes/shape and the reduction params (which, for
+        the supervised LDA technique, carry the label snapshot). Returns a hex digest,
+        or None if a fingerprint can't be computed (which disables caching for this call).
         """
         try:
             hasher = hashlib.sha1()
@@ -2208,17 +2190,9 @@ class EmbeddingViewerWindow(QWidget):
             hasher.update(repr(arr.shape).encode('utf-8'))
             hasher.update(str(arr.dtype).encode('utf-8'))
 
-            # Reduction parameters (technique, dimensions, perplexity, etc.)
+            # Reduction parameters (technique, dimensions, perplexity, etc.). For LDA
+            # this includes 'lda_labels', so a relabel invalidates the cached result.
             hasher.update(repr(sorted(params.items())).encode('utf-8'))
-
-            # LDA is supervised: its result also depends on the labels. Use the same
-            # source the LDA computation reads so the fingerprint matches actual inputs.
-            if params.get('technique') == 'LDA':
-                labels = [
-                    getattr(item.effective_label, 'short_label_code', REVIEW_LABEL)
-                    for item in self.current_data_items
-                ]
-                hasher.update(repr(labels).encode('utf-8'))
 
             return hasher.hexdigest()
         except Exception:
@@ -2274,17 +2248,24 @@ class EmbeddingViewerWindow(QWidget):
             
             # LDA special handling
             if technique == "LDA":
+                # Runs on the worker thread: use the label snapshot taken on the
+                # GUI thread, and raise (reported via worker_error) instead of
+                # opening a dialog here.
+                all_labels = params.get('lda_labels') or ()
+                if len(all_labels) != len(features_scaled):
+                    raise ValueError(
+                        f"LDA label count ({len(all_labels)}) does not match "
+                        f"feature count ({len(features_scaled)})."
+                    )
                 labels = []
                 labeled_indices = []
-                for i, item in enumerate(self.current_data_items):
-                    label_name = getattr(item.effective_label, 'short_label_code', REVIEW_LABEL)
+                for i, label_name in enumerate(all_labels):
                     if label_name != REVIEW_LABEL:
                         labels.append(label_name)
                         labeled_indices.append(i)
 
                 if len(set(labels)) < 2:
-                    QMessageBox.warning(self, "LDA Error", "LDA requires at least 2 labeled classes.")
-                    return None
+                    raise ValueError("LDA requires at least 2 labeled classes.")
 
                 labeled_features = features_scaled[labeled_indices]
                 # LDA can produce at most (n_classes - 1) components. Compute that cap.

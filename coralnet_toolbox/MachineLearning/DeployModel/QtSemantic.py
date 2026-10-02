@@ -895,8 +895,10 @@ class Semantic(Base):
         try:
             self.main_window.status_bar.showMessage(message, 10000)
             # The prediction loop holds the event loop, so the status bar would
-            # not repaint until the whole run finished without this.
-            QApplication.processEvents()
+            # not repaint until the whole run finished without this. repaint(),
+            # not processEvents(): batch inference calls this from a worker
+            # slot, where a pump runs the next queued frame inside this one.
+            self.main_window.status_bar.repaint()
         except Exception:
             pass
 

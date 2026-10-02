@@ -260,8 +260,7 @@ class OpenProject(QDialog):
                 if not raster:
                     progress_batch += 1
                     if progress_batch >= PROGRESS_BATCH_SIZE:
-                        for _ in range(progress_batch):
-                            progress_bar.update_progress()
+                        progress_bar.advance_progress(progress_batch)
                         progress_batch = 0
                     continue
 
@@ -273,13 +272,11 @@ class OpenProject(QDialog):
                 # Batch progress updates to reduce UI thread load
                 progress_batch += 1
                 if progress_batch >= PROGRESS_BATCH_SIZE:
-                    for _ in range(progress_batch):
-                        progress_bar.update_progress()
+                    progress_bar.advance_progress(progress_batch)
                     progress_batch = 0
             
             # Flush remaining progress
-            for _ in range(progress_batch):
-                progress_bar.update_progress()
+            progress_bar.advance_progress(progress_batch)
 
             if legacy_workareas:
                 for image_path, work_areas_list in legacy_workareas.items():
@@ -460,8 +457,7 @@ class OpenProject(QDialog):
                             skipped_count += len(image_annotations)
                             progress_batch += len(image_annotations)
                             if progress_batch >= PROGRESS_BATCH_SIZE:
-                                for _ in range(progress_batch):
-                                    progress_bar.update_progress()
+                                progress_bar.advance_progress(progress_batch)
                                 progress_batch = 0
                             continue
                         # If base video path was remapped, update the virtual path too
@@ -475,8 +471,7 @@ class OpenProject(QDialog):
                         progress_batch += len(image_annotations)
                         # flush progress batch if needed
                         if progress_batch >= PROGRESS_BATCH_SIZE:
-                            for _ in range(progress_batch):
-                                progress_bar.update_progress()
+                            progress_bar.advance_progress(progress_batch)
                             progress_batch = 0
                         continue
 
@@ -543,19 +538,19 @@ class OpenProject(QDialog):
                     # Batched progress increment (reduce UI overhead)
                     progress_batch += 1
                     if progress_batch >= PROGRESS_BATCH_SIZE:
-                        for _ in range(progress_batch):
-                            progress_bar.update_progress()
+                        progress_bar.advance_progress(progress_batch)
                         progress_batch = 0
 
                 # flush per-image small remainder to progress
                 if progress_batch > 0:
-                    for _ in range(progress_batch):
-                        progress_bar.update_progress()
+                    progress_bar.advance_progress(progress_batch)
                     progress_batch = 0
 
-            # Add all vector annotations in a single batch operation
+            # Add all vector annotations in a single batch operation. Not
+            # undoable: opening a project is not an edit, and recording it put
+            # every annotation in the project one Ctrl+Z away from deletion.
             if all_new_annotations:
-                self.annotation_window.add_annotations(all_new_annotations)
+                self.annotation_window.add_annotations(all_new_annotations, record_action=False)
 
             # Projects saved before the metadata schema existed carry their
             # importer keys in annotation.data; promote them so they are

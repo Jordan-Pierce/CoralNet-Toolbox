@@ -195,6 +195,12 @@ All dock windows (Annotation Window, Labels Window, Rasters Window, Confidence W
         - Faster for large datasets, and split folders are kept, so base name conflicts cannot occur
         - A saved project references the original dataset folder and breaks if it is moved or deleted
       - Supports PNG, JPG, JPEG, JFIF, BMP, TIF, TIFF, and WebP images
+    - **Image Import Rule** (right side of the dialog): Choose which images are imported
+      - **Import only images with annotations** (default): skips images that have no label file or mask
+      - **Import all images found in dataset**: includes unlabeled images alongside labeled ones
+      - **Import images only, without annotations**: imports every image and ignores its label file or mask; no labels are created
+      - **Import a random subset**: draws that many images from whichever rule is selected
+    - **Classes to Import**: Uncheck classes to leave them out; Select All and Deselect All toggle the whole list
     - **Annotation Importing**: YOLO format annotations are converted and imported
       - Detection datasets: Bounding boxes converted to Rectangle annotations
       - Instance segmentation datasets: Polygon masks converted to Polygon annotations
@@ -219,7 +225,7 @@ All dock windows (Annotation Window, Labels Window, Rasters Window, Confidence W
       - Each pixel value is the class ID, matching the index in the YAML's `names`
       - Pixel value 255 is the reserved ignore label and is imported as background
       - A class named `background` at index 0 is treated as background, and no label is created for it
-      - Classes unchecked in Advanced Options are left as background
+      - Classes unchecked in Classes to Import are left as background
 
 - **Export**:
   - **Labels**:
@@ -401,14 +407,16 @@ All dock windows (Annotation Window, Labels Window, Rasters Window, Confidence W
   - You can also review from the session window: **Previous** / **Next** walk what is
     waiting, least confident first, opening each image and centring the annotation.
     **Mark Verified** confirms it; **Mark as Review** parks anything you cannot judge yet
-  - An image you clear of predictions trains as a **background** image — deleting a wrong
-    box is how you teach the model there is nothing there. An image you simply never
-    annotated is left out of training rather than treated as empty
+  - An image with no annotations is left out of training: one nobody has annotated yet
+    is not empty. To teach the model an image has nothing on it, highlight it in the
+    Rasters Window (or open it) and press **Mark Negative** on the **Session** tab. It
+    then trains as a **background** image, and rounds do not predict on it. **Unmark
+    Negative** takes the mark off. Marks last for the session; **New Session** clears them
   - **Image Budget**: how many un-reviewed images a round predicts on. Most of it goes to
     images with nothing on them and the rest to images you have already worked on, so a
     round looks for new objects and checks itself where you are annotating
-  - A round skips the image open on the canvas and images already carrying predictions
-    you have not reviewed; a round that finds nothing tells you which. **Re-run
+  - A round skips the image open on the canvas, images marked negative, and images
+    already carrying predictions you have not reviewed; a round that finds nothing tells you which. **Re-run
     Predictions** predicts again at the current thresholds without training, which is the
     only way a threshold change takes effect before the next round. It reads the **Image
     Budget** as it stands, so raising the budget first reaches images the last round did
@@ -419,6 +427,12 @@ All dock windows (Annotation Window, Labels Window, Rasters Window, Confidence W
     **Deploy Model** always use the best model rather than the newest. The **Rounds**
     table reports mAP50 and mAP50-95, and **Change** is the column to read: it is blank
     when a round trained on different labels and is not comparable
+  - **PU Dataset** (Detect only) trains the project as positive-unlabeled: regions you
+    have not boxed are treated as unknown rather than as background, so the model is not
+    taught to ignore objects nobody has reached yet. It usually lowers mAP while raising
+    recall, so PU rounds are marked **(PU)** and only compared with other PU rounds. Best
+    on medium or larger models at large image sizes; not available for RT-DETR, YOLOv10
+    or YOLO26
   - **Stop** ends a running round after the current epoch, keeping what it trained
   - **New Session** forgets the rounds and starts over, and offers to clear out round
     folders left on disk. **Save Session** copies the best model, its results and a
@@ -455,6 +469,10 @@ All dock windows (Annotation Window, Labels Window, Rasters Window, Confidence W
   - **Train Model**: Train a machine learning model
     - **Classify**: Train classification model
     - **Detect**: Train object detection model
+      - **PU Dataset**: set True when the dataset is only partly annotated (real objects
+        left unboxed). Unboxed regions the model is fairly sure about are dropped from the
+        loss instead of being taught as background. Mosaic is turned off once it is active,
+        and the best-recall epoch is saved as `weights/recall_best.pt` beside `best.pt`
     - **Segment**: Train instance segmentation model
     - **Semantic**: Train semantic segmentation model
   - **Evaluate Model**: Evaluate a trained model
@@ -648,6 +666,7 @@ The Explorer automatically caches extracted features to accelerate re-loading th
   - <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add / remove annotation to current selection
   - <kbd>Ctrl</kbd> + <kbd>Delete</kbd> / <kbd>Backspace</kbd>: Remove selected annotation(s)
   - <kbd>Ctrl</kbd> + <kbd>Drag</kbd>: Create rectangle selection to select multiple annotations
+    - Hold still for 2 seconds to show the rectangle's size (pixels, and real-world units if the image has a scale) at its bottom-left corner; moving hides it
   - <kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd>: Change size of the selected annotation
   - **Resize handles**: Appear automatically whenever a single annotation is selected; they stay subdued until the cursor comes near, then grow and light up. Drag one to reshape; the cursor shows which way it moves
   - <kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show *every* vertex at full strength (dense polygons normally thin their handles until you zoom in)

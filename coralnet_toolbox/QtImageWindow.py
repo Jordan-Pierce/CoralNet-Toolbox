@@ -1,6 +1,5 @@
 import warnings
 
-import gc
 import os
 from contextlib import contextmanager
 
@@ -2231,21 +2230,23 @@ class ImageWindow(QWidget):
         # Check if current image is being deleted
         is_current_deleted = self.selected_image_path in image_paths
         
-        # Determine next image to select
+        # Determine next image to select: the one that moves up into the deleted
+        # image's row, or the one above it when the deleted image was last, as a
+        # file browser does. This used to take the first surviving row at or
+        # above the current one, which was always the top of the list.
         next_image = None
         if is_current_deleted and self.table_model.filtered_paths:
-            # Find remaining images
-            remaining = [p for p in self.table_model.filtered_paths if p not in image_paths]
-            
-            if remaining:
-                # Get index of current image
-                current_index = self.table_model.get_row_for_path(self.selected_image_path)
-                
-                # Find images before the current one
-                before_current = [p for p in remaining if self.table_model.get_row_for_path(p) <= current_index]
-                
-                # Prefer images before current, otherwise use any remaining
-                next_image = before_current[0] if before_current else remaining[0]
+            doomed = set(image_paths)
+            filtered = self.table_model.filtered_paths
+            current_index = self.table_model.get_row_for_path(self.selected_image_path)
+            if current_index < 0:
+                # Current image is filtered out of the table; any survivor will do
+                next_image = next((p for p in filtered if p not in doomed), None)
+            else:
+                next_image = next((p for p in filtered[current_index + 1:] if p not in doomed), None)
+                if next_image is None:
+                    next_image = next((p for p in reversed(filtered[:current_index])
+                                       if p not in doomed), None)
                 
         # Show progress
         with self.busy_cursor():
@@ -2269,8 +2270,10 @@ class ImageWindow(QWidget):
                     # Update progress
                     progress_bar.update_progress()
 
-                gc.collect()
-                    
+                # No gc.collect() here: cleanup() already closed the dataset and
+                # dropped the pixel, mask and z buffers, so a full collection only
+                # reclaimed small cycles, and cost ~0.2 s or more per delete.
+
                 # Update UI
                 if next_image:
                     self.load_image_by_path(next_image)
