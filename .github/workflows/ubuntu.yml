@@ -1,3 +1,13 @@
+# Actions below are pinned to full commit SHAs rather than tags such as @v4:
+# a tag can be moved to point at different code, a commit cannot. See
+# https://docs.github.com/en/actions/reference/security/secure-use
+#
+# The comment after each pin (e.g. # v4.4.0) names the release it came from.
+# To see the exact code a pin runs, open
+#   https://github.com/<owner>/<repo>/commit/<sha>
+# e.g. actions/checkout@<sha> -> https://github.com/actions/checkout/commit/<sha>
+# Dependabot (.github/dependabot.yml) opens a PR each month to update the pins.
+
 on:
     push:
         branches:
