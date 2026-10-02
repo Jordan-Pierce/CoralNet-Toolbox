@@ -2858,6 +2858,7 @@ from <strong>Utilities &gt; Morphological</strong>. Its <strong>Overlaps</strong
 <li>Useful for converting mask-based predictions into editable vector form</li>
 <li>Accessed via <kbd>Ctrl</kbd> + <kbd>R</kbd> in Select tool (opens a dialog)</li>
 <li>Each connected mask region becomes a separate polygon annotation</li>
+<li>A region traced as an axis-aligned rectangle becomes a Rectangle annotation (a Patch if square); other 4-point shapes stay polygons</li>
 </ul>
 <h3 id="video-playback-controls">Video Playback Controls<a class="headerlink" href="#video-playback-controls" title="Permanent link">&para;</a></h3>
 <p>When a video is loaded, additional playback controls appear:
@@ -2879,6 +2880,7 @@ from <strong>Utilities &gt; Morphological</strong>. Its <strong>Overlaps</strong
 <h2 id="labels-window">Labels Window<a class="headerlink" href="#labels-window" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Move Label</strong>: <kbd>Right-Click</kbd> and drag to reorder labels in the window</li>
+<li><strong>Keyboard Stays on the Canvas</strong>: Clicking a label leaves the keyboard with the Annotation Window, so hotkeys like <kbd>Space</kbd> and <kbd>Ctrl</kbd> + <kbd>C</kbd> work straight after</li>
 <li><strong>Label Visibility</strong>: Each label has a checkbox to show / hide annotations of that label</li>
 <li>Hidden labels retain their data and can be shown again at any time</li>
 <li>Transparency slider affects all labels (both visible and hidden)</li>
@@ -3028,8 +3030,9 @@ from <strong>Utilities &gt; Morphological</strong>. Its <strong>Overlaps</strong
 <li><strong>Confidence Chart</strong>: Displays a bar chart with confidence scores</li>
 <li><strong>Top 5 Predictions</strong>: Shows up to 5 predictions with their confidence scores</li>
 <li><strong>Prediction Selection</strong>: Click on any confidence bar to change the annotation's label, verifying it</li>
-<li><strong>Numerical Keys</strong>: Press keys <kbd>1</kbd>-<kbd>5</kbd> to quickly select from the top 5 predictions</li>
+<li><strong>Numerical Keys</strong>: Press keys <kbd>1</kbd>-<kbd>5</kbd> to quickly select from the top 5 predictions (Select tool; no need to click the window first)</li>
 <li><strong>Prev / Next buttons</strong>: Cycle through annotations in order of their creation</li>
+<li><strong>Keyboard Stays on the Canvas</strong>: Clicking in this window leaves the keyboard with the Annotation Window, so tool hotkeys keep working</li>
 <li><strong>Confidence Mode Toggle</strong>: <ul>
 <li>Click the icon button next to the dimensions to toggle between user and machine confidence views</li>
 <li>User icon shows user-assigned confidence scores</li>
@@ -3082,9 +3085,9 @@ from <strong>Utilities &gt; Morphological</strong>. Its <strong>Overlaps</strong
 </ul>
 <h3 id="tool-control">Tool Control<a class="headerlink" href="#tool-control" title="Permanent link">&para;</a></h3>
 <ul>
-<li><kbd>Ctrl</kbd> + <kbd>Alt</kbd>: Switch between tools within the existing tool group</li>
-<li>Switch from SelectTool to active annotation tool (e.g., PatchTool when PatchAnnotation selected)</li>
-<li>Switch from annotation tool back to SelectTool</li>
+<li><kbd>Ctrl</kbd> + <kbd>Alt</kbd> (either order; holding does not repeat): Switch between tools within the existing tool group</li>
+<li>Switch from annotation tool to SelectTool</li>
+<li>Switch from SelectTool back to the tool you came from (e.g., SAM), or else the tool for the selected annotation's type (e.g., PatchTool when PatchAnnotation selected)</li>
 <li>Toggle between Brush and Erase tools</li>
 <li>Toggle Feature Select Tool binary / multi-class mode</li>
 </ul>
@@ -3133,7 +3136,7 @@ from <strong>Utilities &gt; Morphological</strong>. Its <strong>Overlaps</strong
 - <kbd>Ctrl</kbd> + <kbd>6</kbd>: YOLOE / See Anything - Make predictions using See Anything model</p>
 <h3 id="confidence-window_1">Confidence Window<a class="headerlink" href="#confidence-window_1" title="Permanent link">&para;</a></h3>
 <ul>
-<li><kbd>1</kbd>-<kbd>5</kbd>: Quick-select from top 5 predictions</li>
+<li><kbd>1</kbd>-<kbd>5</kbd>: Quick-select from top 5 predictions (Select tool)</li>
 <li><kbd>Left-Click</kbd> on confidence bar: Change annotation's label and verify it</li>
 </ul>
 <h3 id="mouse-controls">Mouse Controls<a class="headerlink" href="#mouse-controls" title="Permanent link">&para;</a></h3>
@@ -3178,7 +3181,7 @@ from <strong>Utilities &gt; Morphological</strong>. Its <strong>Overlaps</strong
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 2, 2026 02:50:50 UTC"><span class="timeago" datetime="2026-10-02T02:50:50+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 2, 2026 02:50:50 UTC">2026-10-02</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 2, 2026 16:08:05 UTC"><span class="timeago" datetime="2026-10-02T16:08:05+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 2, 2026 16:08:05 UTC">2026-10-02</span>
   </span>
 
     
