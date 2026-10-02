@@ -16,7 +16,7 @@ SELECTION_COLOR = QColor(0, 168, 230)
 # How long the cursor has to rest during a box select before the box's size is
 # shown, and how far it may then drift, in screen pixels, before the readout is
 # taken down again. The tolerance keeps hand tremor from flickering it.
-DIMENSION_REST_MS = 2000
+DIMENSION_REST_MS = 1000
 DIMENSION_MOVE_TOLERANCE_PX = 8
 # Closest the readout may sit to the edge of the view, in screen pixels.
 DIMENSION_VIEW_MARGIN_PX = 4
