@@ -2090,6 +2090,12 @@ This guide provides instructions on how to use the application, including key fu
 </ul>
 </li>
 <li>Supports PNG, JPG, JPEG, JFIF, BMP, TIF, TIFF, and WebP images</li>
+<li><strong>Image Import Rule</strong> (right side of the dialog): Choose which images are imported</li>
+<li><strong>Import only images with annotations</strong> (default): skips images that have no label file or mask</li>
+<li><strong>Import all images found in dataset</strong>: includes unlabeled images alongside labeled ones</li>
+<li><strong>Import images only, without annotations</strong>: imports every image and ignores its label file or mask; no labels are created</li>
+<li><strong>Import a random subset</strong>: draws that many images from whichever rule is selected</li>
+<li><strong>Classes to Import</strong>: Uncheck classes to leave them out; Select All and Deselect All toggle the whole list</li>
 <li><strong>Annotation Importing</strong>: YOLO format annotations are converted and imported</li>
 <li>Detection datasets: Bounding boxes converted to Rectangle annotations</li>
 <li>Instance segmentation datasets: Polygon masks converted to Polygon annotations</li>
@@ -2114,7 +2120,7 @@ This guide provides instructions on how to use the application, including key fu
 <li>Each pixel value is the class ID, matching the index in the YAML's <code>names</code></li>
 <li>Pixel value 255 is the reserved ignore label and is imported as background</li>
 <li>A class named <code>background</code> at index 0 is treated as background, and no label is created for it</li>
-<li>Classes unchecked in Advanced Options are left as background</li>
+<li>Classes unchecked in Classes to Import are left as background</li>
 </ul>
 </li>
 <li>
@@ -2363,14 +2369,16 @@ This guide provides instructions on how to use the application, including key fu
     waiting, least confident first, opening each image and centring the annotation.
     <strong>Mark Verified</strong> confirms it; <strong>Mark as Review</strong> parks anything you cannot judge yet</p>
 </li>
-<li>An image you clear of predictions trains as a <strong>background</strong> image — deleting a wrong
-    box is how you teach the model there is nothing there. An image you simply never
-    annotated is left out of training rather than treated as empty</li>
+<li>An image with no annotations is left out of training: one nobody has annotated yet
+    is not empty. To teach the model an image has nothing on it, highlight it in the
+    Rasters Window (or open it) and press <strong>Mark Negative</strong> on the <strong>Session</strong> tab. It
+    then trains as a <strong>background</strong> image, and rounds do not predict on it. <strong>Unmark
+    Negative</strong> takes the mark off. Marks last for the session; <strong>New Session</strong> clears them</li>
 <li><strong>Image Budget</strong>: how many un-reviewed images a round predicts on. Most of it goes to
     images with nothing on them and the rest to images you have already worked on, so a
     round looks for new objects and checks itself where you are annotating</li>
-<li>A round skips the image open on the canvas and images already carrying predictions
-    you have not reviewed; a round that finds nothing tells you which. <strong>Re-run
+<li>A round skips the image open on the canvas, images marked negative, and images
+    already carrying predictions you have not reviewed; a round that finds nothing tells you which. <strong>Re-run
     Predictions</strong> predicts again at the current thresholds without training, which is the
     only way a threshold change takes effect before the next round. It reads the <strong>Image
     Budget</strong> as it stands, so raising the budget first reaches images the last round did
@@ -2381,6 +2389,12 @@ This guide provides instructions on how to use the application, including key fu
     <strong>Deploy Model</strong> always use the best model rather than the newest. The <strong>Rounds</strong>
     table reports mAP50 and mAP50-95, and <strong>Change</strong> is the column to read: it is blank
     when a round trained on different labels and is not comparable</li>
+<li><strong>PU Dataset</strong> (Detect only) trains the project as positive-unlabeled: regions you
+    have not boxed are treated as unknown rather than as background, so the model is not
+    taught to ignore objects nobody has reached yet. It usually lowers mAP while raising
+    recall, so PU rounds are marked <strong>(PU)</strong> and only compared with other PU rounds. Best
+    on medium or larger models at large image sizes; not available for RT-DETR, YOLOv10
+    or YOLO26</li>
 <li><strong>Stop</strong> ends a running round after the current epoch, keeping what it trained</li>
 <li><strong>New Session</strong> forgets the rounds and starts over, and offers to clear out round
     folders left on disk. <strong>Save Session</strong> copies the best model, its results and a
@@ -2421,6 +2435,10 @@ This guide provides instructions on how to use the application, including key fu
 <li><strong>Train Model</strong>: Train a machine learning model<ul>
 <li><strong>Classify</strong>: Train classification model</li>
 <li><strong>Detect</strong>: Train object detection model</li>
+<li><strong>PU Dataset</strong>: set True when the dataset is only partly annotated (real objects
+    left unboxed). Unboxed regions the model is fairly sure about are dropped from the
+    loss instead of being taught as background. Mosaic is turned off once it is active,
+    and the best-recall epoch is saved as <code>weights/recall_best.pt</code> beside <code>best.pt</code></li>
 <li><strong>Segment</strong>: Train instance segmentation model</li>
 <li><strong>Semantic</strong>: Train semantic segmentation model</li>
 </ul>
@@ -2607,7 +2625,10 @@ This guide provides instructions on how to use the application, including key fu
 <li><kbd>Left-Click</kbd>: Select an annotation drag to move it</li>
 <li><kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add / remove annotation to current selection</li>
 <li><kbd>Ctrl</kbd> + <kbd>Delete</kbd> / <kbd>Backspace</kbd>: Remove selected annotation(s)</li>
-<li><kbd>Ctrl</kbd> + <kbd>Drag</kbd>: Create rectangle selection to select multiple annotations</li>
+<li><kbd>Ctrl</kbd> + <kbd>Drag</kbd>: Create rectangle selection to select multiple annotations<ul>
+<li>Hold still for 2 seconds to show the rectangle's size (pixels, and real-world units if the image has a scale) at its bottom-left corner; moving hides it</li>
+</ul>
+</li>
 <li><kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd>: Change size of the selected annotation</li>
 <li><strong>Resize handles</strong>: Appear automatically whenever a single annotation is selected; they stay subdued until the cursor comes near, then grow and light up. Drag one to reshape; the cursor shows which way it moves</li>
 <li><kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show <em>every</em> vertex at full strength (dense polygons normally thin their handles until you zoom in)</li>
@@ -3157,7 +3178,7 @@ from <strong>Utilities &gt; Morphological</strong>. Its <strong>Overlaps</strong
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="September 28, 2026 23:10:14 UTC"><span class="timeago" datetime="2026-09-28T23:10:14+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="September 28, 2026 23:10:14 UTC">2026-09-28</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 2, 2026 02:50:50 UTC"><span class="timeago" datetime="2026-10-02T02:50:50+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 2, 2026 02:50:50 UTC">2026-10-02</span>
   </span>
 
     
