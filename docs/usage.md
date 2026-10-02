@@ -666,6 +666,7 @@ The Explorer automatically caches extracted features to accelerate re-loading th
   - <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add / remove annotation to current selection
   - <kbd>Ctrl</kbd> + <kbd>Delete</kbd> / <kbd>Backspace</kbd>: Remove selected annotation(s)
   - <kbd>Ctrl</kbd> + <kbd>Drag</kbd>: Create rectangle selection to select multiple annotations
+    - Hold still for 2 seconds to show the rectangle's size (pixels, and real-world units if the image has a scale) at its bottom-left corner; moving hides it
   - <kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd>: Change size of the selected annotation
   - **Resize handles**: Appear automatically whenever a single annotation is selected; they stay subdued until the cursor comes near, then grow and light up. Drag one to reshape; the cursor shows which way it moves
   - <kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show *every* vertex at full strength (dense polygons normally thin their handles until you zoom in)
