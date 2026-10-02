@@ -1,5 +1,3 @@
-import warnings
-
 import os
 from datetime import datetime
 
@@ -27,8 +25,6 @@ from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAn
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Icons import get_window_icon
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

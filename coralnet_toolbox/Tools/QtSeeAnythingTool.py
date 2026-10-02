@@ -1,5 +1,4 @@
 import os
-import warnings
 
 import cv2
 import numpy as np
@@ -35,8 +34,6 @@ from coralnet_toolbox.SeeAnything.PromptSession import (KIND_BOXES,
                                                         collapse_to_one_class)
 
 from coralnet_toolbox.utilities import work_area_to_numpy_bgr
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # Predictions are fetched down to this confidence and filtered for display, so

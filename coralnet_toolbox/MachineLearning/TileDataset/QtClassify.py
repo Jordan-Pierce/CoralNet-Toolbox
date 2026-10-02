@@ -1,8 +1,3 @@
-import warnings
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
-
 from coralnet_toolbox.MachineLearning.TileDataset.QtBase import Base
 
 

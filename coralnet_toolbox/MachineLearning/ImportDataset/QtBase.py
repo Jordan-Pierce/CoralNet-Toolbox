@@ -29,9 +29,6 @@ MASK_EXTENSIONS = ('.png', '.tif', '.tiff')
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Icons import get_icon, get_window_icon
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
-
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Dataset Discovery

@@ -1,9 +1,5 @@
-import warnings
-
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QFileDialog, QMessageBox, QApplication)
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

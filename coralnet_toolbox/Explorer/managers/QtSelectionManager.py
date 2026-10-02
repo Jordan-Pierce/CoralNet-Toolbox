@@ -7,14 +7,11 @@ and AnnotationWindow. It restores the selection logic from the original
 ExplorerWindow implementation.
 """
 
-import warnings
 import time
 
 from typing import List, Set
 
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

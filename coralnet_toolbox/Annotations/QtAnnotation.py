@@ -1,6 +1,5 @@
 import os
 import uuid
-import warnings
 
 import cv2
 import math
@@ -18,8 +17,6 @@ from coralnet_toolbox.QtLabelWindow import Label
 
 from coralnet_toolbox.utilities import convert_scale_units
 from coralnet_toolbox.utilities import get_view_scale
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

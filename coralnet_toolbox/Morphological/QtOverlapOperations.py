@@ -1,5 +1,4 @@
 import os
-import warnings
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QIcon, QPixmap
@@ -12,8 +11,6 @@ from PyQt5.QtWidgets import (
 from coralnet_toolbox.Morphological.overlap_ops import MERGE, REMOVE, SUBTRACT, OverlapSpec
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

@@ -1,5 +1,3 @@
-import warnings
-
 import gc
 import os
 
@@ -29,8 +27,7 @@ from coralnet_toolbox.Common import ThresholdsWidget
 
 from coralnet_toolbox.Icons import get_icon, get_window_icon
 from coralnet_toolbox.SAM import SharedWeights
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
+from coralnet_toolbox.paths import find_weights, resolve_weights
 
 
 # Segment-everything settings for SAM models, as Predictor.generate() keywords.
@@ -235,8 +232,10 @@ class DeployGeneratorDialog(QDialog):
             "SAM 2.1 Large": "sam2.1_l.pt"
         }
         
-        # Check for SAM 3 weights in the current directory and add to models if found
-        if os.path.exists(os.path.join(os.getcwd(), "sam3.pt")):
+        # SAM 3 weights are gated and cannot be downloaded for the user; offer
+        # them only if they have been placed in the weights directory (or the
+        # working directory, where earlier versions looked)
+        if find_weights("sam3.pt"):
             self.models["SAM 3"] = "sam3.pt"
 
         # Add all models to combo box
@@ -543,7 +542,7 @@ class DeployGeneratorDialog(QDialog):
 
             # Determine which class to instantiate
             if "FastSAM" in selected_model_name:
-                self.loaded_model = FastSAM(self.model_path)
+                self.loaded_model = FastSAM(resolve_weights(self.model_path))
                 self.model_type = "fastSAM"
                 # Warm-up at the precision the real calls use: ultralytics
                 # rebuilds the predictor when quantize changes between calls.
@@ -603,7 +602,7 @@ class DeployGeneratorDialog(QDialog):
         device = self.main_window.device
         quantize = self.get_quantize()
         predictor = predictor_class(overrides=dict(
-            model=self.model_path,
+            model=resolve_weights(self.model_path),
             imgsz=imgsz,
             conf=self.thresholds_widget.get_uncertainty_thresh(),
             iou=self.thresholds_widget.get_iou_thresh(),

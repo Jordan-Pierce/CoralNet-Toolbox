@@ -25,8 +25,8 @@
 
 ```bash
 # Create and activate custom environment
-conda create --name coralnet10 python=3.10 -y
-conda activate coralnet10
+conda create --name coralnet12 python=3.12 -y
+conda activate coralnet12
 
 # Install uv
 pip install uv
@@ -36,8 +36,8 @@ pip install uv
 If you have an NVIDIA GPU with CUDA, install PyTorch with CUDA support for full acceleration.
 
 ```bash
-# Example for CUDA 12.9; use your version of CUDA
-uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu129
+# Example for CUDA 12.8 (needed for RTX 50-series / Blackwell); use your version of CUDA
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 ```
 
 **3. Install**

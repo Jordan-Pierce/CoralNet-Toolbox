@@ -6,11 +6,8 @@ so the gallery can display thumbnails without blocking the UI.
 Extracted from ui/QtAnnotationViewerWindow.py.
 """
 
-import warnings
 
 from PyQt5.QtCore import QThread, pyqtSignal
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

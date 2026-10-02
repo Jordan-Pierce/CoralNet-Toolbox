@@ -1,5 +1,3 @@
-import warnings
-
 import gc
 import os
 
@@ -20,9 +18,6 @@ from coralnet_toolbox.Common import ThresholdsWidget
 from rasterio.windows import Window as _RasterioWindow
 
 from coralnet_toolbox.utilities import pixmap_to_numpy_bgr
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

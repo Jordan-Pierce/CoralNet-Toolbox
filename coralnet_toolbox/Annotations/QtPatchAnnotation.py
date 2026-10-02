@@ -1,5 +1,3 @@
-import warnings
-
 import numpy as np
 from shapely.ops import unary_union
 from shapely.geometry import Point, Polygon 
@@ -17,7 +15,6 @@ from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAn
 
 from coralnet_toolbox.utilities import rasterio_to_cropped_image
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes

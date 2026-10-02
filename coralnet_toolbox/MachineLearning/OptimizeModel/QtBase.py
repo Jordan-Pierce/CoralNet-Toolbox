@@ -1,5 +1,3 @@
-import warnings
-
 import gc
 from torch.cuda import empty_cache
 
@@ -14,9 +12,6 @@ from PyQt5.QtWidgets import (
 )
 
 from coralnet_toolbox.Icons import get_icon, get_window_icon
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

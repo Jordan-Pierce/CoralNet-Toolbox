@@ -1,5 +1,3 @@
-import warnings
-
 import os
 import gc
 
@@ -21,8 +19,7 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Common import ThresholdsWidget
 from coralnet_toolbox.Icons import get_icon, get_window_icon
 from coralnet_toolbox.SAM import SharedWeights
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
+from coralnet_toolbox.paths import find_weights, resolve_weights
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -137,12 +134,13 @@ class DeployPredictorDialog(QDialog):
             "SAM 2.1 Large": "sam2.1_l.pt"
         }
         
-        # Check for SAM 3 weights in the current directory and add to models if found
-        if os.path.exists(os.path.join(os.getcwd(), "sam3.pt")):
+        # SAM 3 weights are gated and cannot be downloaded for the user; offer
+        # them only if they have been placed in the weights directory (or the
+        # working directory, where earlier versions looked)
+        if find_weights("sam3.pt"):
             self.models["SAM 3"] = "sam3.pt"
-            
-        # Check for SAM 3 weights in the current directory and add to models if found
-        if os.path.exists(os.path.join(os.getcwd(), "sam3.1_multiplex.pt")):
+
+        if find_weights("sam3.1_multiplex.pt"):
             self.models["SAM 3.1 Multiplex"] = "sam3.1_multiplex.pt"
             
         # Add all models to combo box
@@ -396,7 +394,7 @@ class DeployPredictorDialog(QDialog):
                 task="detect" if self.get_output_type() == "Rectangle" else "segment",
                 mode="predict",
                 imgsz=imgsz,
-                model=self.model_path,
+                model=resolve_weights(self.model_path),
                 conf=conf,
                 device=self.main_window.device,
                 retina_masks=False,
@@ -499,7 +497,7 @@ class DeployPredictorDialog(QDialog):
         self.image_path = image_path
         
         # Ultralytics will download the model for the user
-        if not os.path.exists(self.model_path):
+        if not os.path.exists(resolve_weights(self.model_path)):
             # Inform the user that the model is being downloaded via main window status bar
             self.main_window.status_bar.showMessage(
                 f"Downloading model weights for {os.path.basename(self.model_path)}...", 5000)

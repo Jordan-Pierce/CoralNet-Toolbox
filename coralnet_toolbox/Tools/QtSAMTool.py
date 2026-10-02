@@ -1,5 +1,3 @@
-import warnings
-
 import numpy as np
 import torch
 
@@ -20,8 +18,6 @@ from coralnet_toolbox.WorkArea import WorkArea
 from coralnet_toolbox.utilities import work_area_to_numpy_bgr
 from coralnet_toolbox.utilities import polygonize_mask_with_holes
 from coralnet_toolbox.utilities import get_view_scale
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

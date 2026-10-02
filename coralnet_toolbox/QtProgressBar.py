@@ -1,5 +1,3 @@
-import warnings
-
 from PyQt5.QtCore import Qt, QSize, QRectF, QTimer
 from PyQt5.QtCore import pyqtSignal, QPropertyAnimation, QEventLoop
 from PyQt5.QtGui import QColor, QFont, QPainter, QPen
@@ -17,8 +15,6 @@ from PyQt5.QtWidgets import (
 
 from coralnet_toolbox.Icons import get_icon, get_window_icon
 from coralnet_toolbox import theme as app_theme
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

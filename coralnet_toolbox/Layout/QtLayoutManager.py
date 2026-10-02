@@ -4,17 +4,20 @@ QtLayoutManager - Persistent window layout management using PyQtAds.
 Automatically saves dock configuration on application exit and restores
 on startup using PyQtAds' serialization (CDockManager.saveState/restoreState).
 
-Configuration files stored in .cache/layout/ directory.
+Configuration files stored in ~/.coralnet-toolbox/layout/ (see paths.py).
 """
 
 import os
 import json
 import base64
+import shutil
 from pathlib import Path
 
 from PyQt5.QtCore import QByteArray
-from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
+from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QLineEdit, QPushButton, QMessageBox)
+
+from coralnet_toolbox.paths import app_dir
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -91,25 +94,34 @@ class SaveLayoutDialog(QDialog):
 class QtLayoutManager:
     """Manages saving and restoring dock layouts using PyQtAds serialization."""
     
-    # Base cache directory
-    CACHE_BASE = ".cache"
     LAYOUTS_SUBDIR = "layout"
     DEFAULT_LAYOUT_NAME = "default"
 
+    # Where earlier versions kept layouts: relative to the working directory
+    LEGACY_LAYOUT_DIR = Path(".cache") / "layout"
+
     # Factory layout shipped with the package (read-only, never overwritten)
     FACTORY_LAYOUT_FILE = "factory_default.json"
-    
+
     @classmethod
     def get_cache_dir(cls) -> Path:
         """
-        Get the cache directory path, creating it if necessary.
-        Uses current working directory as base.
-        
+        Get the layout directory, creating it if necessary.
+
+        The first time it is empty, layouts saved by an earlier version under
+        the working directory's .cache/layout are copied in, so an upgrade
+        keeps the user's dock arrangement. The old files are left in place.
+
         Returns:
-            Path: Path to cache directory
+            Path: Path to the layout directory
         """
-        cache_dir = Path(cls.CACHE_BASE) / cls.LAYOUTS_SUBDIR
-        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_dir = app_dir(cls.LAYOUTS_SUBDIR)
+        if not any(cache_dir.glob("*.json")) and cls.LEGACY_LAYOUT_DIR.is_dir():
+            for legacy in cls.LEGACY_LAYOUT_DIR.glob("*.json"):
+                try:
+                    shutil.copy2(legacy, cache_dir / legacy.name)
+                except OSError:
+                    pass  # A layout that will not copy is just not carried over
         return cache_dir
     
     @classmethod

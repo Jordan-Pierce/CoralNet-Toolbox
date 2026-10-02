@@ -27,8 +27,8 @@ Marine imaging technology is advancing rapidly, capturing more data than ever be
 
 ```bash
 # Create and activate custom environment
-conda create --name coralnet10 python=3.10 -y
-conda activate coralnet10
+conda create --name coralnet12 python=3.12 -y
+conda activate coralnet12
 
 # Install uv
 pip install uv
@@ -81,6 +81,8 @@ uv pip install --upgrade coralnet-toolbox
 
 > **Note**: Using `-U` or `--upgrade-all` upgrades **all packages**, which may trigger a regression to the CPU version of `torch`. To avoid this, use the command above to upgrade only coralnet-toolbox. If you do experience a regression, use `pip` to uninstall `torch` and `torchvision`, then re-install the `CUDA` version.
 
+> **Python version**: Python 3.12 is recommended. An existing Python 3.10 environment (`coralnet10`) keeps working for now, but Python 3.10 reaches end-of-life in October 2026 and newer releases of several dependencies already require 3.11 or 3.12. Python cannot be upgraded inside an environment, so move to 3.12 by creating a new one (see **Starting Fresh** below).
+
 #### **Removing Packages**
 
 To remove a problematic package, type the following:
@@ -95,17 +97,17 @@ To delete an old environment and create a fresh one:
 
 ```bash
 # Deactivate if already in the environment
-conda deactivate coralnet10
+conda deactivate
 
-# Delete the old environment
+# Delete the old environment (coralnet10 is the old Python 3.10 one)
 conda env remove --name coralnet10
 
 # Confirm when prompted
 y
 
 # Create a new environment (see "Get Started" section above for details)
-conda create --name coralnet10 python=3.10 -y
-conda activate coralnet10
+conda create --name coralnet12 python=3.12 -y
+conda activate coralnet12
 pip install uv
 uv pip install coralnet-toolbox
 ```

@@ -1,5 +1,3 @@
-import warnings
-
 import gc
 import datetime
 import traceback
@@ -21,9 +19,6 @@ from coralnet_toolbox.MachineLearning.ConfusionMatrix import ConfusionMatrixMetr
 from coralnet_toolbox.MachineLearning.RunLog import capture_run_log
 
 from coralnet_toolbox.Icons import get_icon, get_window_icon
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

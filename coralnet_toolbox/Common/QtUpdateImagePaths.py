@@ -1,5 +1,3 @@
-import warnings
-
 import os 
 
 from PyQt5.QtWidgets import (QVBoxLayout, QLabel, QGroupBox, QHBoxLayout, QApplication,
@@ -8,10 +6,6 @@ from PyQt5.QtWidgets import (QVBoxLayout, QLabel, QGroupBox, QHBoxLayout, QAppli
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Icons import get_window_icon
-
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

@@ -1,4 +1,3 @@
-import warnings
 import os
 import time
 from collections import OrderedDict
@@ -31,8 +30,6 @@ except Exception:
     SimpleDecoder = None  # type: ignore[assignment]
     OutputColorType = None  # type: ignore[assignment]
     HAS_PYNVVIDEO_CODEC = False
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

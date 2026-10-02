@@ -1,5 +1,3 @@
-import warnings
-
 import os
 import traceback
 import time
@@ -72,7 +70,6 @@ from coralnet_toolbox.QtVideoPlayer import VideoPlayerWidget
 from coralnet_toolbox import theme as app_theme
 from coralnet_toolbox.MachineLearning.ExportDataset.export_dataset_utils import parse_frame_path
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 _PERF_LOG = bool(os.environ.get("CNT_PERF_LOG"))
 

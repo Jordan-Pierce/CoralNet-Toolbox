@@ -1,4 +1,3 @@
-import warnings
 import os
 import ujson as json
 
@@ -25,8 +24,6 @@ from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAn
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Icons import get_window_icon
 from coralnet_toolbox.utilities import rasterio_to_numpy
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

@@ -1,5 +1,3 @@
-import warnings
-
 import gc
 import os
 
@@ -21,9 +19,6 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Common import ThresholdsWidget
 
 from coralnet_toolbox.utilities import bgr_to_qimage, decode_video_frame
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

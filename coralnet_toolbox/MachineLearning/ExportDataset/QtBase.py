@@ -1,5 +1,3 @@
-import warnings
-
 import os
 import random
 from collections import Counter
@@ -34,9 +32,6 @@ from coralnet_toolbox.MachineLearning.TrainModel.QtBase import (
     open_train_model_dialog_later,
     prompt_train_model,
 )
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

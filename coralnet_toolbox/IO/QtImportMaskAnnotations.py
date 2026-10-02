@@ -1,5 +1,3 @@
-import warnings
-
 import os
 import ujson as json
 
@@ -18,8 +16,6 @@ from coralnet_toolbox.Annotations.QtMaskAnnotation import build_mask_annotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Icons import get_icon, get_window_icon
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

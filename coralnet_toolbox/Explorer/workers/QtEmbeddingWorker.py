@@ -5,12 +5,10 @@ This module provides a QThread-based worker that handles the expensive
 feature extraction and dimensionality reduction operations in the background,
 keeping the UI responsive.
 """
-import warnings
 import numpy as np
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # The retained feature matrix is used for neighbour ranking and feature-space
 # clustering, never for reconstruction, so the extractor's full width is wasted

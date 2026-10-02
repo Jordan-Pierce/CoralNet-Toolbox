@@ -1,5 +1,3 @@
-import warnings
-
 import os
 import gc
 import yaml
@@ -30,9 +28,6 @@ from coralnet_toolbox.MachineLearning.ExportDataset.export_dataset_utils import 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Icons import get_icon, get_window_icon
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

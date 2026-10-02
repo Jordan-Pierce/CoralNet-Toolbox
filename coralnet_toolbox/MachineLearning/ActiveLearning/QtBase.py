@@ -56,7 +56,6 @@ Scope: detection and instance segmentation, plain image rasters. See
 ACTIVE_LEARNING_PLAN.md.
 """
 
-import warnings
 
 import os
 import gc
@@ -95,9 +94,7 @@ from coralnet_toolbox.Results.ResultsProcessor import ResultsProcessor
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Icons import get_window_icon
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
+from coralnet_toolbox.paths import cache_dir
 
 
 # Status-bar updates are recounted rather than incremented, so they are
@@ -1769,36 +1766,24 @@ class Base(QDialog):
     # Reading the project
     # ------------------------------------------------------------------
 
-    def project_root(self):
-        """The directory a session writes its runs and scaffolding under.
-
-        The launch directory, which is where the rest of the application keeps
-        its generated data: the Explorer's embeddings are in `.cache/embedding`
-        and in-place training's scaffolding in `.cache/in_place_training`, both
-        resolved the same way. A session's rounds are the same kind of thing --
-        derived, rebuildable, and nothing a user opens by hand -- so they sit
-        beside them rather than in a `Data/` folder next to the project file.
-
-        This did anchor to the open project, to stop the same project
-        scattering rounds across the disk depending on where the application was
-        launched from. That cost is now smaller than it looks: a session is
-        ephemeral, so no round history is ever restored from disk, and a folder
-        left under a previous working directory costs disk rather than
-        correctness. What it buys is one place to look, and one place to clear.
-        """
-        return os.path.abspath(os.getcwd())
-
     def runs_root(self):
-        """Where this session's Ultralytics run directories go."""
-        return os.path.join(self.project_root(),
-                            InPlaceTraining.CACHE_BASE,
-                            RUNS_SUBDIR)
+        """Where this session's Ultralytics run directories go.
+
+        The toolbox's cache folder (see paths.py), where the rest of the
+        application keeps its generated data: the Explorer's embeddings and
+        in-place training's scaffolding sit beside it. A session's rounds are
+        the same kind of thing -- derived, rebuildable, and nothing a user
+        opens by hand -- so they go there rather than in a `Data/` folder next
+        to the project file. A session is ephemeral, so no round history is
+        ever restored from disk; what one fixed place buys is one place to
+        look, and one place to clear, whichever folder the application was
+        launched from.
+        """
+        return cache_dir(RUNS_SUBDIR).as_posix()
 
     def cache_root(self):
         """Where the generated yaml and its empty split directories go."""
-        return os.path.join(self.project_root(),
-                            InPlaceTraining.CACHE_BASE,
-                            InPlaceTraining.CACHE_SUBDIR)
+        return cache_dir(InPlaceTraining.CACHE_SUBDIR).as_posix()
 
     def showEvent(self, event):
         """Read the project and start reporting progress when opened."""

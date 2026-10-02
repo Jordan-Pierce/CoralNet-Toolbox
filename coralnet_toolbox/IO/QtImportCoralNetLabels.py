@@ -1,5 +1,3 @@
-import warnings
-
 import uuid
 import random
 import pandas as pd
@@ -9,8 +7,6 @@ from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import QFileDialog, QMessageBox, QApplication
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
