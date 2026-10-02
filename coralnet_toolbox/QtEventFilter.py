@@ -15,9 +15,15 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 class GlobalEventFilter(QObject):
+    # One press is one run for these: held down, they would fire again about 30
+    # times a second, each a full capture or prediction.
+    _ONE_SHOT_KEYS = (Qt.Key_F1, Qt.Key_1, Qt.Key_2, Qt.Key_3, Qt.Key_4, Qt.Key_5, Qt.Key_6)
+
     def __init__(self, main_window):
         super().__init__(main_window)
         self.main_window = main_window
+        # Set while a guarded hotkey action runs. See _guarded.
+        self._hotkey_busy = False
         self.label_window = main_window.label_window
         self.annotation_window = main_window.annotation_window
         self.image_window = main_window.image_window
@@ -37,6 +43,27 @@ class GlobalEventFilter(QObject):
                 status_bar.showMessage(message, msecs)
         except Exception:
             pass
+
+    def _guarded(self, action, *args):
+        """Run a hotkey action unless one is already running. Always consumes the key.
+
+        This filter sits on the whole application, so it also sees keys sent to
+        a modal progress bar. Every progress bar update pumps the event loop,
+        which lets the next key press in mid-action: Ctrl+2 during a predict
+        started a second predict inside the first, a held Ctrl+Z nested undos
+        (and reversed the redo order), and a held Alt+Down began loading the
+        next image while the last one was still adding its annotations. Keys
+        that arrive mid-action are dropped instead; a held key still repeats,
+        at the pace each action finishes.
+        """
+        if self._hotkey_busy:
+            return True
+        self._hotkey_busy = True
+        try:
+            action(*args)
+        finally:
+            self._hotkey_busy = False
+        return True
 
     def _undo_redo_2d(self, redo: bool):
         """Run a 2D undo/redo and say what it did.
@@ -67,10 +94,12 @@ class GlobalEventFilter(QObject):
             if event.type() == QEvent.KeyPress:
                 if event.modifiers() & Qt.ControlModifier and not (event.modifiers() & Qt.ShiftModifier):
 
+                    if event.isAutoRepeat() and event.key() in self._ONE_SHOT_KEYS:
+                        return True
+
                     # Handle hotkey for a capture using the Capture View dialog's settings
                     if event.key() == Qt.Key_F1:
-                        self.capture_high_res_screenshot()
-                        return True
+                        return self._guarded(self.capture_high_res_screenshot)
 
                     # Handle Ctrl+Up and Ctrl+Down for cycling labels
                     if event.key() == Qt.Key_Up:
@@ -100,7 +129,7 @@ class GlobalEventFilter(QObject):
                             return True
 
                         if self.classify_deploy_model_dialog.loaded_model is not None:
-                            self.classify_deploy_model_dialog.predict()
+                            self._guarded(self.classify_deploy_model_dialog.predict)
                         else:
                             self.main_window.open_classify_deploy_model_dialog()
                         return True
@@ -108,7 +137,7 @@ class GlobalEventFilter(QObject):
                     # Handle hotkey for object detection prediction
                     if event.key() == Qt.Key_2:
                         if self.detect_deploy_model_dialog.loaded_model is not None:
-                            self.detect_deploy_model_dialog.predict()
+                            self._guarded(self.detect_deploy_model_dialog.predict)
                         else:
                             self.main_window.open_detect_deploy_model_dialog()
                         return True
@@ -116,7 +145,7 @@ class GlobalEventFilter(QObject):
                     # Handle hotkey for instance segmentation prediction
                     if event.key() == Qt.Key_3:
                         if self.segment_deploy_model_dialog.loaded_model is not None:
-                            self.segment_deploy_model_dialog.predict()
+                            self._guarded(self.segment_deploy_model_dialog.predict)
                         else:
                             self.main_window.open_segment_deploy_model_dialog()
                         return True
@@ -124,7 +153,7 @@ class GlobalEventFilter(QObject):
                     # Handle hotkey for semantic segmentation prediction
                     if event.key() == Qt.Key_4:
                         if self.semantic_deploy_model_dialog.loaded_model is not None:
-                            self.semantic_deploy_model_dialog.predict()
+                            self._guarded(self.semantic_deploy_model_dialog.predict)
                         else:
                             self.main_window.open_semantic_deploy_model_dialog()
                         return True
@@ -132,7 +161,7 @@ class GlobalEventFilter(QObject):
                     # Handle hotkey for segment everything prediction
                     if event.key() == Qt.Key_5:
                         if self.sam_deploy_generator_dialog.loaded_model is not None:
-                            self.sam_deploy_generator_dialog.predict()
+                            self._guarded(self.sam_deploy_generator_dialog.predict)
                         else:
                             self.main_window.open_sam_deploy_generator_dialog()
                         return True
@@ -140,7 +169,7 @@ class GlobalEventFilter(QObject):
                     # Handle hotkey for see anything (YOLOE) generator
                     if event.key() == Qt.Key_6:
                         if self.see_anything_deploy_generator_dialog.loaded_model is not None:
-                            self.see_anything_deploy_generator_dialog.predict()
+                            self._guarded(self.see_anything_deploy_generator_dialog.predict)
                         else:
                             self.main_window.open_see_anything_deploy_generator_dialog()
                         return True
@@ -172,8 +201,7 @@ class GlobalEventFilter(QObject):
                                 tool.stop_current_drawing()
                                 return True
 
-                            self._undo_redo_2d(redo=False)
-                            return True
+                            return self._guarded(self._undo_redo_2d, False)
 
                 # Handle redo hotkey (Ctrl+Shift+Z)
                 if event.key() == Qt.Key_Z and event.modifiers() == (Qt.ControlModifier | Qt.ShiftModifier):
@@ -188,8 +216,7 @@ class GlobalEventFilter(QObject):
                             tool.stop_current_drawing()
                             return True
 
-                        self._undo_redo_2d(redo=True)
-                        return True
+                        return self._guarded(self._undo_redo_2d, True)
 
                 # Delete (backspace or delete key) selected annotations when select tool is active
                 if event.key() == Qt.Key_Delete or event.key() == Qt.Key_Backspace:
@@ -244,11 +271,9 @@ class GlobalEventFilter(QObject):
 
                 # Handle image cycling hotkeys
                 if event.key() == Qt.Key_Up and event.modifiers() == (Qt.AltModifier):
-                    self.image_window.cycle_previous_image()
-                    return True
+                    return self._guarded(self.image_window.cycle_previous_image)
                 if event.key() == Qt.Key_Down and event.modifiers() == (Qt.AltModifier):
-                    self.image_window.cycle_next_image()
-                    return True
+                    return self._guarded(self.image_window.cycle_next_image)
 
                 # Handle Ctrl + S for saving project
                 if event.key() == Qt.Key_S and event.modifiers() == (Qt.ControlModifier):

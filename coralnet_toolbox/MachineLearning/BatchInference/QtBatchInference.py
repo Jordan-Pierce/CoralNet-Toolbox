@@ -2104,12 +2104,18 @@ class BatchInferenceDialog(QDialog):
             pass
 
     def _on_worker_stage(self, text):
-        """Update the progress dialog's message label with the current stage (main thread)."""
+        """Update the progress dialog's message label with the current stage (main thread).
+
+        Must not call processEvents. This is a queued slot, already run by the
+        event loop, and the worker posts one stage per batch. Whenever the GUI
+        lags the worker, a pump here dispatches the next batch's stage inside
+        this one, nesting one native frame set per batch until the stack
+        overflows: a silent 0xC00000FD around 100 batches in.
+        """
         try:
             pb = getattr(self, '_progress_bar', None)
             if pb is not None and hasattr(pb, 'message_label'):
                 pb.message_label.setText(text)
-                QApplication.processEvents()
         except Exception:
             pass
 

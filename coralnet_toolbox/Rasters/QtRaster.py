@@ -1544,5 +1544,10 @@ class Raster(QObject):
             gc.collect()
         
     def __del__(self):
-        """Destructor to ensure resources are cleaned up."""
-        self.cleanup()
+        """Destructor to ensure resources are cleaned up.
+
+        Never collects garbage: this object is already being freed, and a full
+        gc.collect() per destroyed raster doubled the cost of deleting an image
+        and made RasterManager.clear() pay once per raster instead of once.
+        """
+        self.cleanup(collect_garbage=False)

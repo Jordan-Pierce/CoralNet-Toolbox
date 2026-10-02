@@ -386,7 +386,6 @@ class Segment(Base):
                     else:
                         results_processor.process_detection_results(results_list)
                     progress_bar.update_progress()
-                    QApplication.processEvents()
 
                 self.annotation_window.is_streaming_inference = False
 

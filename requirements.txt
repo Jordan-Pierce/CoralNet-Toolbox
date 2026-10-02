@@ -14,6 +14,8 @@ open-clip-torch>=2.20.0
 # wheels -- without this marker pip/uv falls back to the 1.0.2 sdist, which
 # fails to build against modern setuptools (no pkg_resources).
 pynvvideocodec; platform_system != "Darwin"
+# NVIDIA GPU inference. Only needed on Windows with NVIDIA GPUs.
+triton-windows; platform_system == "Windows"
 scikit-learn
 umap-learn
 faiss-cpu
