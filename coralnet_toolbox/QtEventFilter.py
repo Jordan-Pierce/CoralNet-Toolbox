@@ -88,10 +88,47 @@ class GlobalEventFilter(QObject):
         except Exception as e:
             self._status(f"Screenshot failed: {e}", 5000)
 
+    @staticmethod
+    def _is_ctrl_alt_press(event) -> bool:
+        """True when this key press completes Ctrl+Alt, in either order.
+
+        Qt reports a modifier key's press with the modifier state from before
+        that key, so Alt pressed after Ctrl arrives as Key_Alt carrying
+        ControlModifier, while Ctrl pressed after Alt arrives as Key_Control
+        carrying AltModifier. Only the first used to be recognised, so pressing
+        the pair Alt-first silently did nothing.
+        """
+        key = event.key()
+        if key not in (Qt.Key_Alt, Qt.Key_Control):
+            return False
+        modifiers = event.modifiers()
+        if modifiers & Qt.ShiftModifier:
+            return False
+        ctrl = bool(modifiers & Qt.ControlModifier) or key == Qt.Key_Control
+        alt = bool(modifiers & Qt.AltModifier) or key == Qt.Key_Alt
+        return ctrl and alt
+
     def eventFilter(self, obj, event):
         try:
             # Handle keyboard events
             if event.type() == QEvent.KeyPress:
+                # Ctrl+Alt switches between Select and the annotation tool.
+                if self._is_ctrl_alt_press(event):
+                    # Modifier keys auto-repeat while held, and every repeat
+                    # used to switch again: holding the pair a moment too long
+                    # went SAM -> Select -> Polygon -> Select ..., stopping on
+                    # whichever tool the repeats happened to end at.
+                    if event.isAutoRepeat():
+                        return True
+                    # Ctrl+Alt toggles multi-class mode when the Feature Select
+                    # tool is active; otherwise it falls back to tool-switching.
+                    if (self.annotation_window.selected_tool == "feature_select"
+                            and "feature_select" in self.annotation_window.tools):
+                        self.annotation_window.tools["feature_select"]._toggle_multiclass_mode()
+                        return True
+                    self.main_window.switch_back_to_tool()
+                    return True
+
                 if event.modifiers() & Qt.ControlModifier and not (event.modifiers() & Qt.ShiftModifier):
 
                     if event.isAutoRepeat() and event.key() in self._ONE_SHOT_KEYS:
@@ -107,17 +144,6 @@ class GlobalEventFilter(QObject):
                         return True
                     if event.key() == Qt.Key_Down:
                         self.label_window.cycle_labels(1)  # Cycle down/next
-                        return True
-
-                    # Handle Alt key for switching between Select and Annotation tools
-                    if event.key() == Qt.Key_Alt:
-                        # Ctrl+Alt toggles multi-class mode when the Feature Select
-                        # tool is active; otherwise it falls back to tool-switching.
-                        if (self.annotation_window.selected_tool == "feature_select"
-                                and "feature_select" in self.annotation_window.tools):
-                            self.annotation_window.tools["feature_select"]._toggle_multiclass_mode()
-                            return True
-                        self.main_window.switch_back_to_tool()
                         return True
 
                     # Handle hotkey for image classification prediction

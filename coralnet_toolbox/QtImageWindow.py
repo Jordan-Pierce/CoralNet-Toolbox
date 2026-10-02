@@ -6,7 +6,7 @@ from contextlib import contextmanager
 import rasterio
 
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint, QItemSelectionModel, QModelIndex, QEvent
-from PyQt5.QtGui import QKeyEvent, QStandardItem, QStandardItemModel
+from PyQt5.QtGui import QKeyEvent, QKeySequence, QStandardItem, QStandardItemModel
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QWidget, QVBoxLayout, QLabel, 
                              QComboBox, QHBoxLayout, QTableView, QHeaderView, QApplication, 
                              QMenu, QPushButton, QStyle, QFormLayout, QFrame, 
@@ -48,6 +48,11 @@ class NoArrowKeyTableView(QTableView):
             # Handle Ctrl+A to highlight all rows in addition to selecting all
             self.image_window.highlight_all_rows(select_rows=False)
             # Fall through to let the default selection behavior happen
+        elif event.matches(QKeySequence.Copy):
+            # Full paths of the highlighted rows, not Qt's default of the
+            # current cell's text (just the file name)
+            self.image_window.copy_highlighted_paths()
+            return
         super().keyPressEvent(event)
 
     def mousePressEvent(self, event):
@@ -1608,6 +1613,22 @@ class ImageWindow(QWidget):
             self.tableView.setFocus(Qt.OtherFocusReason)
             self.tableView.selectAll()
         
+    def copy_highlighted_paths(self):
+        """Put the highlighted images' full paths on the clipboard, one per line.
+
+        Converted to the platform's separators so they paste cleanly into a
+        file browser or terminal; inside the app paths stay forward-slashed.
+        """
+        paths = self.table_model.get_highlighted_paths()
+        if not paths:
+            return
+        QApplication.clipboard().setText("\n".join(os.path.normpath(p) for p in paths))
+        try:
+            noun = "path" if len(paths) == 1 else f"{len(paths)} paths"
+            self.main_window.status_bar.showMessage(f"Copied {noun} to the clipboard.", 3000)
+        except Exception:
+            pass
+
     def unhighlight_all_rows(self):
         """Clear all highlights."""
         selection_model = self.tableView.selectionModel()

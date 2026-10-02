@@ -257,8 +257,6 @@ class ConfidenceRow(QWidget):
         if self._selectable():
             # Emit the signal with the label object
             self.barClicked.emit(self.label)
-            # Set focus to the confidence window for keyboard events
-            self.confidence_window.setFocus()
 
     def enterEvent(self, event):
         """Handle mouse enter events to change the cursor."""
@@ -564,6 +562,15 @@ class ConfidenceWindow(QWidget):
         # Add the main container to the window's layout
         self.layout.addWidget(self.container)
 
+        # A click anywhere in here hands the keyboard back to the canvas (see
+        # focusInEvent). Taking click focus makes this window, not the dock's
+        # scroll area above it, the widget Qt gives a click's focus to, and the
+        # buttons pass theirs up to it -- a focused button also swallowed Space
+        # and Ctrl+Space, clicking itself again.
+        self.setFocusPolicy(Qt.ClickFocus)
+        for button in (self.prev_button, self.next_button, self.toggle_button, self.crop_toggle_button):
+            button.setFocusPolicy(Qt.NoFocus)
+
         # Start in the empty state
         self.clear_display()
         self.set_crop_preview_visible(self.crop_preview_visible)
@@ -599,16 +606,46 @@ class ConfidenceWindow(QWidget):
         super().resizeEvent(event)
         self._update_body_direction()
 
+    def focusInEvent(self, event):
+        """Pass click focus through to the canvas.
+
+        Clicking a bar used to leave the keyboard here, so the canvas's own
+        keys -- Space for SAM, See Anything and Feature Select, Select's
+        Ctrl+C / Ctrl+X / Ctrl+Space -- did nothing until the canvas was
+        clicked. The number keys that pick a bar reach it from the canvas
+        instead (see select_rank).
+        """
+        super().focusInEvent(event)
+        if event.reason() == Qt.MouseFocusReason:
+            # Deferred: moving focus from inside its own FocusIn is re-entrant
+            QTimer.singleShot(0, self._return_focus_to_canvas)
+
+    def _return_focus_to_canvas(self):
+        try:
+            annotation_window = self.main_window.annotation_window
+            if annotation_window.isVisible():
+                annotation_window.setFocus(Qt.OtherFocusReason)
+        except RuntimeError:
+            pass  # window teardown
+
     def keyPressEvent(self, event):
         """Handle key press events for 1-5 to select a confidence bar."""
         key = event.key()
         if Qt.Key_1 <= key <= Qt.Key_5:
-            idx = (key - Qt.Key_1)  # 0-based index
-            if hasattr(self, "confidence_bar_labels") and idx < len(self.confidence_bar_labels):
-                label = self.confidence_bar_labels[idx]
-                self.handle_bar_click(label)
+            self.select_rank(key - Qt.Key_1)
         else:
             super().keyPressEvent(event)
+
+    def select_rank(self, index):
+        """Pick the bar at 0-based ``index``, as clicking it would.
+
+        Returns:
+            bool: True if there was a bar there to pick.
+        """
+        if index < len(self.confidence_bar_labels):
+            self.handle_bar_click(self.confidence_bar_labels[index])
+            return True
+        return False
 
     def _update_body_direction(self):
         """Put the crop beside the bars when that leaves the bars readable, above them otherwise.

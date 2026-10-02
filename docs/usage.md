@@ -834,6 +834,7 @@ from **Utilities > Morphological**. Its **Overlaps** tab resolves overlapping po
   - Useful for converting mask-based predictions into editable vector form
   - Accessed via <kbd>Ctrl</kbd> + <kbd>R</kbd> in Select tool (opens a dialog)
   - Each connected mask region becomes a separate polygon annotation
+  - A region traced as an axis-aligned rectangle becomes a Rectangle annotation (a Patch if square); other 4-point shapes stay polygons
 
 ### Video Playback Controls
 When a video is loaded, additional playback controls appear:
@@ -855,6 +856,7 @@ When a video is loaded, additional playback controls appear:
 
 ## Labels Window
 - **Move Label**: <kbd>Right-Click</kbd> and drag to reorder labels in the window
+- **Keyboard Stays on the Canvas**: Clicking a label leaves the keyboard with the Annotation Window, so hotkeys like <kbd>Space</kbd> and <kbd>Ctrl</kbd> + <kbd>C</kbd> work straight after
 - **Label Visibility**: Each label has a checkbox to show / hide annotations of that label
   - Hidden labels retain their data and can be shown again at any time
   - Transparency slider affects all labels (both visible and hidden)
@@ -1004,8 +1006,9 @@ Multi-select filters and search bars to control which images are displayed:
 - **Confidence Chart**: Displays a bar chart with confidence scores
   - **Top 5 Predictions**: Shows up to 5 predictions with their confidence scores
   - **Prediction Selection**: Click on any confidence bar to change the annotation's label, verifying it
-  - **Numerical Keys**: Press keys <kbd>1</kbd>-<kbd>5</kbd> to quickly select from the top 5 predictions
+  - **Numerical Keys**: Press keys <kbd>1</kbd>-<kbd>5</kbd> to quickly select from the top 5 predictions (Select tool; no need to click the window first)
   - **Prev / Next buttons**: Cycle through annotations in order of their creation
+- **Keyboard Stays on the Canvas**: Clicking in this window leaves the keyboard with the Annotation Window, so tool hotkeys keep working
 - **Confidence Mode Toggle**: 
     - Click the icon button next to the dimensions to toggle between user and machine confidence views
     - User icon shows user-assigned confidence scores
@@ -1052,9 +1055,9 @@ Multi-select filters and search bars to control which images are displayed:
 - <kbd>Backspace</kbd> / <kbd>Delete</kbd>: Cancel current drawing (rectangle, polygon, work area, cutting line)
 
 ### Tool Control
-- <kbd>Ctrl</kbd> + <kbd>Alt</kbd>: Switch between tools within the existing tool group
-  - Switch from SelectTool to active annotation tool (e.g., PatchTool when PatchAnnotation selected)
-  - Switch from annotation tool back to SelectTool
+- <kbd>Ctrl</kbd> + <kbd>Alt</kbd> (either order; holding does not repeat): Switch between tools within the existing tool group
+  - Switch from annotation tool to SelectTool
+  - Switch from SelectTool back to the tool you came from (e.g., SAM), or else the tool for the selected annotation's type (e.g., PatchTool when PatchAnnotation selected)
   - Toggle between Brush and Erase tools
   - Toggle Feature Select Tool binary / multi-class mode
 
@@ -1099,7 +1102,7 @@ After a model is loaded, use these shortcuts to run inference:
 - <kbd>Ctrl</kbd> + <kbd>6</kbd>: YOLOE / See Anything - Make predictions using See Anything model
 
 ### Confidence Window
-- <kbd>1</kbd>-<kbd>5</kbd>: Quick-select from top 5 predictions
+- <kbd>1</kbd>-<kbd>5</kbd>: Quick-select from top 5 predictions (Select tool)
 - <kbd>Left-Click</kbd> on confidence bar: Change annotation's label and verify it
 
 ### Mouse Controls
