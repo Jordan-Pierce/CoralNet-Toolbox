@@ -1,12 +1,9 @@
 import os
-import warnings
 
 from PyQt5.QtCore import QObject, Qt
 from PyQt5.QtWidgets import QFileDialog, QMessageBox, QApplication
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # Video extensions accepted for drag/drop and dialogs

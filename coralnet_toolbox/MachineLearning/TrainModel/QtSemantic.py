@@ -1,4 +1,3 @@
-import warnings
 import os
 import json
 import datetime
@@ -9,9 +8,6 @@ from PyQt5.QtWidgets import (QLineEdit, QHBoxLayout, QPushButton, QFormLayout, Q
 
 from coralnet_toolbox.MachineLearning.TrainModel.QtBase import Base
 from coralnet_toolbox.Icons import get_icon
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

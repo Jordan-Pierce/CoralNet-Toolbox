@@ -1,6 +1,3 @@
-import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
 import ujson as json
 
 from PyQt5.QtCore import Qt

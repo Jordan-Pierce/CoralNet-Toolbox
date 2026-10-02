@@ -9,37 +9,17 @@ on:
             - master
 
 name: macOS build
+
+permissions:
+    contents: read
+
 jobs:
-    test-macOS:
-        runs-on: ${{ matrix.os }}
-        name: ${{ matrix.os }} (${{ matrix.python-version}})
-
-        strategy:
-            fail-fast: false
-            matrix:
-              os: ["macOS-latest"]
-              python-version: ["3.10"]
-
-        steps:
-          - name: Checkout code
-            uses: actions/checkout@v4
-      
-          - name: Set up Python
-            uses: actions/setup-python@v5
-            with:
-              python-version: ${{ matrix.python-version}}
-          - name: Install dependencies
-            run: |
-                python -m pip install --upgrade pip
-                pip install uv
-                uv pip install --no-cache-dir Cython
-                uv pip install -r requirements.txt
-                uv pip install -e .
-            env:
-                UV_SYSTEM_PYTHON: 1
-          
-          - name: Smoke test (imports the GUI tree, builds the main window)
-            run: python tests/run_tests.py
-            env:
-                UV_SYSTEM_PYTHON: 1
-                QT_QPA_PLATFORM: offscreen
+    test:
+        uses: ./.github/workflows/test.yml
+        with:
+            os: macOS-latest
+            # Expected to fail until PyQtAds publishes an arm64 macOS wheel: its
+            # only macOS wheel is x86_64, so the arm64 runner falls back to the
+            # sdist, which needs qmake. One version is enough to notice the day
+            # that changes.
+            python-versions: '["3.12"]'

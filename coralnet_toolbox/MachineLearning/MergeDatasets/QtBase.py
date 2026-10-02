@@ -1,5 +1,3 @@
-import warnings
-
 import os
 import shutil
 import ujson as json
@@ -32,9 +30,6 @@ from coralnet_toolbox.MachineLearning.MergeDatasets.merge_dataset_utils import (
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Icons import get_window_icon
-
-warnings.filterwarnings("ignore", category=UserWarning)
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

@@ -1,4 +1,3 @@
-import warnings
 import numpy as np
 
 from PyQt5.QtGui import QColor, QPen
@@ -7,8 +6,6 @@ from PyQt5.QtWidgets import QGraphicsEllipseItem, QGraphicsRectItem, QApplicatio
 
 from coralnet_toolbox.QtActions import MaskEditAction
 from coralnet_toolbox.Tools.QtBrushTool import BrushTool
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

@@ -5,6 +5,8 @@ import torch
 
 from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
 
+from coralnet_toolbox.paths import resolve_weights, weights_dir
+
 
 # The smallest prompt-free checkpoint. Only its `names` are ever read: the
 # 4,585-entry vocabulary YOLOE's prompt-free variants are trained against. The
@@ -13,7 +15,7 @@ from ultralytics.models.yolo.yoloe import YOLOEVPSegPredictor
 VOCABULARY_CHECKPOINT = "yoloe-11s-seg-pf.pt"
 VOCABULARY_CHECKPOINT_MB = 27
 
-# Written next to the weights, which is where ultralytics already downloads.
+# Written next to the weights, in the weights directory.
 VOCABULARY_CACHE_SUFFIX = "-vocabulary.npz"
 
 # Encoding chunk. Big enough that the per-call overhead disappears, small
@@ -434,14 +436,19 @@ def vocabulary_cache_path(stem, directory=None):
 
     Args:
         stem (str): Checkpoint stem, from `checkpoint_stem`.
-        directory (str, optional): Defaults to the working directory, which is
-            where ultralytics already downloads weights.
+        directory (str, optional): Defaults to the weights directory, unless
+            an earlier version already wrote this cache to the working
+            directory, in which case that copy is used.
 
     Returns:
         str: Path to the NPZ, which need not exist yet.
     """
     name = f"{stem or 'yoloe'}{VOCABULARY_CACHE_SUFFIX}"
-    return os.path.join(directory or os.getcwd(), name)
+    if directory:
+        return os.path.join(directory, name)
+    if os.path.isfile(name):
+        return name
+    return (weights_dir() / name).as_posix()
 
 
 def read_vocabulary_cache(path):
@@ -513,7 +520,7 @@ def load_vocabulary_names():
         # away and only `names` is kept.
         from ultralytics.nn.tasks import torch_safe_load
 
-        checkpoint, _ = torch_safe_load(VOCABULARY_CHECKPOINT)
+        checkpoint, _ = torch_safe_load(resolve_weights(VOCABULARY_CHECKPOINT))
         inner = checkpoint.get('model') if isinstance(checkpoint, dict) else None
         names = getattr(inner, 'names', None)
     except Exception as e:

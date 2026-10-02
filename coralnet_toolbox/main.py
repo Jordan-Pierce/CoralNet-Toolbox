@@ -1,10 +1,13 @@
+import os
 import sys
 import traceback
+import warnings
 
-from PyQt5.QtCore import Qt, QCoreApplication
+from PyQt5.QtCore import Qt, QCoreApplication, QTimer
 from PyQt5.QtWidgets import QApplication
 
 from coralnet_toolbox.QtMainWindow import MainWindow
+from coralnet_toolbox.QtStartupNotices import show_startup_notices
 from coralnet_toolbox.theme import apply_theme
 
 from coralnet_toolbox.utilities import configure_gdal
@@ -25,6 +28,17 @@ def run():
     app = None
     
     try:
+        # Third-party warnings are not actionable for someone annotating images,
+        # so the application runs quiet. This is set here, for the application
+        # only, and not at import time: modules are also imported by tests and
+        # scripts, and a filter installed on import overrides -W. Run with
+        # `python -W default` or PYTHONWARNINGS=default to see everything.
+        if not sys.warnoptions:
+            warnings.simplefilter("ignore")
+            # Spawned workers (DataLoader on Windows and macOS) import this
+            # module but never call run(); they read the environment instead
+            os.environ["PYTHONWARNINGS"] = "ignore"
+
         # Install the exception hook (initial setup without main_window)
         sys.excepthook = except_hook
 
@@ -50,6 +64,10 @@ def run():
             cls, exception, traceback_obj, main_window)
         
         main_window.show()
+
+        # Once the event loop is running, so the window is up behind any dialog
+        QTimer.singleShot(0, lambda: show_startup_notices(main_window))
+
         sys.exit(app.exec_())
         
     # Rest of the function remains unchanged

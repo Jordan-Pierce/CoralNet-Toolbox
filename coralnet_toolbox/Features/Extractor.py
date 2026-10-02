@@ -8,7 +8,6 @@ and pooled extraction suitable for both Raster products and Explorer embeddings.
 from __future__ import annotations
 
 import gc
-import warnings
 from typing import Optional, Tuple, List
 from abc import ABC, abstractmethod
 
@@ -17,6 +16,7 @@ import cv2
 import torch
 from PIL import Image
 
+from coralnet_toolbox.paths import resolve_weights
 from coralnet_toolbox.Features.ModelRegistry import (
     TRANSFORMER_MODELS,
     YOLO_MODELS,
@@ -27,8 +27,6 @@ from coralnet_toolbox.Features.ModelRegistry import (
     is_openclip_model,
     strip_openclip_prefix,
 )
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 def model_supports_dense(model_name: str) -> bool:
@@ -660,7 +658,7 @@ class YOLOExtractor(BaseExtractor):
         try:
             from ultralytics import YOLO
 
-            self._model = YOLO(self.model_name)
+            self._model = YOLO(resolve_weights(self.model_name))
             _YOLO_MODEL_CACHE[self.model_name] = self._model
             # Infer channels from model
             self._channels = 1024  # Typical YOLO embedding dim

@@ -1,5 +1,3 @@
-import warnings
-
 import os
 
 import pandas as pd
@@ -17,8 +15,6 @@ from coralnet_toolbox.MetaData.QtMetrics import calculate_metrics_for_annotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Icons import get_window_icon
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

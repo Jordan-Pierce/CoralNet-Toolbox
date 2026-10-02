@@ -1,5 +1,3 @@
-import warnings
-
 from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtGui import QMouseEvent, QKeyEvent, QPen, QColor, QBrush
 from PyQt5.QtWidgets import QApplication, QGraphicsItemGroup, QGraphicsPathItem
@@ -20,8 +18,6 @@ from coralnet_toolbox.Annotations import (PatchAnnotation,
                                           MultiPolygonAnnotation)
 from coralnet_toolbox.QtActions import MergeAnnotationsAction, CutAnnotationAction
 from coralnet_toolbox.Morphological.overlap_ops import group_by_overlap
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

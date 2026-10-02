@@ -1,6 +1,5 @@
 import os
 import datetime
-from pathlib import Path
 
 from PyQt5.QtCore import Qt, QPoint, QRect
 from PyQt5.QtGui import QPixmap, QPainter, QPalette
@@ -9,6 +8,7 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QForm
                              QMessageBox, QLabel, QButtonGroup, QRadioButton, QComboBox)
 
 from coralnet_toolbox.Icons import get_window_icon
+from coralnet_toolbox.paths import app_home
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -16,13 +16,16 @@ from coralnet_toolbox.Icons import get_window_icon
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-CACHE_BASE = ".cache"
 SCREENSHOTS_SUBDIR = "screenshots"
 
 
 def get_screenshot_dir():
-    """Return the default screenshot directory path (not created here)."""
-    return Path(CACHE_BASE) / SCREENSHOTS_SUBDIR
+    """Return the default screenshot directory path (not created here).
+
+    Under the toolbox's home folder rather than its cache: these are files a
+    user opens by hand, not derived data that is safe to clear.
+    """
+    return app_home() / SCREENSHOTS_SUBDIR
 
 
 def get_default_filename():

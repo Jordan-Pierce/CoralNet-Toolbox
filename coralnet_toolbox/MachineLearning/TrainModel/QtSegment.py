@@ -1,8 +1,3 @@
-import warnings
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
-
 from PyQt5.QtWidgets import (QLineEdit, QHBoxLayout, QPushButton, QFormLayout, QGroupBox)
 
 from coralnet_toolbox.MachineLearning.TrainModel.QtBase import Base

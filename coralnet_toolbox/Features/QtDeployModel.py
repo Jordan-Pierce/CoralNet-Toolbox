@@ -5,7 +5,6 @@ Allows users to select a transformer, YOLO, or color feature model, configure
 extraction parameters, and manage the loaded model.
 """
 
-import warnings
 import os
 import gc
 
@@ -30,8 +29,6 @@ from coralnet_toolbox.Features import TRANSFORMER_MODELS, TIMM_MODELS, OPENCLIP_
 from coralnet_toolbox.Features.Extractor import FeatureExtractor, model_supports_dense
 
 import torch
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 class FeaturesDeployModelDialog(QDialog):

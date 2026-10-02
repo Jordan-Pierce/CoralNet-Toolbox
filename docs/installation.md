@@ -5,31 +5,26 @@
 It's recommended to use `Anaconda` to create an environment for the `toolbox`:
 ```bash
 # Create and activate an environment
-conda create --name coralnet10 python=3.10 -y
-conda activate coralnet10
+conda create --name coralnet12 python=3.12 -y
+conda activate coralnet12
 
 # Install uv first
 pip install uv
 ```
 
+> **Python version**: Python 3.12 is recommended. 3.10 and 3.11 are still supported, but Python 3.10 reaches end-of-life in October 2026 and newer releases of several dependencies already require 3.11 or 3.12. 3.13 and later are not supported yet. Python cannot be upgraded inside an existing environment: to move an old `coralnet10` (Python 3.10) environment to 3.12, create a new environment as above.
+
 ### ⚡ GPU Acceleration (Optional)
 
-If you have an **NVIDIA GPU with CUDA**, you can install the corresponding versions of `CUDA` and `PyTorch` for full GPU acceleration.
+If you have an **NVIDIA GPU**, install `PyTorch` built for `CUDA` *before* installing the `toolbox`. The `PyTorch` wheels bundle their own `CUDA` runtime, so no separate `CUDA` toolkit is needed: only an NVIDIA driver recent enough for that `CUDA` version (12.8 or newer for RTX 50-series / Blackwell cards).
 
 Below is an example for CUDA 12.8:
 ```bash
-# Install CUDA toolkit and compiler
-conda install nvidia/label/cuda-12.8.0::cuda-nvcc -y
-conda install nvidia/label/cuda-12.8.0::cuda-toolkit -y
-
 # Install PyTorch with CUDA 12.8
-uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu129
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 ```
 
-For other CUDA versions and detailed installation, see:
-- [`cuda-nvcc`](https://anaconda.org/nvidia/cuda-nvcc)
-- [`cudatoolkit`](https://anaconda.org/nvidia/cuda-toolkit)
-- [`torch`](https://pytorch.org/get-started/locally/)
+For other `CUDA` versions, see [`torch`](https://pytorch.org/get-started/locally/).
 
 ### 📦 Install
 
@@ -90,8 +85,8 @@ If you prefer to clone the repository and run the `toolbox` from the source code
 
 ```bash
 # Create and activate an environment
-conda create --name coralnet10 python=3.10 -y
-conda activate coralnet10
+conda create --name coralnet12 python=3.12 -y
+conda activate coralnet12
 
 # Install git via conda (if not already installed)
 conda install git -y
@@ -103,11 +98,7 @@ cd Documents
 git clone https://github.com/Jordan-Pierce/CoralNet-Toolbox.git
 cd CoralNet-Toolbox
 
-# Install CUDA requirements (if applicable)
-conda install nvidia/label/cuda-12.8.0::cuda-nvcc -y
-conda install nvidia/label/cuda-12.8.0::cuda-toolkit -y
-
-# Install PyTorch with CUDA support
+# Install PyTorch with CUDA support (if applicable; no CUDA toolkit needed)
 uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 
 # Install the toolbox in development mode
@@ -165,8 +156,8 @@ To delete an old environment and start fresh:
 # Deactivate the environment first
 conda deactivate
 
-# Delete the environment by name
-conda env remove --name coralnet10
+# Delete the environment by name (coralnet10 for the old Python 3.10 one)
+conda env remove --name coralnet12
 
 # Confirm when prompted
 y

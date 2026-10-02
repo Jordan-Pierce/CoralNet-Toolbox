@@ -1,12 +1,9 @@
-import warnings
-
-
 import os
 import gc
 import math
 import errno
 import sys
-import requests
+import threading
 import traceback
 from functools import lru_cache
 
@@ -22,10 +19,6 @@ from shapely.geometry import Polygon
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QImage
 from PyQt5.QtWidgets import QMessageBox, QApplication, QPushButton
-
-from coralnet_toolbox.QtProgressBar import ProgressBar
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -1500,50 +1493,6 @@ def polygonize_mask_with_holes(mask_tensor, epsilon=1.0):
     return exterior, holes
 
 
-def attempt_download_asset(app, asset_name, asset_url):
-    """
-    Attempt to download an asset from the given URL.
-
-    :param app:
-    :param asset_name:
-    :param asset_url:
-    :return:
-    """
-    # Create a progress dialog
-    progress_dialog = ProgressBar(app, title=f"Downloading {asset_name}")
-
-    try:
-        # Get the asset name
-        asset_name = os.path.basename(asset_name)
-        asset_path = os.path.join(os.getcwd(), asset_name)
-
-        if os.path.exists(asset_path):
-            return
-
-        # Download the asset
-        response = requests.get(asset_url, stream=True)
-        total_size = int(response.headers.get('content-length', 0))
-        block_size = 1024  # 1 Kibibyte
-
-        # Initialize the progress bar
-        progress_dialog.start_progress(total_size // block_size)
-        progress_dialog.show()
-
-        with open(asset_path, 'wb') as f:
-            for data in response.iter_content(block_size):
-                if progress_dialog.wasCanceled():
-                    raise Exception("Download canceled by user")
-                f.write(data)
-                progress_dialog.update_progress()
-
-    except Exception as e:
-        QMessageBox.critical(app, "Error", f"Failed to download {asset_name}.\n{e}")
-
-    # Close the progress dialog
-    progress_dialog.set_value(progress_dialog.max_value)
-    progress_dialog.close()
-    
-
 def console_user(error_msg, parent=None):
     """
     Display an error message to the user via both terminal and GUI dialog.
@@ -1563,48 +1512,96 @@ def console_user(error_msg, parent=None):
     print(f"{url}")
 
 
+# Uncaught-exception reporting state; only ever touched on the GUI thread
+_exception_dialog_open = False
+_reported_exceptions = set()
+
+
 def except_hook(cls, exception, traceback_obj, main_window=None):
-    """Handle uncaught exceptions including Qt errors"""
+    """Report an uncaught exception and keep the application running.
+
+    Installed as sys.excepthook. PyQt hands an exception raised in a slot or an
+    event handler to this hook and then carries on with the event loop, so one
+    failed action no longer ends the session and takes unsaved annotations with
+    it. Whatever that action was doing may be left incomplete, which is why the
+    dialog offers to save.
+
+    An exception raised on a worker thread goes to the console only: Qt widgets
+    cannot be created off the GUI thread.
+
+    An exception that keeps recurring (one raised from a paint or mouse-move
+    handler fires on every event) gets a dialog the first time only. Repeats,
+    and anything raised while the dialog is open, go to the console and the
+    status bar, so the dialog cannot reopen in a loop.
+    """
+    global _exception_dialog_open
+
+    # Full traceback, chained causes included, to the console
+    sys.__excepthook__(cls, exception, traceback_obj)
+
+    app = QApplication.instance()
+    if app is None:
+        return
+
+    # Ctrl+C in the terminal, or sys.exit() inside a slot, still means quit
+    if issubclass(cls, (KeyboardInterrupt, SystemExit)):
+        app.quit()
+        return
+
+    if threading.current_thread() is not threading.main_thread():
+        return
+
+    frames = traceback.extract_tb(traceback_obj)
+    origin = (frames[-1].filename, frames[-1].lineno) if frames else None
+    key = (cls.__name__, origin)
+    if _exception_dialog_open or key in _reported_exceptions:
+        status_bar = getattr(main_window, 'status_bar', None)
+        if status_bar is not None:
+            status_bar.showMessage(f"Error repeated: {cls.__name__}: {exception} (details in the console)", 10000)
+        return
+    _reported_exceptions.add(key)
+
     error_msg = f"{cls.__name__}: {exception}\n\n"
     error_msg += ''.join(traceback.format_tb(traceback_obj))
 
-    # Log the error
-    print(error_msg)
+    msg_box = QMessageBox()
+    msg_box.setWindowTitle("CoralNet-Toolbox Error")
+    msg_box.setIcon(QMessageBox.Critical)
+    msg_box.setText(
+        "An unexpected error occurred. The toolbox is still running, but the action that failed "
+        "may have been left incomplete.\n\n"
+        "Save your project (to a new file if you are unsure of its state), and please create a "
+        "ticket with the error below so we can solve this problem:\n"
+        "https://github.com/Jordan-Pierce/CoralNet-Toolbox/issues"
+    )
+    msg_box.setDetailedText(error_msg)
 
-    # If Qt is initialized, show error in GUI
-    if QApplication.instance() is not None:
-        msg_box = QMessageBox()
-        msg_box.setWindowTitle("CoralNet-Toolbox Error")
-        msg_box.setIcon(QMessageBox.Critical)
-        msg_box.setText(
-            "An unexpected error occurred! Please copy the error below and create a ticket so we can solve this problem. If possible, save your project before closing the application."
-        )
-        msg_box.setDetailedText(error_msg)
+    # Add Save Project option if main_window exists
+    save_button = None
+    if main_window is not None and hasattr(main_window, 'open_save_project_dialog'):
+        save_button = QPushButton("Save Project")
+        msg_box.addButton(save_button, QMessageBox.AcceptRole)
 
-        # Add Save Project option if main_window exists
-        save_button = None
-        if main_window is not None and hasattr(main_window, 'open_save_project_dialog'):
-            save_button = QPushButton("Save Project")
-            msg_box.addButton(save_button, QMessageBox.AcceptRole)
+    quit_button = msg_box.addButton("Quit", QMessageBox.DestructiveRole)
+    continue_button = msg_box.addButton("Continue", QMessageBox.RejectRole)
+    msg_box.setDefaultButton(continue_button)
 
-        msg_box.addButton(QMessageBox.Ok)
+    _exception_dialog_open = True
+    try:
+        msg_box.exec_()
+    finally:
+        _exception_dialog_open = False
 
-        # Make the dialog bigger
-        msg_box.resize(600, 1000)
-
-        result = msg_box.exec_()
-
-        # Handle save action if requested
-        if save_button and msg_box.clickedButton() == save_button:
-            try:
-                main_window.open_save_project_dialog()
-            except Exception as save_error:
-                QMessageBox.warning(None,
-                                    "Save Error",
-                                    f"Could not save project: {save_error}")
-
-    sys.__excepthook__(cls, exception, traceback_obj)
-    sys.exit(1)
+    clicked = msg_box.clickedButton()
+    if save_button is not None and clicked is save_button:
+        try:
+            main_window.open_save_project_dialog()
+        except Exception as save_error:
+            QMessageBox.warning(None,
+                                "Save Error",
+                                f"Could not save project: {save_error}")
+    elif clicked is quit_button:
+        app.quit()
 
 
 def convert_to_ultralytics(ultralytics_model, weights, output_path="converted_model.pt"):

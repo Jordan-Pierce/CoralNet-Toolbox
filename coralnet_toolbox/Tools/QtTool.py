@@ -1,10 +1,6 @@
-import warnings
-
 from PyQt5.QtCore import Qt, QPointF, QTimer
 from PyQt5.QtGui import QMouseEvent, QColor, QPen, QCursor
 from PyQt5.QtWidgets import QGraphicsLineItem
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

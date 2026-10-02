@@ -1,6 +1,3 @@
-import warnings
-
-
 import random
 import numpy as np
 
@@ -23,8 +20,6 @@ from coralnet_toolbox.Common.QtMarginInput import MarginInput
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Icons import get_icon, get_window_icon
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

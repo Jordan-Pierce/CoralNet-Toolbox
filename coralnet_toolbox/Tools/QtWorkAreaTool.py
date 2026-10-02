@@ -1,13 +1,9 @@
-import warnings
-
 from PyQt5.QtCore import Qt, QRectF
 from PyQt5.QtGui import QMouseEvent, QPen, QColor, QBrush
 from PyQt5.QtWidgets import QGraphicsRectItem
 
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.WorkArea import WorkArea
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

@@ -1,5 +1,3 @@
-import warnings
-
 import numpy as np
 
 from PyQt5.QtCore import Qt, QPointF
@@ -33,8 +31,6 @@ from coralnet_toolbox.Morphological.QtOverlapOperations import OverlapOperations
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Icons import get_window_icon
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

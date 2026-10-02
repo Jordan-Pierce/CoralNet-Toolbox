@@ -1,5 +1,3 @@
-import warnings
-
 import os
 import shutil
 
@@ -24,9 +22,6 @@ from coralnet_toolbox.MachineLearning.TrainModel.QtBase import (
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Icons import get_icon, get_window_icon
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

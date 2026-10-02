@@ -23,7 +23,6 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Icons import get_icon
 from coralnet_toolbox import theme as app_theme
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
 

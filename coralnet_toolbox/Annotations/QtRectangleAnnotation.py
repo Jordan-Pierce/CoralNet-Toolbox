@@ -1,5 +1,3 @@
-import warnings
-
 import numpy as np
 from shapely.ops import split, unary_union
 from shapely.geometry import Point, LineString, box
@@ -15,7 +13,6 @@ from coralnet_toolbox.Annotations.QtAnnotation import Annotation, OptimizedPathI
 
 from coralnet_toolbox.utilities import rasterio_to_cropped_image
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes

@@ -1,8 +1,5 @@
 # Credit: JustSong, @songquanpeng
 
-import warnings
-
-warnings.filterwarnings("ignore")
 
 import queue
 import random

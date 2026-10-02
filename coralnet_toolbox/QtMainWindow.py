@@ -1,5 +1,3 @@
-import warnings
-
 import os
 import re
 import requests
@@ -160,9 +158,6 @@ from coralnet_toolbox.BreakTime import (
 )
 
 from coralnet_toolbox.Icons import get_icon, get_window_icon
-
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

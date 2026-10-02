@@ -1,7 +1,3 @@
-import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
-
 import numpy as np
 
 from ultralytics.data.dataset import YOLODataset

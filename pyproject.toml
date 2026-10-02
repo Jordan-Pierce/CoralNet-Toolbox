@@ -7,7 +7,7 @@ dynamic = [
 ]
 description = "Tools for annotating and developing ML models for benthic imagery"
 readme = "README.md"
-requires-python = ">=3.10, <3.11"
+requires-python = ">=3.10, <3.13"
 keywords = [
     "CoralNet-Toolbox",
 ]
@@ -20,6 +20,8 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Natural Language :: English",
     "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
 ]
 
 [project.scripts]
@@ -35,10 +37,6 @@ include = ["coralnet_toolbox*"]
 
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}
-
-
-[tool.distutils.bdist_wheel]
-universal = true
 
 
 [tool.bumpversion]
@@ -68,7 +66,7 @@ max-line-length = 120
 Homepage = "https://github.com/Jordan-Pierce/CoralNet-Toolbox"
 
 [build-system]
-requires = ["setuptools>=64", "setuptools_scm>=8"]
+requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 
@@ -97,12 +95,15 @@ platforms = ["linux-64", "win-64"]
 cuda = "12.8"
 
 [tool.pixi.dependencies]
-python = "3.10.*"
+# 3.12, not 3.10: every conda-forge ultralytics build from 8.4.155 on requires
+# Python 3.11+, so a 3.10 environment cannot reach the 8.4.153 floor. (3.10 is
+# also end-of-life in October 2026.)
+python = "3.12.*"
 
 # --- GUI ---
 pyqt = ">=5.15.11"
 pyqtads = "*"          # PyQtAds; conda-forge ships it for linux/win, PyPI barely does
-pyqtgraph = "*"
+pyqtgraph = "<0.15"
 
 # --- torch ---
 # conda-forge resolves a cuda12x build here, which is what the pip
@@ -110,7 +111,7 @@ pyqtgraph = "*"
 pytorch-gpu = "*"
 torchvision = "*"
 # Fixes which CUDA runtime the environment gets rather than leaving it to the
-# solver. Note win-64/py310 has no cuda129 pytorch build, so there the pair is
+# solver. Note win-64 has no cuda129 pytorch build, so there the pair is
 # pytorch-cuda128 + torchvision-cuda129 sharing one 12.9 cudart -- allowed by
 # CUDA 12.x minor-version compatibility, but the reason to pin rather than
 # let it drift.
@@ -121,19 +122,21 @@ cuda-version = "12.9.*"
 # prompts) and takes min_mask_region_area, crop-layer prompts land in the right
 # place, set_image runs without autograd, and SAM 3 masks threshold correctly.
 # The SAM Generator dialog passes generate() keywords older versions reject.
-#
-# Kept in step with requirements.txt (8.4.153), but conda-forge does not publish it
-# yet: its newest ultralytics is 8.4.146 (checked 2026-09-15), so a fresh
-# `pixi install` / `pixi lock` cannot solve this until conda-forge catches up. The
-# committed pixi.lock predates the pin and still holds 8.4.129. Conda installs of
-# ultralytics likewise stop at 8.4.146; use pip for 8.4.153.
-ultralytics = ">=8.4.153"
-open-clip-torch = ">=2.20.0"
-transformers = ">=5.0.0"
-timm = ">=1.0.0"
+# Kept in step with requirements.txt.
+ultralytics = ">=8.4.153,<8.5"
+open-clip-torch = ">=2.20.0,<4"
+transformers = ">=5.0.0,<6"
+timm = ">=1.0.0,<2"
 scikit-learn = "*"
 umap-learn = "*"
 pycocotools = "*"
+
+# --- numerics and data ---
+numpy = "<3"
+pandas = "<3"
+scipy = "*"
+matplotlib-base = "*"
+pillow = "*"
 
 # faiss-cpu is intentionally NOT taken from conda-forge. The conda package of
 # that name is an empty metapackage pointing at `faiss`, and pixi has no purl
@@ -148,9 +151,10 @@ pycocotools = "*"
 libopencv = { version = "*", build = "headless*" }
 
 # --- geospatial ---
-rasterio = "*"
+rasterio = "<2"
 geopandas = "*"
 pyogrio = "*"
+shapely = ">=2,<3"
 
 # --- misc ---
 ujson = "*"
@@ -159,10 +163,10 @@ requests = "*"
 selenium = ">=4.15.2"
 beautifulsoup4 = ">=4.12.2"
 webdriver-manager = "*"
-dill = "*"
 seaborn = "*"
 psutil = "*"
 gputil = "*"
+packaging = "*"
 
 [tool.pixi.pypi-dependencies]
 coralnet-toolbox = { path = ".", editable = true }
@@ -171,7 +175,7 @@ coralnet-toolbox = { path = ".", editable = true }
 # so silently drags the entire environment back to torch 2.5.1 -- no Blackwell
 # kernels. The PyPI release requires only `torch>=2.1`, and pixi lets the conda
 # torch satisfy it.
-lightly-train = { version = ">=0.17", extras = ["ultralytics"] }
+lightly-train = { version = ">=0.17,<1", extras = ["ultralytics"] }
 
 # Not packaged for conda-forge.
 yolo-tiling = ">=0.0.31"
@@ -190,9 +194,9 @@ pynvvideocodec = "<2.2"
 pynvvideocodec = "<2.2"
 
 [tool.pixi.activation.env]
-# Without this, Windows puts %APPDATA%\Python\Python310\site-packages on
+# Without this, Windows puts %APPDATA%\Python\Python312\site-packages on
 # sys.path AHEAD of the environment's own site-packages, so any package the
-# user has ever `pip install --user`-ed for 3.10 silently shadows the pinned
+# user has ever `pip install --user`-ed for 3.12 silently shadows the pinned
 # one -- verified here with PyQt5, PyQtAds, numpy, cv2 and rasterio all
 # resolving outside the env. The lock file is worthless if this is unset.
 PYTHONNOUSERSITE = "1"

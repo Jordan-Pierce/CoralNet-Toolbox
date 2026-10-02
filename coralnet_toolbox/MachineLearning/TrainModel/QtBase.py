@@ -1,5 +1,3 @@
-import warnings
-
 import os
 import gc
 import yaml
@@ -30,14 +28,12 @@ from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedInstanceDat
 from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedClassificationDataset
 from coralnet_toolbox.MachineLearning.EvaluateModel.QtBase import EvaluateModelWorker
 from coralnet_toolbox.MachineLearning.RunLog import capture_run_log
+from coralnet_toolbox.paths import resolve_weights
 from coralnet_toolbox.MachineLearning.PUDetection import (
     PU_MODELS_NOTE, PUDetectionTrainer, pu_close_mosaic, pu_supported_model,
     pu_unavailable_tooltip, supports_pu)
 
 from coralnet_toolbox.Icons import get_window_icon
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # Maps a task to the persistent Train Model dialog held by the MainWindow
@@ -272,7 +268,7 @@ class TrainModelWorker(QThread):
                 # which its own class folds weighted sampling into.
                 self.in_place_dataset.install(weighted=bool(self.weighted))
             # Load the model (8.3.141) YOLO handles RTDETR
-            self.model = YOLO(self.model_path)
+            self.model = YOLO(resolve_weights(self.model_path))
             # Set the task in the model itself
             self.model.task = self.params['task']
             # Positive-unlabeled training, once the model exists to be asked.

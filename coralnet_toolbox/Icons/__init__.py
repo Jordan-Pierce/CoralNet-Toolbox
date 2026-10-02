@@ -1,4 +1,3 @@
-import warnings
 import inspect
 import os
 from functools import lru_cache
@@ -17,8 +16,6 @@ try:
     from PyQt5.QtSvg import QSvgRenderer
 except ImportError:  # pragma: no cover - optional Qt module fallback
     QSvgRenderer = None
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

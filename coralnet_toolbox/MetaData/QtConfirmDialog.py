@@ -1,11 +1,7 @@
-import warnings
-
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
                              QPushButton, QMessageBox)
 
 from coralnet_toolbox.Icons import get_window_icon
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

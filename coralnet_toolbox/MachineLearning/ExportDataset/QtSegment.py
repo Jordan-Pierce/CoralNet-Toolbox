@@ -1,5 +1,3 @@
-import warnings
-
 import os
 import yaml
 
@@ -16,8 +14,6 @@ from coralnet_toolbox.MachineLearning.ExportDataset.export_dataset_utils import 
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes

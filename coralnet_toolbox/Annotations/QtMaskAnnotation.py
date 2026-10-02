@@ -20,8 +20,6 @@ from PyQt5.QtGui import QPixmap, QColor, QImage, QPainter, QBrush, QPolygonF, qR
 from coralnet_toolbox.Annotations.QtAnnotation import Annotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Functions

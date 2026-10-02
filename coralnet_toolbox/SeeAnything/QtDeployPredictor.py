@@ -1,5 +1,3 @@
-import warnings
-
 import os
 import gc
 
@@ -22,6 +20,7 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Common import ThresholdsWidget
 
 from coralnet_toolbox.Icons import get_window_icon
+from coralnet_toolbox.paths import resolve_weights
 
 from coralnet_toolbox.SeeAnything.PromptAlignment import (TextEmbedder,
                                                           as_matrix,
@@ -43,7 +42,6 @@ from coralnet_toolbox.SeeAnything.QtPromptSessionPanel import (PromptSessionPane
                                                                fixed_width_text,
                                                                inspect_session)
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # Input-size granularity for YOLOE. Everything in the family is a stride-32
 # model, so the letterbox pads to a multiple of this.
@@ -728,7 +726,7 @@ class DeployPredictorDialog(QDialog):
                 self.model_path = self.model_combo.currentText()
     
             # Load model using registry
-            self.loaded_model = YOLOE(self.model_path)
+            self.loaded_model = YOLOE(resolve_weights(self.model_path))
     
             # Create a dummy visual dictionary for standard model loading
             visuals = dict(

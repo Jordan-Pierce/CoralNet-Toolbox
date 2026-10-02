@@ -1,13 +1,9 @@
-import warnings
-
 from typing import Dict, List, Optional, Callable, Set
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from PyQt5.QtCore import QObject, pyqtSignal
 
 from coralnet_toolbox.Rasters import RasterManager
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
