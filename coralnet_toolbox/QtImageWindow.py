@@ -5,7 +5,7 @@ from contextlib import contextmanager
 
 import rasterio
 
-from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint, QItemSelectionModel, QModelIndex, QEvent
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QPoint, QItemSelection, QItemSelectionModel, QEvent
 from PyQt5.QtGui import QKeyEvent, QKeySequence, QStandardItem, QStandardItemModel
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QWidget, QVBoxLayout, QLabel, 
                              QComboBox, QHBoxLayout, QTableView, QHeaderView, QApplication, 
@@ -33,9 +33,6 @@ warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarni
 
 
 class NoArrowKeyTableView(QTableView):
-    # Custom signal to be emitted only on a left-click
-    leftClicked = pyqtSignal(QModelIndex)
-
     def __init__(self, image_window, parent=None):
         super().__init__(parent)
         self.image_window = image_window
@@ -45,25 +42,14 @@ class NoArrowKeyTableView(QTableView):
             event.ignore()
             return
         elif event.key() == Qt.Key_A and event.modifiers() & Qt.ControlModifier:
-            # Handle Ctrl+A to highlight all rows in addition to selecting all
-            self.image_window.highlight_all_rows(select_rows=False)
-            # Fall through to let the default selection behavior happen
+            self.image_window.highlight_all_rows(take_focus=False)
+            return
         elif event.matches(QKeySequence.Copy):
             # Full paths of the highlighted rows, not Qt's default of the
             # current cell's text (just the file name)
             self.image_window.copy_highlighted_paths()
             return
         super().keyPressEvent(event)
-
-    def mousePressEvent(self, event):
-        # On a left mouse press, emit our custom signal
-        if event.button() == Qt.LeftButton:
-            index = self.indexAt(event.pos())
-            if index.isValid():
-                self.leftClicked.emit(index)
-        # Call the base class implementation to handle standard behavior
-        # like row selection and context menu triggers.
-        super().mousePressEvent(event)
 
 
 class CheckableComboBox(QComboBox):
@@ -447,8 +433,10 @@ class ImageWindow(QWidget):
         self.image_filter = ImageFilter(self.raster_manager)
         self.selected_image_path = None
         self.hover_row = -1
-        self.last_highlighted_row = -1
-        
+        # Set while the table's selection and the highlights are being made to
+        # match, so each side's change signal doesn't echo back to the other
+        self._syncing_highlights = False
+
         # Connect manager signals
         self.raster_manager.rasterAdded.connect(self.on_raster_added)
         self.raster_manager.rasterRemoved.connect(self.on_raster_removed)
@@ -613,7 +601,13 @@ class ImageWindow(QWidget):
         """ % (app_theme.SURFACE_COLOR.name(), app_theme.SURFACE_BORDER_COLOR.name(), app_theme.TEXT_PRIMARY_COLOR.name()))
         )
         
-        self.tableView.leftClicked.connect(self.on_table_pressed)
+        # The table's selection *is* the highlight. Qt's extended selection
+        # handles click, Ctrl+click, Shift+click and drag; highlights set in
+        # code (Ctrl+A, the context menu, other tools) are pushed back into the
+        # selection, including after a filter rebuilds the rows.
+        self.tableView.selectionModel().selectionChanged.connect(self._on_table_selection_changed)
+        self.table_model.rowsChanged.connect(self._sync_selection_from_highlights)
+        self.table_model.modelReset.connect(self._sync_selection_from_highlights)
         self.tableView.doubleClicked.connect(self.on_table_double_clicked)
 
     def _init_action_widgets(self):
@@ -650,7 +644,7 @@ class ImageWindow(QWidget):
         if highlighted and len(highlighted) == len(filtered):
             self.unhighlight_all_rows()
         else:
-            self.highlight_all_rows(select_rows=True)
+            self.highlight_all_rows(take_focus=True)
 
     def refresh_scaling(self):
         """Refresh scale-sensitive controls after the global UI scale changes."""
@@ -958,62 +952,59 @@ class ImageWindow(QWidget):
     # Signal handlers
     #
     
-    def on_table_pressed(self, index):
-        """Handle a single left-click on the table view with complex modifier support."""
-        if not index.isValid():
+    def _on_table_selection_changed(self, selected=None, deselected=None):
+        """The user changed the table's selection: highlight exactly those rows.
+
+        Highlights used to be set by a mouse-press handler alone, so a drag --
+        which Qt extends row by row in its own selection -- showed many rows
+        selected while every action that reads highlights saw only the first.
+        """
+        # Mid-removal the model must not be written to; the removed row's
+        # highlight goes with its raster anyway
+        if self._syncing_highlights or self.table_model.removing_rows:
             return
 
-        path = self.table_model.get_path_at_row(index.row())
-        if not path:
+        rows = sorted({index.row() for index in self.tableView.selectionModel().selectedRows()})
+        paths = [path for path in map(self.table_model.get_path_at_row, rows) if path]
+
+        self._syncing_highlights = True
+        try:
+            self.table_model.set_highlighted_paths(paths)
+        finally:
+            self._syncing_highlights = False
+        self._on_highlights_changed()
+
+    def _sync_selection_from_highlights(self):
+        """Highlights were set in code: select exactly those rows in the table."""
+        if self._syncing_highlights:
             return
-        
-        modifiers = QApplication.keyboardModifiers()
-        current_row = index.row()
+        selection_model = self.tableView.selectionModel()
+        if selection_model is None:
+            return
 
-        # Define conditions for modifiers
-        has_ctrl = bool(modifiers & Qt.ControlModifier)
-        has_shift = bool(modifiers & Qt.ShiftModifier)
+        # One range per run of consecutive rows, not one per row
+        selection = QItemSelection()
+        last_column = self.table_model.columnCount() - 1
+        highlighted = set(self.table_model.get_highlighted_paths())
+        run_start = None
+        for row, path in enumerate(self.table_model.filtered_paths + [None]):
+            if path is not None and path in highlighted:
+                if run_start is None:
+                    run_start = row
+            elif run_start is not None:
+                selection.select(self.table_model.index(run_start, 0),
+                                 self.table_model.index(row - 1, last_column))
+                run_start = None
 
-        if has_shift:
-            # This block handles both Shift+Click and Ctrl+Shift+Click.
-            # First, determine the paths in the selection range.
-            range_paths = []
-            if self.last_highlighted_row >= 0:
-                start = min(self.last_highlighted_row, current_row)
-                end = max(self.last_highlighted_row, current_row)
-                for r in range(start, end + 1):
-                    p = self.table_model.get_path_at_row(r)
-                    if p:
-                        range_paths.append(p)
-            else:
-                # If there's no anchor, the range is just the clicked item.
-                range_paths.append(path)
+        self._syncing_highlights = True
+        try:
+            selection_model.select(selection, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows)
+        finally:
+            self._syncing_highlights = False
+        self._on_highlights_changed()
 
-            if not has_ctrl:
-                # Case 1: Simple Shift+Click. Clears previous highlights 
-                # and selects only the new range.
-                self.table_model.set_highlighted_paths(range_paths)
-            else:
-                # Case 2: Ctrl+Shift+Click. Adds the new range to the
-                # existing highlighted rows without clearing them.
-                for p in range_paths:
-                    self.table_model.highlight_path(p, True)
-        
-        elif has_ctrl:
-            # Case 3: Ctrl+Click. Toggles a single row's highlight state
-            # and sets it as the new anchor for future shift-clicks.
-            raster = self.raster_manager.get_raster(path)
-            if raster:
-                self.table_model.highlight_path(path, not raster.is_highlighted)
-            self.last_highlighted_row = current_row
-        
-        else:
-            # Case 4: Plain Click. Clears everything and highlights only
-            # the clicked row, setting it as the new anchor.
-            self.table_model.set_highlighted_paths([path])
-            self.last_highlighted_row = current_row
-        
-        # Finally, update the count label after any changes.
+    def _on_highlights_changed(self):
+        """Refresh what follows the highlighted rows."""
         self.update_highlighted_count_label()
 
         # If BatchInferenceDialog is open, push updated highlighted paths so
@@ -1036,6 +1027,7 @@ class ImageWindow(QWidget):
         except Exception:
             # Swallow any errors coming from cross-widget signaling
             pass
+
     def on_table_double_clicked(self, index):
         """Handle double click on table view (selects image and loads it)."""
         if not index.isValid():
@@ -1098,7 +1090,7 @@ class ImageWindow(QWidget):
         # Restore selection if possible
         if self.selected_image_path in filtered_paths:
             self.table_model.set_selected_path(self.selected_image_path)
-            self.select_row_for_path(self.selected_image_path)
+            self.set_current_row_for_path(self.selected_image_path)
         elif filtered_paths and not self.selected_image_path:
             # Load the first image if none is selected
             self.load_first_filtered_image()
@@ -1355,7 +1347,7 @@ class ImageWindow(QWidget):
                     # Update selection
                     self.selected_image_path = image_path
                     self.table_model.set_selected_path(image_path)
-                    self.select_row_for_path(image_path)
+                    self.set_current_row_for_path(image_path)
                     
                     # Update index label
                     self.update_current_image_index_label()
@@ -1378,28 +1370,22 @@ class ImageWindow(QWidget):
         finally:
             self.is_loading = False  # Release the lock
 
-    def select_row_for_path(self, path):
+    def set_current_row_for_path(self, path):
         """
-        Select the row for a given path.
-        
+        Make the row for a given path the table's current row, without selecting it.
+
+        The table's selection is the highlight, so selecting the open image's
+        row here would highlight it. The open image is marked by the model
+        instead (bold, green).
+
         Args:
-            path (str): Path to select
+            path (str): Path of the open image
         """
         row = self.table_model.get_row_for_path(path)
-        if row >= 0:
-            # Create model index for the row
-            model_index = self.table_model.index(row, 0)
-            
-            # Select the row in the table view
-            self.tableView.setCurrentIndex(model_index)
-            
-            # Do not use selectRow as it triggers clicked signal
-            # Use selection model directly to avoid infinite loops
-            selection_model = self.tableView.selectionModel()
-            if selection_model:
-                selection_flags = QItemSelectionModel.Select | QItemSelectionModel.Rows
-                selection_model.select(model_index, selection_flags)
-                
+        selection_model = self.tableView.selectionModel()
+        if row >= 0 and selection_model:
+            selection_model.setCurrentIndex(self.table_model.index(row, 0), QItemSelectionModel.NoUpdate)
+
     def center_table_on_current_image(self):
         """Center the table view on the current image."""
         if not self.selected_image_path:
@@ -1597,22 +1583,13 @@ class ImageWindow(QWidget):
         # Load the next image
         self.load_image_by_path(self.table_model.get_path_at_row(next_index))
         
-    def highlight_all_rows(self, select_rows: bool = True):
-        """Highlight all rows in the filtered view and optionally select them."""
-        # Batch highlight all filtered paths for better performance
+    def highlight_all_rows(self, take_focus: bool = True):
+        """Highlight all rows in the filtered view; the table's selection follows."""
         self.table_model.set_highlighted_paths(self.table_model.filtered_paths)
-        
-        # Update the last highlighted row
-        if self.table_model.filtered_paths:
-            self.last_highlighted_row = self.table_model.get_row_for_path(self.table_model.filtered_paths[-1])
-            
-        # Update the highlighted count label
-        self.update_highlighted_count_label()
 
-        if select_rows and self.table_model.filtered_paths:
+        if take_focus and self.table_model.filtered_paths:
             self.tableView.setFocus(Qt.OtherFocusReason)
-            self.tableView.selectAll()
-        
+
     def copy_highlighted_paths(self):
         """Put the highlighted images' full paths on the clipboard, one per line.
 
@@ -1630,17 +1607,12 @@ class ImageWindow(QWidget):
             pass
 
     def unhighlight_all_rows(self):
-        """Clear all highlights."""
-        selection_model = self.tableView.selectionModel()
-        if selection_model:
-            selection_model.clearSelection()
-
+        """Clear all highlights; the table's selection follows."""
         self.table_model.clear_highlights()
-        self.last_highlighted_row = -1
-        
+
         if self.selected_image_path:
             self.table_model.set_selected_path(self.selected_image_path)
-            self.select_row_for_path(self.selected_image_path)
+            self.set_current_row_for_path(self.selected_image_path)
 
         # Update the highlighted count label
         self.update_highlighted_count_label()
@@ -1663,7 +1635,6 @@ class ImageWindow(QWidget):
         # then we assume they want to act on this row alone.
         if path_at_cursor and path_at_cursor not in highlighted_paths:
             self.table_model.set_highlighted_paths([path_at_cursor])
-            self.last_highlighted_row = index.row()
             highlighted_paths = [path_at_cursor]
         
         # If no rows are highlighted, do nothing.
