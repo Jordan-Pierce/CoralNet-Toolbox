@@ -90,6 +90,7 @@ from coralnet_toolbox.MachineLearning.PUDetection import (PU_MODELS_NOTE, pu_sup
 from coralnet_toolbox.MachineLearning.TrainModel.QtDetect import STANDARD_MODELS as DETECT_MODELS
 from coralnet_toolbox.MachineLearning.TrainModel.QtSegment import STANDARD_MODELS as SEGMENT_MODELS
 
+from coralnet_toolbox.Rasters.extracted_images import has_active_set
 from coralnet_toolbox.Results.ResultsProcessor import ResultsProcessor
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
@@ -1668,7 +1669,11 @@ class Base(QDialog):
         return group_box
 
     def setup_buttons_layout(self):
-        """The action row, outside the tabs so it never goes out of reach."""
+        """The ready line and the action row, outside the tabs so they never go out of reach."""
+        self.ready_label = QLabel()
+        self.layout.addWidget(self.ready_label)
+        self.show_readiness(False)
+
         button_layout = QHBoxLayout()
 
         # On the left, away from Train: it undoes a session rather than
@@ -1697,12 +1702,6 @@ class Base(QDialog):
         self.save_session_button.clicked.connect(self.save_session)
         self.save_session_button.setEnabled(False)
         button_layout.addWidget(self.save_session_button)
-
-        button_layout.addSpacing(16)
-
-        self.ready_label = QLabel("❌ Not Ready")
-        self.ready_label.setToolTip("Whether a round can be started with the current selection.")
-        button_layout.addWidget(self.ready_label)
 
         button_layout.addStretch()
 
@@ -1934,6 +1933,9 @@ class Base(QDialog):
             raster = raster_manager.get_raster(annotation.image_path)
             if raster is None or getattr(raster, 'raster_type', '') != 'ImageRaster':
                 continue
+            # Its extracted images carry the same pixels; training both counts them twice
+            if has_active_set(raster):
+                continue
 
             grouped.setdefault(annotation.image_path, []).append(annotation)
 
@@ -1944,11 +1946,15 @@ class Base(QDialog):
 
         Video frames are virtual paths the trainer cannot open, and an
         orthomosaic is one enormous sample that means nothing without tiling.
+        An image whose work areas are extracted is left out too: its extracted
+        images stand in for it.
         """
         raster_manager = self.image_window.raster_manager
         for image_path in raster_manager.image_paths:
             raster = raster_manager.get_raster(image_path)
             if raster is None or getattr(raster, 'raster_type', '') != 'ImageRaster':
+                continue
+            if has_active_set(raster):
                 continue
             yield image_path, raster
 
@@ -2004,7 +2010,7 @@ class Base(QDialog):
         eligible, annotated, unsupported, already = [], 0, 0, 0
         for path in paths:
             raster = raster_manager.get_raster(path)
-            if raster is None or getattr(raster, 'raster_type', '') != 'ImageRaster':
+            if raster is None or getattr(raster, 'raster_type', '') != 'ImageRaster' or has_active_set(raster):
                 unsupported += 1
             elif self.task_annotations(path):
                 annotated += 1
@@ -2218,7 +2224,8 @@ class Base(QDialog):
             selected = self.selected_labels()
             if not selected:
                 self.plan = None
-                self.set_not_ready(self.nothing_yet_advice(self.awaiting['total']))
+                untrainable = not verified and self.has_untrainable_annotations()
+                self.set_not_ready(self.nothing_yet_advice(self.awaiting['total'], self.task, untrainable))
                 return
 
             self.plan = {
@@ -2230,7 +2237,7 @@ class Base(QDialog):
 
             ready, reason = self.readiness(groups, grouped, negatives)
             self.ready_status = ready
-            self.ready_label.setText("✅ Ready" if ready else f"❌ Not Ready - {reason}")
+            self.show_readiness(ready, reason)
             self.train_button.setEnabled(ready and self.worker is None)
             self.new_session_button.setEnabled(self.worker is None)
             self.save_session_button.setEnabled(self.saveable_round() is not None)
@@ -2398,8 +2405,19 @@ class Base(QDialog):
             f"{MIN_OBJECT_PIXELS} px. Raise Image Size, or wait for Work Area tiling.")
         self.warning_label.setVisible(True)
 
+    def has_untrainable_annotations(self):
+        """Whether the project holds annotations this task cannot learn from.
+
+        A project of CoralNet points holds thousands of confirmed patches, and
+        "nothing confirmed yet" reads as wrong to somebody looking at them
+        unless it says why they do not count.
+        """
+        allowed_types = InPlaceTraining.TASK_ANNOTATION_TYPES.get(self.task, ())
+        return any(not isinstance(annotation, allowed_types)
+                   for annotation in self.annotation_window.annotations_dict.values())
+
     @staticmethod
-    def nothing_yet_advice(awaiting_total):
+    def nothing_yet_advice(awaiting_total, task=None, untrainable=False):
         """What to do when there is nothing to train on yet.
 
         This is the state the dialog opens in for the person the feature exists
@@ -2409,6 +2427,10 @@ class Base(QDialog):
         if awaiting_total:
             return ("nothing confirmed yet - review some of the waiting predictions "
                     "(Review Predictions) and they become training data")
+        if untrainable and task in TASK_LABELS:
+            return (f"nothing to train on - {TASK_LABELS[task]} learns from "
+                    f"{InPlaceTraining.TASK_SHAPE_NAMES[task]} only, so draw a handful "
+                    f"of examples of each label on a few images, then train a first round")
         return ("nothing confirmed yet - draw a handful of examples of each label "
                 "on a few images, then train a first round")
 
@@ -2439,8 +2461,20 @@ class Base(QDialog):
         """
         self.plan = None
         self.ready_status = False
-        self.ready_label.setText(f"❌ Not Ready - {message}")
+        self.show_readiness(False, message)
         self.train_button.setEnabled(False)
+
+    def show_readiness(self, ready, reason=""):
+        """Set the ready line. The label stays short; the reason goes in its tooltip."""
+        self.ready_reason = "" if ready else reason
+        self.ready_label.setText("✅ Ready" if ready else "❌ Not Ready")
+        if ready:
+            tooltip = "A round can be started with the current selection."
+        elif reason:
+            tooltip = reason[:1].upper() + reason[1:]
+        else:
+            tooltip = "Whether a round can be started with the current selection."
+        self.ready_label.setToolTip(tooltip)
 
     def readiness(self, groups, grouped, negatives):
         """Return (ready, reason) for what a round would train on.
@@ -2653,7 +2687,7 @@ class Base(QDialog):
         self.refresh_dataset(quiet=False)
         if not self.ready_status or self.plan is None:
             QMessageBox.warning(self, "Not Ready",
-                                f"Cannot train: {self.ready_label.text()}")
+                                f"Cannot train: {self.ready_reason or 'not ready'}.")
             return
 
         dataset = self.build_dataset()

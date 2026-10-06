@@ -435,6 +435,13 @@ class FeatureBatchInferenceTask(BatchInferenceTask):
                         progress_bar.update_progress()
                         continue
 
+                    # A video's rasterio_src is a frame shim holding whichever frame
+                    # was shown last, so a map from it would describe one frame and
+                    # be stored as the whole video's. Skipped; the finally advances.
+                    if getattr(raster, 'raster_type', '') == 'VideoRaster':
+                        print(f"Feature extraction skipped for video: {image_path}")
+                        continue
+
                     # Load image as RGB -- extract_dense takes `image_rgb`.
                     # pixmap_to_numpy used to return BGR here, so every cached
                     # feature map was baked from channel-swapped pixels.

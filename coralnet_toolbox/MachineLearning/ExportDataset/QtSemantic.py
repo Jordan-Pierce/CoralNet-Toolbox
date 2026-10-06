@@ -26,6 +26,7 @@ from coralnet_toolbox.MachineLearning.ExportDataset.export_dataset_utils import 
 )
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
+from coralnet_toolbox.Rasters.extracted_images import has_active_set
 
 from coralnet_toolbox.Icons import get_icon, get_window_icon
 
@@ -183,6 +184,10 @@ class Semantic(Base):
         for image_path in images:
             # Source 1: raster attribute (fastest lookup)
             raster = self.image_window.raster_manager.get_raster(image_path)
+            # Its work areas are extracted: the images carry its mask now, and
+            # exporting both counts those pixels twice (see get_selected_image_paths)
+            if raster is not None and has_active_set(raster):
+                continue
             if raster and raster.mask_annotation:
                 ann = raster.mask_annotation
                 if ann.id not in seen_ids:
