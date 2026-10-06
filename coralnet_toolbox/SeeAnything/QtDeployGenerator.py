@@ -1,5 +1,3 @@
-import warnings
-
 import os
 import gc
 import hashlib
@@ -34,6 +32,7 @@ from coralnet_toolbox.utilities import bgr_to_qimage, decode_video_frame
 from coralnet_toolbox.Common import ThresholdsWidget
 
 from coralnet_toolbox.Icons import get_window_icon
+from coralnet_toolbox.paths import resolve_weights
 
 # Both See Anything dialogs open on the same model
 from coralnet_toolbox.SeeAnything.QtDeployPredictor import DEFAULT_MODEL
@@ -54,8 +53,6 @@ from coralnet_toolbox.SeeAnything.PromptSession import (KIND_BOXES,
                                                         new_prototype,
                                                         stem_from_path)
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
 # Input-size granularity for YOLOE. Everything in the family is a stride-32
 # model, so the letterbox pads to a multiple of this.
@@ -1188,7 +1185,7 @@ class DeployGeneratorDialog(QDialog):
             self.model_path = self.model_combo.currentText()
 
         # Load model using registry
-        self.loaded_model = YOLOE(self.model_path)
+        self.loaded_model = YOLOE(resolve_weights(self.model_path))
 
         # Create a dummy visual dictionary for standard model loading
         visual_prompts = dict(

@@ -3,10 +3,8 @@
 #   https://www.a1k0n.net/2010/03/04/google-ai-challenge-postmortem.html
 
 import random
-import warnings
 from collections import deque
 
-warnings.filterwarnings("ignore")
 
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QFont

@@ -1,5 +1,3 @@
-import warnings
-
 import os
 import gc
 import ujson as json
@@ -14,9 +12,6 @@ from PyQt5.QtWidgets import (QFileDialog, QMessageBox, QVBoxLayout, QLabel, QDia
 from torch.cuda import empty_cache
 
 from coralnet_toolbox.Icons import get_icon, get_window_icon
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

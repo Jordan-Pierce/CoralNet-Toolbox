@@ -1,13 +1,9 @@
-import warnings
-
 from typing import Any, Dict, List, Optional, Set
 
 from PyQt5.QtCore import Qt, QAbstractTableModel, QModelIndex, QVariant, pyqtSignal
 from PyQt5.QtGui import QFont, QColor, QBrush
 
 from coralnet_toolbox.Rasters import RasterManager
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

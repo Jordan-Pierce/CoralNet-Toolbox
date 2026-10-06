@@ -7,13 +7,10 @@ context canvases, explorer windows) can query annotation data and subscribe
 to change signals without routing through the monolithic UI class.
 """
 
-import warnings
 
 from PyQt5.QtCore import QObject, pyqtSignal
 
 from coralnet_toolbox.QtActions import ActionStack
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

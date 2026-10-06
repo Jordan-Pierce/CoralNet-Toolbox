@@ -1,5 +1,3 @@
-import warnings
-
 import os
 from collections import OrderedDict
 
@@ -9,8 +7,6 @@ from coralnet_toolbox.utilities import format_measurement
 from coralnet_toolbox.utilities import convert_measurement
 from coralnet_toolbox.utilities import convert_scale_units
 from coralnet_toolbox.utilities import compose_surface_area_unit
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

@@ -424,9 +424,9 @@ class FeatureBatchInferenceTask(BatchInferenceTask):
         progress_bar.start_progress(len(self.image_paths))
 
         try:
-            import os
             import numpy as np
             from coralnet_toolbox.Features.FeatureMapCodec import save_feature_map
+            from coralnet_toolbox.paths import feature_cache_path
 
             for image_path in self.image_paths:
                 try:
@@ -469,14 +469,8 @@ class FeatureBatchInferenceTask(BatchInferenceTask):
                         except Exception:
                             feature_vector = None
 
-                    # Save feature map to a per-image-directory cache.
-                    cache_dir = os.path.join(
-                        os.path.dirname(image_path), ".cache", "features"
-                    )
-                    os.makedirs(cache_dir, exist_ok=True)
-
-                    basename = os.path.splitext(os.path.basename(image_path))[0]
-                    npy_path = os.path.join(cache_dir, f"{basename}_features.npy")
+                    # Save feature map to the toolbox's feature cache.
+                    npy_path = feature_cache_path(image_path)
 
                     save_feature_map(
                         npy_path,

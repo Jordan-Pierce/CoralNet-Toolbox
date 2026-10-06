@@ -1,5 +1,3 @@
-import warnings
-
 import cv2
 import math
 import numpy as np
@@ -40,8 +38,6 @@ MAX_TOLERANCE = 2.0
 # on-screen vertices the handle layer is thinning them out anyway.
 MAX_DENSIFY_VERTICES = 2000
 from coralnet_toolbox.utilities import rasterio_to_cropped_image
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

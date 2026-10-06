@@ -1,13 +1,9 @@
-import warnings
-
 import math
 
 import numpy as np
 
 from coralnet_toolbox.utilities import convert_scale_units
 from coralnet_toolbox.utilities import is_length_unit
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

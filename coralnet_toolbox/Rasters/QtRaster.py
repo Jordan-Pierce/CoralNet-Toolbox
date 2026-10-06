@@ -29,7 +29,6 @@ from coralnet_toolbox.utilities import pixmap_to_numpy_bgr
 from coralnet_toolbox.utilities import load_z_channel_from_file
 from coralnet_toolbox.utilities import normalize_z_unit
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
 

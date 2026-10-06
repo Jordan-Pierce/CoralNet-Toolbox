@@ -1,6 +1,5 @@
 import time
 import threading
-import warnings
 
 import os
 from concurrent.futures import ThreadPoolExecutor
@@ -37,9 +36,6 @@ try:
 except ImportError:
     torch = None
     F = None
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ------------------------------------------------------------------------------

@@ -1,5 +1,3 @@
-import warnings
-
 import numpy as np
 
 from PyQt5.QtCore import Qt, QPointF, QTimer
@@ -11,8 +9,6 @@ from rasterio.windows import Window as RasterioWindow
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtAnnotation import RenderMode
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

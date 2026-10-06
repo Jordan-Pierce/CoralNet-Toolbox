@@ -1,5 +1,3 @@
-import warnings
-
 import re
 import math
 import uuid
@@ -76,8 +74,6 @@ QToolButton::menu-arrow {{
     height: 8px;
 }}
 """
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

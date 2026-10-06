@@ -1,12 +1,8 @@
-import warnings
-
 from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtWidgets import QApplication
 
 from coralnet_toolbox.QtActions import MaskEditAction
 from coralnet_toolbox.Tools.QtTool import Tool
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

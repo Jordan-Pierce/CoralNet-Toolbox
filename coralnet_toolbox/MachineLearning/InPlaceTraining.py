@@ -35,7 +35,6 @@ See ACTIVE_LEARNING_PLAN.md for the validation work behind these claims, and
 tests/active_learning/ for the tests that hold them in place.
 """
 
-import warnings
 
 import os
 import shutil
@@ -71,16 +70,14 @@ from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotati
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 
 from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedInstanceDataset
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
+from coralnet_toolbox.paths import cache_dir
 
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Constants
 # ----------------------------------------------------------------------------------------------------------------------
 
-CACHE_BASE = ".cache"
+# Under the toolbox's cache folder (see paths.py)
 CACHE_SUBDIR = "in_place_training"
 
 # Directory names the generated yaml points at. They exist but stay empty:
@@ -532,7 +529,7 @@ class InPlaceDataset:
         self._original_dataset = None
 
         stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        base = cache_root or os.path.join(os.getcwd(), CACHE_BASE, CACHE_SUBDIR)
+        base = cache_root or cache_dir(CACHE_SUBDIR).as_posix()
         self.root = os.path.join(base, stamp)
 
     # ------------------------------------------------------------------

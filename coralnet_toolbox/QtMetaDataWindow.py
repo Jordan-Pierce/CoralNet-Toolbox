@@ -1,5 +1,3 @@
-import warnings
-
 from PyQt5.QtCore import Qt, QDate, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton,
                              QToolBar, QSizePolicy, QTreeWidget, QTreeWidgetItem,
@@ -20,8 +18,6 @@ from coralnet_toolbox.MetaData.QtConfirmDialog import report_promotion
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Icons import get_icon
 from coralnet_toolbox import theme as app_theme
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

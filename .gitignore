@@ -116,6 +116,8 @@ launch.json
 *.idea
 
 # Models
+# ultralytics' own weights_dir (relative "weights" by default) when run from here
+/weights/
 *.hd
 *.hdf5
 *.pt

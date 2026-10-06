@@ -1,5 +1,3 @@
-import warnings
-
 from rasterio.windows import Window
 
 from shapely.geometry import MultiPolygon
@@ -13,8 +11,6 @@ from PyQt5.QtGui import (QPixmap, QColor, QPen,
 from coralnet_toolbox.Annotations.QtAnnotation import Annotation, OptimizedPathItem
 
 from coralnet_toolbox.utilities import rasterio_to_cropped_image
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

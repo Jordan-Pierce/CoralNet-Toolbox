@@ -1,8 +1,3 @@
-import warnings
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
-
 import os 
 
 from PyQt5.QtWidgets import (QVBoxLayout, QLabel, QGroupBox, QFormLayout,

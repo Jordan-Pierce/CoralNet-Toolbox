@@ -1,5 +1,4 @@
 import time
-import warnings
 
 from PyQt5.QtGui import QColor, QPainter, QCursor, QPainterPath, QPen, QFontMetrics
 from PyQt5.QtCore import Qt, pyqtSignal, QRectF, QPropertyAnimation, QEasingCurve, pyqtProperty, QTimer, QSize
@@ -13,8 +12,6 @@ from coralnet_toolbox.MetaData.QtBuiltInFields import format_unconvertible_note
 
 from coralnet_toolbox.Icons import get_icon
 from coralnet_toolbox import theme as app_theme
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

@@ -8,7 +8,6 @@ and reused in Phase 2's context matrix for multi-viewport displays.
 
 import math
 import time
-import warnings
 import traceback
 import numpy as np
 
@@ -22,8 +21,6 @@ from PyQt5.QtWidgets import (QGraphicsView, QGraphicsScene, QGraphicsPixmapItem,
 from coralnet_toolbox.utilities import get_view_scale, get_colormap
 
 from coralnet_toolbox import theme as app_theme
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 #-------------------------------------------------------------------------------------------------

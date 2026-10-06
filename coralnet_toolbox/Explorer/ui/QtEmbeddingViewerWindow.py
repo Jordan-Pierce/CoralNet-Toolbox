@@ -12,7 +12,6 @@ from functools import partial
 import os
 import time
 import traceback
-import warnings
 import numpy as np
 import torch
 import cv2
@@ -52,8 +51,7 @@ from coralnet_toolbox.Features.ModelRegistry import OPENCLIP_MODELS, is_openclip
 
 from coralnet_toolbox.Icons import get_icon
 from coralnet_toolbox.utilities import pixmap_to_numpy, pixmap_to_numpy_bgr, pixmap_to_pil
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
+from coralnet_toolbox.paths import resolve_weights
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -2142,7 +2140,7 @@ class EmbeddingViewerWindow(QWidget):
         
         try:
             from ultralytics import YOLO
-            model = YOLO(model_name)
+            model = YOLO(resolve_weights(model_name))
             if cache_allowed:
                 self._cached_yolo_model = model
                 self._cached_yolo_model_name = model_name

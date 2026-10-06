@@ -1,5 +1,3 @@
-import warnings
-
 import ujson as json
 
 from PyQt5.QtCore import Qt
@@ -7,8 +5,6 @@ from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import QFileDialog, QMessageBox, QApplication
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

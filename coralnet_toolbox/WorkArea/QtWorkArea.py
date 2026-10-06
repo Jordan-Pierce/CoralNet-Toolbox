@@ -1,5 +1,3 @@
-import warnings
-
 from PyQt5.QtGui import QPen, QColor, QBrush, QPainterPath
 from PyQt5.QtCore import QRectF, QObject, pyqtSignal, Qt
 from PyQt5.QtWidgets import (QGraphicsRectItem, QGraphicsItemGroup, QGraphicsLineItem, QGraphicsPathItem,
@@ -8,8 +6,6 @@ from PyQt5.QtWidgets import (QGraphicsRectItem, QGraphicsItemGroup, QGraphicsLin
 from coralnet_toolbox.Annotations.QtAnnotation import FloatingTagItem
 
 from coralnet_toolbox.utilities import get_view_scale
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

@@ -1,12 +1,8 @@
-import warnings
-
 from PyQt5.QtCore import Qt, QObject, QEvent
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QLineEdit, QAbstractSpinBox,
                              QPlainTextEdit, QTextEdit, QComboBox)
 
 from coralnet_toolbox.Icons import get_window_icon
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

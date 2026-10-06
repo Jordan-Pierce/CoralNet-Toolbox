@@ -1,7 +1,3 @@
-import warnings
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
 from coralnet_toolbox.Rasters.QtRaster import Raster
 
 

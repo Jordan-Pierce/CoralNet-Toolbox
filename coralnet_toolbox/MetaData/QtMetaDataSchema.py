@@ -1,11 +1,7 @@
-import warnings
-
 import copy
 import datetime
 
 import yaml
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

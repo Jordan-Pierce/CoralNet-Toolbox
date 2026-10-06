@@ -1,9 +1,4 @@
-import warnings
-
 from coralnet_toolbox.MachineLearning.ActiveLearning.QtBase import Base
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
