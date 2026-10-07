@@ -55,6 +55,14 @@ class Semantic(Base):
         
         self._stats_cache = {} 
         self._project_labels = []
+        # A mask's pixel stats only change when the mask does, so the cache is
+        # filled in and kept rather than rebuilt. Set when this dialog's own
+        # copy has to be re-read: on opening, and on Refresh.
+        self._stats_cache_force = True
+        # Set only by Refresh, which goes back to the pixels for every mask
+        # rather than trusting the mask's own cache. The escape hatch if a mask
+        # ever changes without invalidating itself.
+        self._stats_mask_recompute = False
 
     def setup_info_layout(self):
         """Setup the info layout"""
@@ -97,6 +105,16 @@ class Semantic(Base):
         self.include_polygons_checkbox = QCheckBox("Include Polygon Annotations")
         self.include_polygons_checkbox.setChecked(True)
         self.include_polygons_checkbox.setEnabled(True)
+
+        # Each of these decides which annotations exist to index, so the index
+        # has to go. All four are wired here: this override replaces the base
+        # class's layout, so the base class's connections never ran and the
+        # three vector boxes changed nothing until Refresh was pressed.
+        for checkbox in (self.include_masks_checkbox,
+                         self.include_patches_checkbox,
+                         self.include_rectangles_checkbox,
+                         self.include_polygons_checkbox):
+            checkbox.stateChanged.connect(self.refresh_structure)
 
         layout.addWidget(self.include_masks_checkbox)
         layout.addWidget(self.include_patches_checkbox)
@@ -202,10 +220,22 @@ class Semantic(Base):
 
         return mask_annotations
 
-    def _update_annotation_stats_cache(self):
+    def _update_annotation_stats_cache(self, force=False, recompute_masks=False):
         """
-        Rebuild the per-annotation statistics cache used by all summary and
-        filter methods.
+        Fill in the per-annotation statistics cache the index is built against.
+
+        Entries already held are kept unless `force`, which re-reads them.
+
+        Either way a mask's pixel pass is only paid when the mask needs it.
+        MaskAnnotation sets its own `_stats_cache` to None from every method
+        that touches mask_data, and exposes `cached_statistics` to read that
+        without triggering work, so None means stale and a dict - empty
+        included, which is a mask with nothing painted - means current. Reading
+        it is what makes opening this dialog cheap on a project whose masks have
+        not changed.
+
+        `recompute_masks` ignores that and goes back to the pixels for every
+        mask. Refresh passes it, so the button still means recount everything.
 
         MaskAnnotations manage their own stats cache internally; we call
         recalculate_class_statistics() directly to guarantee fresh data
@@ -215,7 +245,8 @@ class Semantic(Base):
         Vector annotations use their own get_class_statistics() which is
         already fast (typically just a label lookup).
         """
-        self._stats_cache.clear()
+        if force:
+            self._stats_cache.clear()
         self._project_labels = list(self.main_window.label_window.labels)
 
         all_annotations = list(self.annotation_window.annotations_dict.values())
@@ -223,17 +254,121 @@ class Semantic(Base):
         unique_annotations = {anno.id: anno for anno in all_annotations}.values()
 
         for anno in unique_annotations:
+            is_mask = anno.__class__.__name__ == 'MaskAnnotation'
+
+            # A mask is always re-read, because reading is a property access and
+            # it is the only way to notice one edited since the last pass. A
+            # vector's statistics are its own label and area, which cannot change
+            # while this dialog is up, so holding an entry is reason to skip it.
+            if not is_mask and anno.id in self._stats_cache:
+                continue
+
             try:
-                if anno.__class__.__name__ == 'MaskAnnotation':
-                    # Force a fresh calculation — avoids stale {} from a prior
-                    # recalculation that ran when the mask was still empty.
-                    self._stats_cache[anno.id] = anno.recalculate_class_statistics() or {}
+                if is_mask:
+                    stats = None if recompute_masks else getattr(anno, 'cached_statistics', None)
+                    if stats is None:
+                        stats = anno.recalculate_class_statistics()
+                    self._stats_cache[anno.id] = stats or {}
                 else:
                     self._stats_cache[anno.id] = anno.get_class_statistics()
             except Exception as e:
                 if anno.id not in self._stats_cache:
                     self._stats_cache[anno.id] = {}
                 print(f"Error caching stats for annotation {anno.id}: {e}")
+
+    def refresh_all(self):
+        """Refresh recomputes the mask statistics as well as the index.
+
+        The only way to pick up a mask edited since this dialog opened, so the
+        button keeps meaning "recount everything".
+        """
+        self._stats_cache_force = True
+        self._stats_mask_recompute = True
+        super().refresh_all()
+
+    def _indexable_annotations(self):
+        """Vector annotations by type, plus the masks, deduplicated by id.
+
+        Masks are not in annotations_dict, so the base class would never see
+        them. get_mask_annotations() reads the image source itself, which is one
+        reason the image source radio has to invalidate the index.
+        """
+        allowed_types = set()
+        if self.include_patches_checkbox.isChecked():
+            allowed_types.add('PatchAnnotation')
+        if self.include_rectangles_checkbox.isChecked():
+            allowed_types.add('RectangleAnnotation')
+        if self.include_polygons_checkbox.isChecked():
+            allowed_types.add('PolygonAnnotation')
+
+        unique = {}
+        for annotation in self.annotation_window.annotations_dict.values():
+            if annotation.__class__.__name__ in allowed_types:
+                unique[annotation.id] = annotation
+
+        if self.include_masks_checkbox.isChecked():
+            for mask in self.get_mask_annotations():
+                unique[mask.id] = mask
+
+        return list(unique.values())
+
+    def _annotation_labels(self, annotation):
+        """Every label this annotation actually paints pixels for.
+
+        A mask holds one entry per painted class, so it is indexed under each.
+        The pixel_count test is the one mask_contains_selected_labels and the
+        readiness check already used; applying it here too means a class that
+        appears in a mask's statistics with nothing painted stops counting
+        towards that label in the table while being ignored everywhere else.
+        """
+        stats = self._stats_cache.get(annotation.id) or {}
+        return tuple(label for label, entry in stats.items()
+                     if (entry or {}).get('pixel_count', 0) > 0)
+
+    def rebuild_annotation_index(self):
+        """Make sure the statistics are in hand, then index against them."""
+        self._update_annotation_stats_cache(force=self._stats_cache_force,
+                                            recompute_masks=self._stats_mask_recompute)
+        self._stats_cache_force = False
+        self._stats_mask_recompute = False
+        super().rebuild_annotation_index()
+
+    def compute_split_label_counts(self):
+        """Sum the splits, counting masks that sit on a source path.
+
+        A mask's image_path is the source ('video.mp4'), never a frame path
+        ('video.mp4::frame_7'), so a video split made of frame paths never
+        matches it and the base class's per-path sum misses it. Each split's
+        distinct sources are added once, and only where the source is not
+        already one of its paths: a static source is its own sample path and the
+        base pass has counted it.
+        """
+        super().compute_split_label_counts()
+
+        path_counts = self._path_counts
+        path_source = self._path_source
+        selected = self._applied_labels
+
+        split_counts = list(self._split_label_counts)
+        split_totals = list(self._split_totals)
+
+        for index, image_paths in enumerate((self.train_images, self.val_images, self.test_images)):
+            counted = set(image_paths)
+            counts = split_counts[index]
+            total = split_totals[index]
+
+            for source in {path_source.get(path) for path in counted}:
+                if source is None or source in counted:
+                    continue
+                for label, count in path_counts.get(source, {}).items():
+                    if label in selected:
+                        counts[label] = counts.get(label, 0) + count
+                        total += count
+
+            split_totals[index] = total
+
+        self._split_label_counts = tuple(split_counts)
+        self._split_totals = tuple(split_totals)
 
     def mask_contains_selected_labels(self, mask_annotation):
         """
@@ -316,8 +451,11 @@ class Semantic(Base):
             # Set the row count to 0
             self.label_counts_table.setRowCount(0)
 
-            # --- Build the cache ONCE ---
-            self._update_annotation_stats_cache()
+            # The index is built right after this, against these statistics
+            self._update_annotation_stats_cache(force=self._stats_cache_force,
+                                                recompute_masks=self._stats_mask_recompute)
+            self._stats_cache_force = False
+            self._stats_mask_recompute = False
 
             label_counts = {}  # Number of annotations/masks containing each label
             label_image_counts = {}  # Set of unique images containing each label
@@ -387,6 +525,7 @@ class Semantic(Base):
                 # the Image Source defaults to the filtered table.
                 hidden_codes = self.get_hidden_label_codes()
 
+                label_rows = []
                 self.label_counts_table.setUpdatesEnabled(False)
                 row = 0
                 for label, count in sorted_label_counts:
@@ -408,121 +547,17 @@ class Semantic(Base):
                     self.label_counts_table.setItem(row, 4, val_item)
                     self.label_counts_table.setItem(row, 5, test_item)
                     self.label_counts_table.setItem(row, 6, images_item)
+
+                    label_rows.append((row, label, container.findChild(QCheckBox)))
                     row += 1
                 self.label_counts_table.setUpdatesEnabled(True)
                 progress_bar.finish_progress()
 
-    def update_summary_statistics(self):
-        """
-        Update the summary statistics using the pre-built cache.
-        """
-        if self.updating_summary_statistics:
-            return
-
-        with busy_cursor():
-            self.updating_summary_statistics = True
-            try:
-                # --- Build the cache ONCE at the start ---
-                self._update_annotation_stats_cache()
-
-                # Selected labels based on user's selection
-                self.selected_labels = []
-                for row in range(self.label_counts_table.rowCount()):
-                    container = self.label_counts_table.cellWidget(row, 0)
-                    include_checkbox = container.findChild(QCheckBox)
-                    if include_checkbox.isChecked():
-                        label = self.label_counts_table.item(row, 1).text()
-                        self.selected_labels.append(label)
-
-                # This call will NOW BE FAST, as it uses the cache
-                self.selected_annotations = self.filter_annotations()
-
-                # Split the data by images
-                self.split_data()
-
-                # Split the data by annotations
-                self.determine_splits()
-
-                # Precompute label→annotation count in a single pass each — O(n) instead of O(labels × n)
-                def _label_counts_from(annotation_list):
-                    counts = {}
-                    for anno in annotation_list:
-                        for lbl in self._stats_cache.get(anno.id, {}):
-                            counts[lbl] = counts.get(lbl, 0) + 1
-                    return counts
-
-                selected_counts = _label_counts_from(self.selected_annotations)
-                train_counts = _label_counts_from(self.train_annotations)
-                val_counts = _label_counts_from(self.val_annotations)
-                test_counts = _label_counts_from(self.test_annotations)
-
-                # Unique images per label from the filtered selection, so the "Images"
-                # column tracks the chosen Image Source (All vs Filtered).
-                selected_image_counts = {}
-                for anno in self.selected_annotations:
-                    for lbl in self._stats_cache.get(anno.id, {}):
-                        selected_image_counts.setdefault(lbl, set()).add(anno.image_path)
-
-                red = QColor(255, 220, 220)
-                green = QColor(220, 255, 220)
-
-                # Update the label counts table
-                self.label_counts_table.setUpdatesEnabled(False)
-                allow_unlabeled_video_export = self.allows_unlabeled_video_export() and self.include_negatives_radio.isChecked()
-                for row in range(self.label_counts_table.rowCount()):
-                    container = self.label_counts_table.cellWidget(row, 0)
-                    include_checkbox = container.findChild(QCheckBox)
-                    label = self.label_counts_table.item(row, 1).text()
-
-                    total_count = selected_counts.get(label, 0)
-                    if include_checkbox.isChecked():
-                        train_count = train_counts.get(label, 0)
-                        val_count = val_counts.get(label, 0)
-                        test_count = test_counts.get(label, 0)
-                    else:
-                        train_count = 0
-                        val_count = 0
-                        test_count = 0
-
-                    self.label_counts_table.item(row, 2).setText(str(total_count))
-                    self.label_counts_table.item(row, 3).setText(str(train_count))
-                    self.label_counts_table.item(row, 4).setText(str(val_count))
-                    self.label_counts_table.item(row, 5).setText(str(test_count))
-                    self.label_counts_table.item(row, 6).setText(str(len(selected_image_counts.get(label, ()))))
-
-                    if include_checkbox.isChecked():
-                        if allow_unlabeled_video_export:
-                            self.set_cell_color(row, 3, red if self.train_ratio > 0 and len(self.train_images) == 0 else green)
-                            self.set_cell_color(row, 4, red if self.val_ratio > 0 and len(self.val_images) == 0 else green)
-                            self.set_cell_color(row, 5, red if self.test_ratio > 0 and len(self.test_images) == 0 else green)
-                        else:
-                            self.set_cell_color(row, 3, red if train_count == 0 and self.train_ratio > 0 else green)
-                            self.set_cell_color(row, 4, red if val_count == 0 and self.val_ratio > 0 else green)
-                            self.set_cell_color(row, 5, red if test_count == 0 and self.test_ratio > 0 else green)
-                    else:
-                        self.set_cell_color(row, 3, green)
-                        self.set_cell_color(row, 4, green)
-                        self.set_cell_color(row, 5, green)
-                self.label_counts_table.setUpdatesEnabled(True)
-
-                # This call will NOW BE FAST, as it uses the cache
-                self.ready_status = self.check_label_distribution()
-                self.split_status = abs(self.train_ratio + self.val_ratio + self.test_ratio - 1.0) < 1e-9
-                self.ready_label.setText("✅ Ready" if (self.ready_status and self.split_status) else "❌ Not Ready")
-
-                # Get counts directly from the image split lists
-                train_count = len(self.train_images)
-                val_count = len(self.val_images)
-                test_count = len(self.test_images)
-                total_count = train_count + val_count + test_count
-
-                # Update the new labels
-                self.total_images_label.setText(f"Total Images: {total_count}")
-                self.split_summary_label.setText(f"(Train: {train_count}, Val: {val_count}, Test: {test_count})")
-            finally:
-                # An exception here must not leave the guard set - every later
-                # refresh would return at the top without updating anything.
-                self.updating_summary_statistics = False
+        # The base class's table loop reads these rows, and the index has to be
+        # rebuilt against the statistics just gathered.
+        self._label_rows = label_rows
+        self._index_dirty = True
+        self._reset_selection_state()
 
     def check_label_distribution(self):
         """
@@ -566,31 +601,12 @@ class Semantic(Base):
         if not allowed:
             return False
     
-        # Initialize dictionaries to store label counts for each split
-        train_label_counts = {}
-        val_label_counts = {}
-        test_label_counts = {}
-    
-        # --- Read from the cache ---
-        for annotation in self.train_annotations:
-            class_stats = self._stats_cache.get(annotation.id, {})
-            for label, stats in class_stats.items():
-                if stats.get('pixel_count', 0) > 0:
-                    train_label_counts[label] = train_label_counts.get(label, 0) + 1
-    
-        for annotation in self.val_annotations:
-            class_stats = self._stats_cache.get(annotation.id, {})
-            for label, stats in class_stats.items():
-                if stats.get('pixel_count', 0) > 0:
-                    val_label_counts[label] = val_label_counts.get(label, 0) + 1
-    
-        for annotation in self.test_annotations:
-            class_stats = self._stats_cache.get(annotation.id, {})
-            for label, stats in class_stats.items():
-                if stats.get('pixel_count', 0) > 0:
-                    test_label_counts[label] = test_label_counts.get(label, 0) + 1
-        
-    
+        # Summed for the table already, straight out of the index. The
+        # three passes over the split annotation lists that stood here
+        # were the same arithmetic over the same statistics.
+        train_label_counts, val_label_counts, test_label_counts = self._split_label_counts
+        train_total, val_total, test_total = self._split_totals
+
         # Check the conditions for each split
         for label in self.selected_labels:
             if train_ratio > 0 and (label not in train_label_counts or train_label_counts[label] == 0):
@@ -601,11 +617,11 @@ class Semantic(Base):
                 return False
     
         # Additional checks to ensure no empty splits
-        if train_ratio > 0 and len(self.train_annotations) == 0:
+        if train_ratio > 0 and train_total == 0:
             return False
-        if val_ratio > 0 and len(self.val_annotations) == 0:
+        if val_ratio > 0 and val_total == 0:
             return False
-        if test_ratio > 0 and len(self.test_annotations) == 0:
+        if test_ratio > 0 and test_total == 0:
             return False
     
         if self.allows_unlabeled_video_export() and self.include_negatives_radio.isChecked():

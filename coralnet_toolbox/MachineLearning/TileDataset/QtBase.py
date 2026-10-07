@@ -29,6 +29,13 @@ from coralnet_toolbox.Icons import get_icon, get_window_icon
 # ----------------------------------------------------------------------------------------------------------------------
 
 
+class TilingCanceled(Exception):
+    """Raised out of the progress callback when the user cancels the run.
+
+    Its own type so the cancel is not reported back as a tiling failure.
+    """
+
+
 class Base(QDialog):
     """
     Base class for tiling object detection, and instance segmentation datasets using yolo-tiling.
@@ -362,36 +369,70 @@ class Base(QDialog):
             return False
         return True
 
+    def validate_destination(self, src, dst):
+        """Check the output location is set and is not inside the input dataset.
+
+        yolo-tiler reads the source while it writes the target, so a target
+        inside the source feeds tiles back in as input and the run fails
+        partway through. Refusing it here beats failing mid-run.
+
+        :param src: Source dataset directory
+        :param dst: Full output directory (destination / dataset name)
+        :return: True if valid, False otherwise
+        """
+        if not self.dst_edit.text().strip() or not self.dst_name_edit.text().strip():
+            QMessageBox.warning(self,
+                                "Missing Output Location",
+                                "Choose a destination directory and a destination dataset name.")
+            return False
+
+        src_path = os.path.normcase(os.path.abspath(src))
+        dst_path = os.path.normcase(os.path.abspath(dst))
+        if dst_path == src_path or dst_path.startswith(src_path + os.sep):
+            QMessageBox.warning(self,
+                                "Invalid Destination Directory",
+                                "The destination is the source dataset, or sits inside it.\n"
+                                "Tiling reads the source while it writes, so choose a "
+                                "destination outside it.")
+            return False
+        return True
+
     def copy_class_mapping(self):
-        """Checks to see if a class_mapping.json file exists in the source directory
-        and copies it to the destination directory."""
+        """Copy the source dataset's class_mapping.json next to the tiled one, if there is one.
+
+        The destination folder is created here: yolo-tiler builds the split
+        folders inside run(), which has not happened yet, so copying into a
+        destination that does not exist raised FileNotFoundError.
+        """
         src = self.src_edit.text()
         dst = os.path.join(self.dst_edit.text(), self.dst_name_edit.text())
 
         src_class_mapping = os.path.join(src, 'class_mapping.json')
         dst_class_mapping = os.path.join(dst, 'class_mapping.json')
 
-        if os.path.exists(src_class_mapping):
-            shutil.copy(src_class_mapping, dst_class_mapping)
+        if not os.path.exists(src_class_mapping):
+            return
+
+        if (os.path.normcase(os.path.abspath(src_class_mapping))
+                == os.path.normcase(os.path.abspath(dst_class_mapping))):
+            # Nothing to do, and shutil.copy would raise SameFileError
+            return
+
+        os.makedirs(dst, exist_ok=True)
+        shutil.copy(src_class_mapping, dst_class_mapping)
 
     def apply(self):
         """
         Apply the tile dataset options.
         """
-        # Pause the cursor
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-
         self.pending_train_dataset = None
 
-        try:
-            # Tile the dataset
-            self.tile_dataset()
-
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to tile dataset: {str(e)}")
-        finally:
-            # Resume the cursor
-            QApplication.restoreOverrideCursor()
+        # No wait cursor pushed here: tile_dataset() pushes its own, and two
+        # pushes against one pop left the whole application on the hourglass.
+        if not self.tile_dataset():
+            # It has already said what was wrong. Staying open leaves the
+            # settings on screen to correct, instead of closing as if it worked.
+            return
 
         self.accept()
 
@@ -404,6 +445,8 @@ class Base(QDialog):
     def tile_dataset(self):
         """
         Use yolo-tiling to tile the dataset.
+
+        :return: True if the dataset was tiled, False if it was not
         """
         src = self.src_edit.text()
         dst = os.path.join(self.dst_edit.text(), self.dst_name_edit.text())
@@ -430,6 +473,7 @@ class Base(QDialog):
         # Perform all validation checks
         validation_checks = [
             (self.validate_source_directory(src), "Source directory validation failed"),
+            (self.validate_destination(src, dst), "Destination directory validation failed"),
             (True if output_ext is None else self.validate_ext(output_ext), "Output extension validation failed"),
             (self.validate_densify_factor(densify_factor), "Densify factor validation failed"),
             (self.validate_smoothing_tolerance(smoothing_tolerance), "Smoothing tolerance validation failed"),
@@ -439,70 +483,92 @@ class Base(QDialog):
         # Check if any validation failed
         for is_valid, error_msg in validation_checks:
             if not is_valid:
-                return
-
-        # Pause the cursor
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-
-        # Create and show the progress bar
-        self.progress_bar = ProgressBar(self, title="Tiling Progress")
-        self.progress_bar.show()
+                return False
 
         def progress_callback(progress: TileProgress):
             title = f"Processing {progress.current_set_name.capitalize()} Set"
 
             if progress.total_tiles:
                 progress_percentage = int((progress.current_tile_idx / progress.total_tiles) * 100)
-                title += f": {int(progress.current_image_idx/progress.total_images*100)}%"
-            else:
+                if progress.total_images:
+                    title += f": {int(progress.current_image_idx / progress.total_images * 100)}%"
+            elif progress.total_images:
                 progress_percentage = int((progress.current_image_idx / progress.total_images) * 100)
+            else:
+                progress_percentage = 0
 
             self.progress_bar.setWindowTitle(title)
             self.progress_bar.set_value(progress_percentage)
             self.progress_bar.update_progress()
 
             if self.progress_bar.wasCanceled():
-                raise Exception("Tiling process was canceled by the user.")
+                raise TilingCanceled()
 
-        config = TileConfig(
-            slice_wh=slice_wh,
-            overlap_wh=overlap_wh,
-            output_ext=output_ext,
-            annotation_type=self.annotation_type,
-            densify_factor=densify_factor,
-            smoothing_tolerance=smoothing_tolerance,
-            train_ratio=train_ratio,
-            valid_ratio=valid_ratio,
-            test_ratio=test_ratio,
-            margins=margins,
-            include_negative_samples=include_negatives,
-            copy_source_data=copy_source_data,
-            compression=compression,
-        )
+        # The progress bar is application modal, so everything from here on has
+        # to close it on the way out. One left open by a raised exception blocks
+        # input to the whole application, and apply() then closed its parent
+        # dialog out from under it - a hang with nothing left to click.
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        self.progress_bar = ProgressBar(self, title="Tiling Progress")
+        self.progress_bar.show()
 
-        tiler = YoloTiler(
-            source=src,
-            target=dst,
-            config=config,
-            progress_callback=progress_callback,
-            num_viz_samples=num_viz_samples,        # Number of samples to visualize
-        )
-
-        # Copy the class_mapping.json file if it exists
-        self.copy_class_mapping()
-
+        error = None
+        canceled = False
         try:
-            tiler.run()
-            if prompt_train_model(self,
-                                  "Tiling Complete",
-                                  "The dataset has been tiled successfully."):
-                self.pending_train_dataset = dst
+            config = TileConfig(
+                slice_wh=slice_wh,
+                overlap_wh=overlap_wh,
+                output_ext=output_ext,
+                annotation_type=self.annotation_type,
+                densify_factor=densify_factor,
+                smoothing_tolerance=smoothing_tolerance,
+                train_ratio=train_ratio,
+                valid_ratio=valid_ratio,
+                test_ratio=test_ratio,
+                margins=margins,
+                include_negative_samples=include_negatives,
+                copy_source_data=copy_source_data,
+                compression=compression,
+            )
 
+            tiler = YoloTiler(
+                source=src,
+                target=dst,
+                config=config,
+                progress_callback=progress_callback,
+                num_viz_samples=num_viz_samples,        # Number of samples to visualize
+            )
+
+            # Copy the class_mapping.json file if it exists
+            self.copy_class_mapping()
+
+            tiler.run()
+
+        except TilingCanceled:
+            canceled = True
         except Exception as e:
-            QMessageBox.critical(self,
-                                 "Error",
-                                 f"Failed to complete tiling: {str(e)}")
+            error = e
         finally:
+            # Closed before any dialog goes up, not after: a modal message box
+            # shown underneath the modal progress bar cannot be reached either.
             self.progress_bar.stop_progress()
             self.progress_bar.close()
+            self.progress_bar = None
             QApplication.restoreOverrideCursor()
+
+        if canceled:
+            print("Note: Tiling was canceled.")
+            return False
+
+        if error is not None:
+            QMessageBox.critical(self,
+                                 "Error",
+                                 f"Failed to complete tiling: {error}")
+            return False
+
+        if prompt_train_model(self,
+                              "Tiling Complete",
+                              "The dataset has been tiled successfully."):
+            self.pending_train_dataset = dst
+
+        return True

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
@@ -60,6 +61,55 @@ def closing_progress_bar(progress_bar):
     finally:
         progress_bar.stop_progress()
         progress_bar.close()
+
+
+# ---------------------------------------------------------------------------------------------------
+# Refresh timing
+# ---------------------------------------------------------------------------------------------------
+
+# Past this, the status bar line names whichever phase took the longest. Below
+# it the refresh was quick enough that the breakdown would only be noise.
+REFRESH_SLOW_MS = 1000.0
+
+
+def format_refresh_duration(total_ms):
+    """A duration that reads well at both ends of the range."""
+    if total_ms < 10.0:
+        return f"{total_ms:,.1f} ms"
+    if total_ms < 1000.0:
+        return f"{total_ms:,.0f} ms"
+    return f"{total_ms / 1000.0:,.2f} s"
+
+
+class RefreshTimings:
+    """Wall-clock timings for the phases of one summary refresh.
+
+    Phases are recorded with mark(), which closes the phase that started at the
+    previous mark. That keeps the instrumentation to one line per boundary
+    rather than a block indent around each phase, and it is what lets the status
+    bar say which phase a slow refresh spent itself on.
+    """
+
+    def __init__(self, dialog, trigger):
+        self.dialog = dialog
+        self.trigger = trigger
+        self.phases = []
+        self._start = time.perf_counter()
+        self._last = self._start
+
+    def mark(self, name):
+        """Close the phase that began at the previous mark."""
+        now = time.perf_counter()
+        self.phases.append((name, (now - self._last) * 1000.0))
+        self._last = now
+
+    @property
+    def total_ms(self):
+        return (time.perf_counter() - self._start) * 1000.0
+
+    def slowest(self):
+        """(name, ms) of the most expensive phase, or None when nothing ran."""
+        return max(self.phases, key=lambda phase: phase[1]) if self.phases else None
 
 
 def parse_frame_path(path: str) -> Tuple[str, Optional[int]]:
