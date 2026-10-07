@@ -1,5 +1,3 @@
-import warnings
-
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
                              QLineEdit, QComboBox, QPushButton, QMessageBox, QSpinBox,
                              QDoubleSpinBox, QCheckBox, QPlainTextEdit, QLabel, QWidget)
@@ -8,8 +6,6 @@ from coralnet_toolbox.MetaData.QtMetaDataSchema import FIELD_TYPES
 from coralnet_toolbox.MetaData.QtMetaDataSchema import MetaDataField
 
 from coralnet_toolbox.Icons import get_window_icon
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

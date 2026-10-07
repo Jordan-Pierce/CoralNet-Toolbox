@@ -1,5 +1,3 @@
-import warnings
-
 import ujson as json
 import os
 import pickle
@@ -18,7 +16,47 @@ from coralnet_toolbox.Annotations.QtMaskAnnotation import MaskAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Functions
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def write_project_file(file_path, project_data, binary):
+    """Write a project to a temporary file beside file_path, then swap it in.
+
+    Writing straight over file_path would leave a truncated project behind if
+    the dump failed partway (a value that will not serialize, a full disk) or
+    the process died, and the last good copy would already be gone. os.replace
+    is atomic within a volume, so file_path always holds either the previous
+    project or the complete new one.
+
+    Args:
+        file_path (str): Destination project file.
+        project_data (dict): Project contents.
+        binary (bool): Pickle if True, otherwise JSON.
+    """
+    temp_path = f"{file_path}.tmp"
+    try:
+        if binary:
+            with open(temp_path, 'wb') as file:
+                pickle.dump(project_data, file, protocol=pickle.HIGHEST_PROTOCOL)
+                file.flush()
+                os.fsync(file.fileno())
+        else:
+            with open(temp_path, 'w', encoding='utf-8') as file:
+                json.dump(project_data, file, indent=4)
+                file.flush()
+                os.fsync(file.fileno())
+        os.replace(temp_path, file_path)
+    except BaseException:
+        # The previous project is untouched; only the partial copy goes
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
+        raise
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -120,12 +158,7 @@ class SaveProject(QDialog):
                 ext = '.bin'
 
             # Write binary if .bin, otherwise write JSON
-            if ext.lower() == '.bin':
-                with open(file_path, 'wb') as file:
-                    pickle.dump(project_data, file, protocol=pickle.HIGHEST_PROTOCOL)
-            else:
-                with open(file_path, 'w') as file:
-                    json.dump(project_data, file, indent=4)
+            write_project_file(file_path, project_data, binary=ext.lower() == '.bin')
 
             # Update current project path
             self.current_project_path = file_path

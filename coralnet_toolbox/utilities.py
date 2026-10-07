@@ -1,12 +1,9 @@
-import warnings
-
-
 import os
 import gc
 import math
 import errno
 import sys
-import requests
+import threading
 import traceback
 from functools import lru_cache
 
@@ -22,10 +19,6 @@ from shapely.geometry import Polygon
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QImage
 from PyQt5.QtWidgets import QMessageBox, QApplication, QPushButton
-
-from coralnet_toolbox.QtProgressBar import ProgressBar
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -662,63 +655,103 @@ def work_area_to_numpy(rasterio_src, work_area):
     )
 
     try:
-        # Check for single-band image with colormap
-        has_colormap = False
-        if rasterio_src.count == 1:
-            try:
-                has_colormap = rasterio_src.colormap(1) is not None
-            except ValueError:
-                has_colormap = False
-
-        if rasterio_src.count == 1 and has_colormap:
-            # Read the single band
-            image = rasterio_src.read(1, window=window)
-            # Get the colormap
-            colormap = rasterio_src.colormap(1)
-
-            # Create a lookup table for the colormap
-            max_idx = max(colormap.keys()) + 1
-            lut = np.zeros((max_idx, 3), dtype=np.uint8)
-
-            # Fill the lookup table with RGB values
-            for idx, color in colormap.items():
-                if idx < max_idx:  # Safety check
-                    lut[idx] = [color[0], color[1], color[2]]  # Ignore alpha
-
-            # Clip image indices to valid range for the LUT
-            image_indices = np.clip(image, 0, max_idx - 1).astype(np.uint8)
-
-            # Use the image as indices into the lookup table
-            rgb_image = lut[image_indices]
-
-            # Use the colorized RGB version of the image
-            image = rgb_image
-
-        elif rasterio_src.count < 3:
-            # Grayscale image without colormap
-            image = rasterio_src.read(1, window=window)
-
-            # Convert to 3-channel grayscale image
-            image = np.stack([image] * 3, axis=-1)
-
-        else:
-            # Read RGB bands
-            image = rasterio_src.read([1, 2, 3], window=window)
-
-            # Transpose to height, width, channels format
-            image = np.transpose(image, (1, 2, 0))
-
-        # Convert to uint8 if not already
-        if image.dtype != np.uint8:
-            if image.max() > 0:  # Avoid division by zero
-                image = image.astype(float) * (255.0 / image.max())
-            image = image.astype(np.uint8)
-
-        return image
+        return read_window_rgb(rasterio_src, window)
 
     except Exception as e:
         traceback.print_exc()
         return None
+
+
+def _has_colormap(rasterio_src):
+    """True for a single-band raster carrying a colormap."""
+    if rasterio_src.count != 1:
+        return False
+    try:
+        return rasterio_src.colormap(1) is not None
+    except ValueError:
+        return False
+
+
+def read_window_rgb(rasterio_src, window, max_value=None):
+    """
+    Read one window of a raster as an (h, w, 3) uint8 RGB array.
+
+    Colormaps are applied, and grayscale is repeated into three channels, the
+    same way the image display converts pixels.
+
+    Data that is not uint8 is scaled into 0-255 by dividing by `max_value`.
+    Without one, each window is divided by its own maximum, which is what
+    work_area_to_numpy has always done. That gives every window of a 16-bit
+    raster a different brightness stretch, so callers cutting one raster into
+    many images should pass raster_display_max(src) to scale them all alike.
+
+    Args:
+        rasterio_src: open rasterio dataset.
+        window: rasterio Window to read.
+        max_value (float, optional): value that maps to 255 for non-uint8 data.
+
+    Returns:
+        numpy.ndarray: (h, w, 3) uint8 RGB.
+    """
+    if _has_colormap(rasterio_src):
+        image = rasterio_src.read(1, window=window)
+        colormap = rasterio_src.colormap(1)
+
+        # Lookup table from colormap index to RGB
+        max_idx = max(colormap.keys()) + 1
+        lut = np.zeros((max_idx, 3), dtype=np.uint8)
+        for idx, color in colormap.items():
+            if idx < max_idx:  # Safety check
+                lut[idx] = [color[0], color[1], color[2]]  # Ignore alpha
+
+        # Clip image indices to valid range for the LUT, then colorize
+        image_indices = np.clip(image, 0, max_idx - 1).astype(np.uint8)
+        image = lut[image_indices]
+
+    elif rasterio_src.count < 3:
+        # Grayscale image without colormap, as 3 channels
+        image = rasterio_src.read(1, window=window)
+        image = np.stack([image] * 3, axis=-1)
+
+    else:
+        # RGB bands, as height, width, channels
+        image = rasterio_src.read([1, 2, 3], window=window)
+        image = np.transpose(image, (1, 2, 0))
+
+    # Convert to uint8 if not already
+    if image.dtype != np.uint8:
+        if max_value:
+            image = np.clip(image.astype(float) * (255.0 / max_value), 0, 255)
+        elif image.max() > 0:  # Avoid division by zero
+            image = image.astype(float) * (255.0 / image.max())
+        image = image.astype(np.uint8)
+
+    return image
+
+
+def raster_display_max(rasterio_src):
+    """
+    Largest pixel value over the bands read_window_rgb uses, for scaling a whole raster alike.
+
+    The full-resolution display divides by the whole image's maximum, so
+    passing this to read_window_rgb gives windows the brightness the image
+    shows on screen. Read block by block, so memory stays bounded on large
+    orthomosaics.
+
+    Returns:
+        float or None: None when no scaling applies (uint8 data, or a colormap).
+    """
+    if _has_colormap(rasterio_src):
+        return None
+
+    bands = [1] if rasterio_src.count < 3 else [1, 2, 3]
+    if all(rasterio_src.dtypes[band - 1] == 'uint8' for band in bands):
+        return None
+
+    max_value = 0
+    for _, block in rasterio_src.block_windows(1):
+        max_value = max(max_value, float(rasterio_src.read(bands, window=block).max()))
+    return max_value or None
 
 
 def get_view_scale(transform):
@@ -1500,50 +1533,6 @@ def polygonize_mask_with_holes(mask_tensor, epsilon=1.0):
     return exterior, holes
 
 
-def attempt_download_asset(app, asset_name, asset_url):
-    """
-    Attempt to download an asset from the given URL.
-
-    :param app:
-    :param asset_name:
-    :param asset_url:
-    :return:
-    """
-    # Create a progress dialog
-    progress_dialog = ProgressBar(app, title=f"Downloading {asset_name}")
-
-    try:
-        # Get the asset name
-        asset_name = os.path.basename(asset_name)
-        asset_path = os.path.join(os.getcwd(), asset_name)
-
-        if os.path.exists(asset_path):
-            return
-
-        # Download the asset
-        response = requests.get(asset_url, stream=True)
-        total_size = int(response.headers.get('content-length', 0))
-        block_size = 1024  # 1 Kibibyte
-
-        # Initialize the progress bar
-        progress_dialog.start_progress(total_size // block_size)
-        progress_dialog.show()
-
-        with open(asset_path, 'wb') as f:
-            for data in response.iter_content(block_size):
-                if progress_dialog.wasCanceled():
-                    raise Exception("Download canceled by user")
-                f.write(data)
-                progress_dialog.update_progress()
-
-    except Exception as e:
-        QMessageBox.critical(app, "Error", f"Failed to download {asset_name}.\n{e}")
-
-    # Close the progress dialog
-    progress_dialog.set_value(progress_dialog.max_value)
-    progress_dialog.close()
-    
-
 def console_user(error_msg, parent=None):
     """
     Display an error message to the user via both terminal and GUI dialog.
@@ -1563,48 +1552,96 @@ def console_user(error_msg, parent=None):
     print(f"{url}")
 
 
+# Uncaught-exception reporting state; only ever touched on the GUI thread
+_exception_dialog_open = False
+_reported_exceptions = set()
+
+
 def except_hook(cls, exception, traceback_obj, main_window=None):
-    """Handle uncaught exceptions including Qt errors"""
+    """Report an uncaught exception and keep the application running.
+
+    Installed as sys.excepthook. PyQt hands an exception raised in a slot or an
+    event handler to this hook and then carries on with the event loop, so one
+    failed action no longer ends the session and takes unsaved annotations with
+    it. Whatever that action was doing may be left incomplete, which is why the
+    dialog offers to save.
+
+    An exception raised on a worker thread goes to the console only: Qt widgets
+    cannot be created off the GUI thread.
+
+    An exception that keeps recurring (one raised from a paint or mouse-move
+    handler fires on every event) gets a dialog the first time only. Repeats,
+    and anything raised while the dialog is open, go to the console and the
+    status bar, so the dialog cannot reopen in a loop.
+    """
+    global _exception_dialog_open
+
+    # Full traceback, chained causes included, to the console
+    sys.__excepthook__(cls, exception, traceback_obj)
+
+    app = QApplication.instance()
+    if app is None:
+        return
+
+    # Ctrl+C in the terminal, or sys.exit() inside a slot, still means quit
+    if issubclass(cls, (KeyboardInterrupt, SystemExit)):
+        app.quit()
+        return
+
+    if threading.current_thread() is not threading.main_thread():
+        return
+
+    frames = traceback.extract_tb(traceback_obj)
+    origin = (frames[-1].filename, frames[-1].lineno) if frames else None
+    key = (cls.__name__, origin)
+    if _exception_dialog_open or key in _reported_exceptions:
+        status_bar = getattr(main_window, 'status_bar', None)
+        if status_bar is not None:
+            status_bar.showMessage(f"Error repeated: {cls.__name__}: {exception} (details in the console)", 10000)
+        return
+    _reported_exceptions.add(key)
+
     error_msg = f"{cls.__name__}: {exception}\n\n"
     error_msg += ''.join(traceback.format_tb(traceback_obj))
 
-    # Log the error
-    print(error_msg)
+    msg_box = QMessageBox()
+    msg_box.setWindowTitle("CoralNet-Toolbox Error")
+    msg_box.setIcon(QMessageBox.Critical)
+    msg_box.setText(
+        "An unexpected error occurred. The toolbox is still running, but the action that failed "
+        "may have been left incomplete.\n\n"
+        "Save your project (to a new file if you are unsure of its state), and please create a "
+        "ticket with the error below so we can solve this problem:\n"
+        "https://github.com/Jordan-Pierce/CoralNet-Toolbox/issues"
+    )
+    msg_box.setDetailedText(error_msg)
 
-    # If Qt is initialized, show error in GUI
-    if QApplication.instance() is not None:
-        msg_box = QMessageBox()
-        msg_box.setWindowTitle("CoralNet-Toolbox Error")
-        msg_box.setIcon(QMessageBox.Critical)
-        msg_box.setText(
-            "An unexpected error occurred! Please copy the error below and create a ticket so we can solve this problem. If possible, save your project before closing the application."
-        )
-        msg_box.setDetailedText(error_msg)
+    # Add Save Project option if main_window exists
+    save_button = None
+    if main_window is not None and hasattr(main_window, 'open_save_project_dialog'):
+        save_button = QPushButton("Save Project")
+        msg_box.addButton(save_button, QMessageBox.AcceptRole)
 
-        # Add Save Project option if main_window exists
-        save_button = None
-        if main_window is not None and hasattr(main_window, 'open_save_project_dialog'):
-            save_button = QPushButton("Save Project")
-            msg_box.addButton(save_button, QMessageBox.AcceptRole)
+    quit_button = msg_box.addButton("Quit", QMessageBox.DestructiveRole)
+    continue_button = msg_box.addButton("Continue", QMessageBox.RejectRole)
+    msg_box.setDefaultButton(continue_button)
 
-        msg_box.addButton(QMessageBox.Ok)
+    _exception_dialog_open = True
+    try:
+        msg_box.exec_()
+    finally:
+        _exception_dialog_open = False
 
-        # Make the dialog bigger
-        msg_box.resize(600, 1000)
-
-        result = msg_box.exec_()
-
-        # Handle save action if requested
-        if save_button and msg_box.clickedButton() == save_button:
-            try:
-                main_window.open_save_project_dialog()
-            except Exception as save_error:
-                QMessageBox.warning(None,
-                                    "Save Error",
-                                    f"Could not save project: {save_error}")
-
-    sys.__excepthook__(cls, exception, traceback_obj)
-    sys.exit(1)
+    clicked = msg_box.clickedButton()
+    if save_button is not None and clicked is save_button:
+        try:
+            main_window.open_save_project_dialog()
+        except Exception as save_error:
+            QMessageBox.warning(None,
+                                "Save Error",
+                                f"Could not save project: {save_error}")
+    elif clicked is quit_button:
+        app.quit()
 
 
 def convert_to_ultralytics(ultralytics_model, weights, output_path="converted_model.pt"):

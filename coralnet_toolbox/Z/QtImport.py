@@ -16,9 +16,6 @@ from coralnet_toolbox.utilities import (
     get_standard_z_units
 )
 
-import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Constants

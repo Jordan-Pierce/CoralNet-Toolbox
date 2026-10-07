@@ -1,5 +1,3 @@
-import warnings
-
 import os
 import random
 from collections import Counter
@@ -34,9 +32,7 @@ from coralnet_toolbox.MachineLearning.TrainModel.QtBase import (
     open_train_model_dialog_later,
     prompt_train_model,
 )
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
+from coralnet_toolbox.Rasters.extracted_images import has_active_set
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -151,6 +147,7 @@ class Base(QDialog):
         super().showEvent(event)
         self.update_annotation_type_checkboxes()
         self.update_video_options()
+        self.update_extracted_note()
         # After update_video_options: the Video Frames group changes the height
         self.fit_to_options()
         self.populate_class_filter_list()
@@ -391,10 +388,37 @@ class Base(QDialog):
             self.export_unlabeled_video_frames_checkbox.setChecked(False)
 
     def get_selected_image_paths(self):
-        """Return the currently selected image paths from the project or the filtered table."""
+        """Return the currently selected image paths from the project or the filtered table.
+
+        A raster whose work areas are extracted is left out: its extracted
+        images carry the same pixels, and exporting both counts them twice.
+        """
+        paths, _ = self._split_extracted_parents(self._candidate_image_paths())
+        return paths
+
+    def _candidate_image_paths(self):
         if self.filtered_images_radio.isChecked():
             return list(self.image_window.table_model.filtered_paths)
         return list(self.image_window.raster_manager.image_paths)
+
+    def _split_extracted_parents(self, paths):
+        """(paths to export, paths left out because their work areas are extracted)."""
+        raster_manager = self.image_window.raster_manager
+        kept, left_out = [], []
+        for path in paths:
+            raster = raster_manager.get_raster(path)
+            (left_out if raster is not None and has_active_set(raster) else kept).append(path)
+        return kept, left_out
+
+    def update_extracted_note(self):
+        """Say how many rasters are left out because their work areas are extracted."""
+        _, left_out = self._split_extracted_parents(self._candidate_image_paths())
+        if left_out:
+            count = len(left_out)
+            self.extracted_note_label.setText(
+                f"{count} raster{'s' if count != 1 else ''} left out: "
+                f"{'its' if count == 1 else 'their'} work areas are extracted.")
+        self.extracted_note_label.setVisible(bool(left_out))
 
     def get_selected_source_paths(self):
         """Return the selected paths normalized to their underlying source path."""
@@ -454,6 +478,11 @@ class Base(QDialog):
         # Label for Ready Status
         self.ready_label = QLabel("❌ Not Ready")
         layout.addWidget(self.ready_label)
+
+        # Rasters left out because their work areas are extracted
+        self.extracted_note_label = QLabel()
+        self.extracted_note_label.setVisible(False)
+        layout.addWidget(self.extracted_note_label)
 
         # Add a spacer to push image counts to the right
         layout.addStretch() 
@@ -899,6 +928,7 @@ class Base(QDialog):
         """
         Update the table based on the selected image option.
         """
+        self.update_extracted_note()
         self.selected_annotations = self.filter_annotations()
         self.update_summary_statistics()
 

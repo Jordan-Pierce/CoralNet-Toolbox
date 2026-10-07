@@ -27,7 +27,6 @@ classification and patch replacement live in ``LabelPropagation`` so batch
 densify can share them.
 """
 
-import warnings
 
 import numpy as np
 
@@ -54,8 +53,7 @@ from coralnet_toolbox.WorkArea import WorkArea
 
 from coralnet_toolbox.utilities import work_area_to_numpy
 from coralnet_toolbox.utilities import polygonize_mask_with_holes
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
+from coralnet_toolbox.paths import feature_cache_path
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -515,7 +513,6 @@ class FeatureSelectTool(Tool):
             if raster is None:
                 return
             from coralnet_toolbox.Features.FeatureMapCodec import save_feature_map
-            import os
 
             stride = extractor.patch_stride or 16
             dim = extractor.out_channels
@@ -543,10 +540,8 @@ class FeatureSelectTool(Tool):
             resampled = (resampled / norms).astype(np.float16)
             full[gy0:gy1, gx0:gx1, :] = resampled
 
-            # Persist the feature map under a project-local cache beside the image.
-            cache_dir = os.path.join(os.path.dirname(raster.image_path), ".cache", "features")
-            basename = os.path.splitext(os.path.basename(raster.image_path))[0]
-            npy_path = os.path.join(cache_dir, f"{basename}_features.npy")
+            # Persist the feature map in the toolbox's feature cache.
+            npy_path = feature_cache_path(raster.image_path)
             save_feature_map(npy_path, full, model_id=extractor.model_id,
                              stride=stride, dim=dim,
                              upsampler=getattr(extractor, "upsample_descriptor", None))

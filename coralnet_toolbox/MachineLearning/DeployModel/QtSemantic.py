@@ -1,5 +1,3 @@
-import warnings
-
 import gc
 import os
 import time
@@ -23,9 +21,6 @@ from coralnet_toolbox.Common import raster_metrics
 from coralnet_toolbox.Common import resolve_area_bounds_px
 
 from coralnet_toolbox.QtActions import AddAnnotationsAction, CompoundAction, MaskEditAction
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

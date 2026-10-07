@@ -20,8 +20,6 @@ from PyQt5.QtGui import QPixmap, QColor, QImage, QPainter, QBrush, QPolygonF, qR
 from coralnet_toolbox.Annotations.QtAnnotation import Annotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Functions
@@ -1826,8 +1824,6 @@ class MaskAnnotation(Annotation):
         """
         if image_path is None:
             image_path = self.image_path
-        from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
-        from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 
         def _contour_to_points(contour_array):
             contour_array = np.asarray(contour_array)
@@ -1838,59 +1834,12 @@ class MaskAnnotation(Annotation):
             # costs several times more at these vertex counts.
             return [QPointF(x, y) for x, y in contour_array.reshape(-1, 2).tolist()]
 
-        def _is_axis_aligned_quad(points, tolerance=1.0):
-            """True for four points tracing an axis-aligned rectangle.
-
-            Edges have to alternate horizontal and vertical. Checking only that
-            each edge is one or the other passed a narrow diamond -- every edge
-            is within a pixel of vertical -- and replaced it with its bounding
-            box, a rectangle twice its area.
-            """
-            if len(points) != 4:
-                return False
-            coordinates = [(point.x(), point.y()) for point in points]
-            horizontal = []
-            for index in range(4):
-                x1, y1 = coordinates[index]
-                x2, y2 = coordinates[(index + 1) % 4]
-                dx, dy = abs(x2 - x1), abs(y2 - y1)
-                if dy <= tolerance and dy < dx:
-                    horizontal.append(True)
-                elif dx <= tolerance and dx < dy:
-                    horizontal.append(False)
-                else:
-                    return False  # slanted, or a diagonal pixel step
-            return all(horizontal[i] != horizontal[(i + 1) % 4] for i in range(4))
-
         def _build_annotation(label, exterior_points, hole_points_list):
-            if len(exterior_points) == 4 and not hole_points_list and _is_axis_aligned_quad(exterior_points):
-                min_x = min(point.x() for point in exterior_points)
-                min_y = min(point.y() for point in exterior_points)
-                max_x = max(point.x() for point in exterior_points)
-                max_y = max(point.y() for point in exterior_points)
-                width = abs(max_x - min_x)
-                height = abs(max_y - min_y)
-                center_xy = QPointF((min_x + max_x) / 2.0, (min_y + max_y) / 2.0)
-
-                if abs(width - height) <= 1.0:
-                    return PatchAnnotation(
-                        center_xy=center_xy,
-                        annotation_size=max(1, int(round(max(width, height)))),
-                        label=label,
-                        image_path=image_path,
-                        transparency=transparency,
-                        show_confidence=show_confidence,
-                    )
-
-                return RectangleAnnotation(
-                    top_left=QPointF(min_x, min_y),
-                    bottom_right=QPointF(max_x, max_y),
-                    label=label,
-                    image_path=image_path,
-                    transparency=transparency,
-                    show_confidence=show_confidence,
-                )
-
+            # Always a polygon. Turning axis-aligned four-point regions into
+            # rectangles (or patches, when square) could not tell a baked
+            # rectangle from a polygon that happened to have that shape, so a
+            # polygon came back as a rectangle, and then refused to combine with
+            # the polygons around it.
             return PolygonAnnotation(
                 points=exterior_points,
                 holes=hole_points_list,
@@ -1933,10 +1882,9 @@ class MaskAnnotation(Annotation):
                               split_stats_out: dict = None) -> list:
         """Convert all labeled regions in this mask into vector annotations.
 
-        Disconnected regions become separate annotations. Four-point, axis-aligned
-        square regions become PatchAnnotation objects; four-point, axis-aligned
-        non-squares become RectangleAnnotation objects; everything else becomes a
-        PolygonAnnotation.
+        Disconnected regions become separate annotations, and every one is a
+        PolygonAnnotation, whatever its shape: a baked rectangle or patch comes
+        back as a polygon.
 
         Holes (interior voids) are handled selectively: holes whose area in pixels
         is at least *min_hole_area* are preserved as interior rings in the resulting

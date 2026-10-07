@@ -1,7 +1,3 @@
-import warnings
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
 import os
 import random
 import uuid

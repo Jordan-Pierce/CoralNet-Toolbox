@@ -1,5 +1,3 @@
-import warnings
-
 from PyQt5.QtCore import Qt, QLineF
 from PyQt5.QtGui import QMouseEvent, QPen, QColor
 from PyQt5.QtWidgets import (QDialog, QWidget, QVBoxLayout, QFormLayout, 
@@ -9,8 +7,6 @@ from PyQt5.QtWidgets import (QDialog, QWidget, QVBoxLayout, QFormLayout,
 
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.Icons import get_icon, get_window_icon
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

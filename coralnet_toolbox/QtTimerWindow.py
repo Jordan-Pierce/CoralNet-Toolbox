@@ -1,4 +1,3 @@
-import warnings
 import time
 
 from datetime import datetime
@@ -9,8 +8,6 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushBut
                              QMenu, QAction)
 
 from coralnet_toolbox import theme as app_theme
-
-warnings.filterwarnings("ignore", category=DeprecationWarning) 
 
 
 # ----------------------------------------------------------------------------------------------------------------------

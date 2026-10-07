@@ -33,6 +33,56 @@ This guide provides instructions on how to use the application, including key fu
 - Useful for selective processing without importing entire video
 - Extracted frames are added to the project as regular images
 
+### Extracted Work Areas (Tiles)
+Split an orthomosaic or a large image into smaller images to annotate, then merge the annotations back onto the original:
+
+**1. Lay out the work areas**
+- Put work areas on the raster with **Utilities > Work Areas** (a tile grid) or the Work Area Tool (by hand)
+- For images you plan to merge back, use **Edge tiles: Smaller edge tiles** with no overlap, so every pixel is in exactly one image
+
+**2. Extract**
+- <kbd>Right-Click</kbd> the raster in the Rasters Window, then **Work Areas > Extract Work Areas...**
+  - Works on images and orthomosaics that have work areas, several highlighted rasters at once
+- **Output Folder**: Each raster's images go in a subfolder named after it, as `prefix_x_y_width_height`
+- **Format**: tif keeps the georeference of a georeferenced raster; png and jpg do not
+- **Skip Empty Tiles**: Leaves out work areas with no data, such as the blank corners of an orthomosaic, or that are a single flat color
+- **Include Annotations**: Copies the raster's annotations and mask onto the new images, clipped to each work area; the originals are not changed
+- **Extract**: Writes the images to disk only
+- **Extract and Import**: Also adds them to the project as regular images, linked to the raster they came from
+  - Each image gets a copy of the raster's scale, including one set with the Scale Tool, which takes precedence over the scale a GeoTIFF image would read from its own georeference
+  - Overlapping work areas give a warning first: merging back later will ask about annotations in the overlapping strips
+
+**3. Annotate**
+- Extracted images are regular images: annotate them, run inference on them, or use them in Active Learning and Export Dataset
+- While its images are in the project, the original is left out of Active Learning and Export Dataset, so the same pixels are not counted twice, and it cannot be extracted again
+- Hover over a row to see **Extracted: N images** (on the original) or **Extracted from** (on an extracted image)
+
+**4. Merge back**
+- <kbd>Right-Click</kbd> the original or any of its images, then **Work Areas > Merge Back...**; the whole set is merged at once
+- Each annotation is compared with how it was when it was extracted:
+  - Changed only on the images: the change is applied
+  - Changed only on the original: the original is kept
+  - Deleted on the images: it is deleted from the original
+  - Drawn new on an image: it is added to the original, alongside whatever it overlaps, unless it overlaps an annotation of the same label that was added to the original after extraction (then it is a conflict)
+  - Different labels are never treated as the same object: overlapping annotations of two labels are both brought in
+  - Pieces of one annotation cut by an image's edge are joined back together
+- **Masks** merge pixel by pixel the same way
+- **When both changed**: What to do where an annotation changed on both sides (edited on both, relabeled differently on two images, or one of the overlaps above), applied to all of them:
+  - **Keep new**: The images' version replaces the original's
+  - **Keep old**: The original's version stays
+  - **Keep both**: Both are kept
+  - **Merge**: Shapes with the same label are joined into one; different labels, and patches, are kept both
+  - Mask pixels changed on both sides take the images' class, unless you choose Keep old
+- **After merging**:
+  - **Remove images from project**: The images leave the project; their files stay in the output folder
+  - **Remove images and delete files**: Also deletes the images, their tile record and mask snapshots from disk (only files the extraction created); this cannot be undone
+  - **Keep images as ordinary images**: The images stay in the project, unlinked, with their annotations
+- Merging clears the undo history, and work areas drawn on the extracted images are not brought back
+
+**Other Work Areas actions**
+- **Highlight Extracted Images**: Highlights the set's images in the Rasters Window
+- **Unlink Extracted Images**: Keeps the images as ordinary images and releases the original, without merging anything
+
 ### Z-Channels (Depth Maps & DEMs)
 Z-Channels overlay depth or elevation data on top of images for spatial analysis:
 
@@ -328,6 +378,11 @@ All dock windows (Annotation Window, Labels Window, Rasters Window, Confidence W
 
 - **Work Areas**: Manage work areas for batch processing
   - Pre-compute and organize multiple work areas / tiles for selected images
+  - **Edge tiles**: How tiles meet the right and bottom edges of the usable area
+    - **Skip partial tiles**: Leave out tiles that would not fit whole
+    - **Shift inward (full coverage)**: Add full size tiles slid against the edge, overlapping their neighbors (the default)
+    - **Smaller edge tiles**: Cut the last column and row smaller, so tiles overlap only by the overlap you set; with no overlap, every pixel is in exactly one tile, which is what merging extracted images back needs
+  - Work areas can be saved as their own images with **Extract Work Areas** (see Extracted Work Areas)
   - Select images by highlighting them in the ImageWindow
 
 - **Morphological**: Whole-image annotation operations, also opened with <kbd>Ctrl</kbd> + <kbd>R</kbd> in Select tool
@@ -537,10 +592,21 @@ The Explorer is a dual-window system for browsing and analyzing annotations usin
 The gallery displays annotation crops as a scrollable grid of thumbnail images. It includes:
 
 **Filtering & Sorting**
-- **Image Filter**: Multi-select to show annotations from specific images
-- **Label Filter**: Multi-select by annotation label (e.g., coral, sand, rock)
-- **Annotation Type Filter**: Filter by Patch, Rectangle, Polygon, or MultiPolygon
-- **Apply Filter Button**: Explicitly apply current filter settings (gallery remains in placeholder until applied)
+- **Filter... Button**: Opens the filter dialog, one tab per filter: **Images**, **Labels**,
+  **Types** and **Status** (verified / unverified). Its tooltip lists what each filter is set to
+  - Every row starts selected, and only annotations in the selected rows pass: click,
+    <kbd>Ctrl</kbd> + click, <kbd>Shift</kbd> + click or drag to select, <kbd>Ctrl</kbd> +
+    <kbd>A</kbd> for every row shown. A tab with every row selected also lets through images or
+    labels added later
+  - Selected rows within a tab are OR'd; tabs are AND'd
+  - The **Annotations** column is how many annotations each row would match given the other
+    tabs; click a column header to sort by it. The footer shows the total match and how many
+    crops are still needed
+  - Search accepts `*` and `?` wildcards; <kbd>Enter</kbd> in the search box selects every row
+    shown, and rows selected under an earlier search stay selected
+  - **OK** (<kbd>Ctrl</kbd> + <kbd>Enter</kbd>) only sets the filter
+- **Apply Filter Button**: Shows the filter that is set (gallery remains in placeholder until applied).
+  It turns bold when the filter set differs from the one shown
 - **Clear Button**: Reset gallery and return to placeholder state
 
 **Sorting Options**
@@ -834,7 +900,7 @@ from **Utilities > Morphological**. Its **Overlaps** tab resolves overlapping po
   - Useful for converting mask-based predictions into editable vector form
   - Accessed via <kbd>Ctrl</kbd> + <kbd>R</kbd> in Select tool (opens a dialog)
   - Each connected mask region becomes a separate polygon annotation
-  - A region traced as an axis-aligned rectangle becomes a Rectangle annotation (a Patch if square); other 4-point shapes stay polygons
+  - Every region comes back as a polygon, whatever its shape: a baked rectangle or patch returns as a polygon
 
 ### Video Playback Controls
 When a video is loaded, additional playback controls appear:
@@ -990,8 +1056,16 @@ Multi-select filters and search bars to control which images are displayed:
 <kbd>Right-Click</kbd> on one or more highlighted rows to:
 - Check / uncheck highlighted rows
 - **Batch Inference**: Run inference using loaded models (opens Batch Inference Dialog)
-- **Import Z-channel**: Import Z-channel data for highlighted rows (opens Z-channel import dialog)
-- **Remove Z-channel**: Remove Z-channel data from highlighted rows
+- **Extract Frames**: Extract frames from a single highlighted video (opens Extract Frames dialog)
+- **Work Areas** (images and orthomosaics; see Extracted Work Areas):
+  - **Extract Work Areas**: Save each work area as its own image; shown greyed out with the reason, such as "no work areas" or "already extracted", when none of the highlighted rows can be extracted
+  - **Merge Back**: Bring a set of extracted images' annotations back onto the original, one set at a time
+  - **Highlight Extracted Images**: Highlight the images of the set
+  - **Unlink Extracted Images**: Release the original and keep the images as ordinary images
+- **Z-Channel** (not shown for videos):
+  - **Import**: Import Z-channel data for highlighted rows (opens Z-channel import dialog)
+  - **Remove**: Remove Z-channel data, shown when a highlighted row has one
+- **Features**: Remove dense feature maps, shown when a highlighted row has one
 - **Delete Annotations**: Remove all annotations from highlighted rows
 - **Delete Images**: Remove images and associated annotations from the project
 

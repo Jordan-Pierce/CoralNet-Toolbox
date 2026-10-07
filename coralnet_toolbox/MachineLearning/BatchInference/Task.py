@@ -424,15 +424,22 @@ class FeatureBatchInferenceTask(BatchInferenceTask):
         progress_bar.start_progress(len(self.image_paths))
 
         try:
-            import os
             import numpy as np
             from coralnet_toolbox.Features.FeatureMapCodec import save_feature_map
+            from coralnet_toolbox.paths import feature_cache_path
 
             for image_path in self.image_paths:
                 try:
                     raster = raster_manager.get_raster(image_path)
                     if raster is None:
                         progress_bar.update_progress()
+                        continue
+
+                    # A video's rasterio_src is a frame shim holding whichever frame
+                    # was shown last, so a map from it would describe one frame and
+                    # be stored as the whole video's. Skipped; the finally advances.
+                    if getattr(raster, 'raster_type', '') == 'VideoRaster':
+                        print(f"Feature extraction skipped for video: {image_path}")
                         continue
 
                     # Load image as RGB -- extract_dense takes `image_rgb`.
@@ -469,14 +476,8 @@ class FeatureBatchInferenceTask(BatchInferenceTask):
                         except Exception:
                             feature_vector = None
 
-                    # Save feature map to a per-image-directory cache.
-                    cache_dir = os.path.join(
-                        os.path.dirname(image_path), ".cache", "features"
-                    )
-                    os.makedirs(cache_dir, exist_ok=True)
-
-                    basename = os.path.splitext(os.path.basename(image_path))[0]
-                    npy_path = os.path.join(cache_dir, f"{basename}_features.npy")
+                    # Save feature map to the toolbox's feature cache.
+                    npy_path = feature_cache_path(image_path)
 
                     save_feature_map(
                         npy_path,

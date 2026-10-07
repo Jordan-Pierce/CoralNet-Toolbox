@@ -1,5 +1,3 @@
-import warnings
-
 import os
 import shutil
 import yaml
@@ -16,9 +14,6 @@ from coralnet_toolbox.MachineLearning.ImportDataset.QtBase import (
     _resolve_image_dir,
     _sidecar_dir_for,
 )
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

@@ -9,15 +9,12 @@ sorting helpers (formerly confidence_sorting.py).
 from __future__ import annotations
 
 import os
-import warnings
 
 import numpy as np
 
 from PyQt5.QtCore import Qt, QRectF
 from PyQt5.QtGui import QPen, QColor, QPainter, QBrush, QPixmap, QImage
 from PyQt5.QtWidgets import QGraphicsItem
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

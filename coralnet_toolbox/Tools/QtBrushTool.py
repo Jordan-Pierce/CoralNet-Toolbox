@@ -1,4 +1,3 @@
-import warnings
 import numpy as np
 
 from PyQt5.QtGui import QColor, QPen, QBrush, QPainterPath
@@ -8,7 +7,6 @@ from PyQt5.QtWidgets import QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPa
 from coralnet_toolbox.QtActions import MaskEditAction
 from coralnet_toolbox.Tools.QtTool import Tool
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Background Threading

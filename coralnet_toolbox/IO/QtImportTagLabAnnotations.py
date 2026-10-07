@@ -1,5 +1,3 @@
-import warnings
-
 import os
 import uuid
 import traceback
@@ -14,8 +12,6 @@ from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QInputDialo
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.QtProgressBar import ProgressBar
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

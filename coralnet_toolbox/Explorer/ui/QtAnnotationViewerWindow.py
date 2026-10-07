@@ -14,14 +14,15 @@ from PyQt5.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot, QEvent, QSignalBlocke
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QToolBar, QComboBox,
     QLabel, QPushButton, QApplication, QListView,
-    QHBoxLayout, QMessageBox
+    QHBoxLayout, QMessageBox, QDialog
 )
 
 from coralnet_toolbox import theme as app_theme
 
 from coralnet_toolbox.Explorer.core.QtDataItem import AnnotationDataItem
-from coralnet_toolbox.Explorer.ui.QtExplorerWidgets import MultiSelectCombo
-from coralnet_toolbox.Explorer.models.AnnotationListModel import AnnotationListModel 
+from coralnet_toolbox.Explorer.core.annotation_filters import FILTERS_BY_KEY, FilterState
+from coralnet_toolbox.Explorer.ui.QtFilterDialog import AnnotationFilterDialog
+from coralnet_toolbox.Explorer.models.AnnotationListModel import AnnotationListModel
 from coralnet_toolbox.Explorer.models.AnnotationListModel import AnnotationItemDelegate
 from coralnet_toolbox.Explorer.workers.QtCroppingWorker import CroppingWorker
 
@@ -114,6 +115,15 @@ class AnnotationViewerWindow(QWidget):
         # (the user must explicitly press "Apply Filter" to set this).
         self._filter_applied = False
 
+        # Filter state: `filter_state` is what the filter dialog (or its quick
+        # menu) last set, `applied_filter_state` is what the gallery shows.
+        # Apply Filter copies the first into the second.
+        self.filter_state = FilterState()
+        self.applied_filter_state = FilterState()
+        # Set when the user declines the large-crop confirmation, so
+        # apply_filters can keep the previously applied filter.
+        self._crop_batch_declined = False
+
         # Label-change coalescing: collect changed IDs during the current event-loop
         # tick, then flush once via _flush_label_change_update().
         self._pending_label_changes: set = set()
@@ -188,66 +198,23 @@ class AnnotationViewerWindow(QWidget):
 
         toolbar.addSeparator()
 
-        # Image filter - multi-select combo
-        image_label = QLabel("Images:")
-        toolbar.addWidget(image_label)
-
-        self.image_filter_combo = MultiSelectCombo()
-        self.image_filter_combo.setFixedWidth(80)
-        self.image_filter_combo.setToolTip("Filter by image (multi-select)")
-        self.image_filter_combo.selection_changed.connect(lambda v: None)
-        toolbar.addWidget(self.image_filter_combo)
-        
-        # Label filter - searchable combo box
-        label_label = QLabel("Labels:")
-        toolbar.addWidget(label_label)
-
-        self.label_filter_combo = MultiSelectCombo()
-        self.label_filter_combo.setFixedWidth(80)
-        self.label_filter_combo.setToolTip("Filter by label (multi-select)")
-        toolbar.addWidget(self.label_filter_combo)
-
-        # Type filter - searchable combo box
-        type_label = QLabel("Annotations:")
-        toolbar.addWidget(type_label)
-
-        self.type_filter_combo = MultiSelectCombo()
-        self.type_filter_combo.setFixedWidth(80)
-        # Populate type filter with fixed options
-        type_opts = [
-            ("Patch", "PatchAnnotation"),
-            ("Rectangle", "RectangleAnnotation"),
-            ("Polygon", "PolygonAnnotation"),
-            ("MultiPolygon", "MultiPolygonAnnotation"),
-        ]
-        self.type_filter_combo.set_options(type_opts)
-        toolbar.addWidget(self.type_filter_combo)
-
-        # Verified status filter - 'All' covers both. Values match the display
-        # text because the combo's button shows the selected values.
-        status_label = QLabel("Status:")
-        toolbar.addWidget(status_label)
-
-        self.verified_filter_combo = MultiSelectCombo()
-        self.verified_filter_combo.setFixedWidth(80)
-        self.verified_filter_combo.setToolTip("Filter by verified status (multi-select)")
-        self.verified_filter_combo.set_options([
-            ("Verified", "Verified"),
-            ("Unverified", "Unverified"),
-        ])
-        toolbar.addWidget(self.verified_filter_combo)
+        # Filter: the button opens the filter dialog (one tab per filter). The
+        # dialog only sets the filter; Apply Filter shows it.
+        # Its tooltip lists what each filter is set to.
+        self.filter_button = QPushButton("Filter...")
+        self.filter_button.clicked.connect(self.open_filter_dialog)
+        toolbar.addWidget(self.filter_button)
 
         toolbar.addSeparator()
 
-        # Initialize filter options now that the controls exist
-        self._populate_filter_combos()
-        
+        self._update_filter_controls()
+
         return toolbar
     
     def create_bottom_toolbar(self) -> QToolBar:
         """
-        Create the bottom toolbar with filter controls using searchable combo boxes.
-        
+        Create the bottom toolbar with the Clear and Apply Filter buttons.
+
         Returns:
             QToolBar: Configured filter toolbar for dock integration.
         """
@@ -260,57 +227,84 @@ class AnnotationViewerWindow(QWidget):
         self.clear_button.setToolTip("Clear gallery and reset view")
         self.clear_button.clicked.connect(self.clear)
         toolbar.addWidget(self.clear_button)
-        
+
         # Apply button
         self.apply_filter_button = QPushButton("Apply Filter")
         self.apply_filter_button.setToolTip("Apply current filter settings")
         self.apply_filter_button.clicked.connect(self.apply_filters)
         toolbar.addWidget(self.apply_filter_button)
-        
+
+        self._update_filter_controls()
+
         return toolbar
-    
-    def _populate_filter_combos(self):
-        """Populate all filter combo boxes with current options."""
-        self._populate_image_filter()
-        self._populate_label_filter()
-    
-    def _populate_image_filter(self):
-        """Populate image filter combo with current images."""
-        opts = []
-        image_window = getattr(self.main_window, 'image_window', None)
-        if image_window:
-            raster_manager = getattr(image_window, 'raster_manager', None)
-            if raster_manager:
-                for path in raster_manager.image_paths:
-                    image_name = os.path.basename(path)
-                    opts.append((image_name, image_name))
-        
+
+    # -------------------------------------------------------------------------
+    # Filter state
+    # -------------------------------------------------------------------------
+
+    def _show_status(self, message, timeout=5000):
         try:
-            # Set options (MultiSelectCombo expects list of tuples)
-            self.image_filter_combo.set_options(opts)
-            current_image_path = getattr(self.annotation_window, 'current_image_path', None)
-            current_image_name = os.path.basename(current_image_path) if current_image_path else None
-            self.image_filter_combo.set_highlighted_value(current_image_name)
+            self.main_window.statusBar().showMessage(message, timeout)
         except Exception:
             pass
-    
-    def _populate_label_filter(self):
-        """Populate label filter combo with current labels."""
-        opts = []
-        label_window = getattr(self.main_window, 'label_window', None)
-        if label_window:
-            labels = getattr(label_window, 'labels', [])
-            for label in labels:
-                if hasattr(label, 'short_label_code'):
-                    opts.append((label.short_label_code, label.short_label_code))
-        try:
-            self.label_filter_combo.set_options(opts)
-        except Exception:
-            pass
-    
+
+    def open_filter_dialog(self):
+        """Open the filter dialog. OK sets the filter; Apply Filter shows it."""
+        annotations_dict = getattr(self.annotation_window, 'annotations_dict', None) or {}
+        dialog = AnnotationFilterDialog(
+            self.main_window,
+            list(annotations_dict.values()),
+            self.filter_state,
+            current_image_path=getattr(self.annotation_window, 'current_image_path', None),
+            uncroppable=self._uncroppable,
+            crop_threshold=self.CROP_CONFIRM_THRESHOLD,
+            parent=self,
+        )
+        if dialog.exec_() == QDialog.Accepted:
+            self.filter_state = dialog.result_state()
+            self._update_filter_controls()
+
+    def _update_filter_controls(self):
+        """Refresh the Filter button's tooltip and the Apply Filter cue."""
+        state = self.filter_state
+        # The dialog only sets the filter, so say when the gallery is showing
+        # something other than what is set.
+        pending = state != self.applied_filter_state
+
+        if hasattr(self, 'filter_button'):
+            tooltip = "Choose which annotations the gallery shows.\n\n" + state.describe(self.main_window)
+            if pending:
+                tooltip += "\n\nNot shown yet: press Apply Filter."
+            self.filter_button.setToolTip(tooltip)
+
+        if hasattr(self, 'apply_filter_button'):
+            button = self.apply_filter_button
+            font = button.font()
+            font.setBold(pending)
+            button.setFont(font)
+            button.setToolTip("The filter changed since it was last applied. Press to show it."
+                              if pending else "Apply current filter settings")
+
     def refresh_filter_options(self):
-        """Refresh filter options based on current state."""
-        self._populate_filter_combos()
+        """Drop filter choices that no longer exist (a deleted label, a removed image).
+
+        Only the filter that is set is pruned; the applied one is left alone so
+        the gallery does not quietly widen, and the Apply Filter cue shows the
+        difference instead. A prune that would leave nothing clears that
+        filter, as the old combo boxes fell back to 'All'.
+        """
+        for key in ('image', 'label'):
+            if not self.filter_state.is_active(key):
+                continue
+            try:
+                available = {option.value for option in FILTERS_BY_KEY[key].options(self.main_window)}
+            except Exception:
+                continue
+            # An empty list means the project is still loading, not that every
+            # image or label is gone.
+            if available:
+                self.filter_state.prune(key, available)
+        self._update_filter_controls()
 
     def _set_busy_cursor(self):
         """Show the application wait cursor, guarding against unbalanced pushes.
@@ -332,17 +326,28 @@ class AnnotationViewerWindow(QWidget):
             QApplication.restoreOverrideCursor()
 
     def apply_filters(self):
-        """Apply the current UI filters and populate the gallery.
+        """Apply the filter that is set and populate the gallery.
 
         The user must explicitly invoke this; until then the gallery remains
-        in the placeholder state and no widgets/crops are created.
+        in the placeholder state and no widgets/crops are created. If the user
+        declines the large-crop confirmation the gallery keeps showing the
+        previous filter, so that filter stays the applied one.
         """
+        previous_state = self.applied_filter_state
+        previously_applied = self._filter_applied
         try:
+            self.applied_filter_state = self.filter_state.copy()
             self._filter_applied = True
+            self._crop_batch_declined = False
             self.refresh_annotations()
+            if self._crop_batch_declined:
+                self.applied_filter_state = previous_state
+                self._filter_applied = previously_applied
         except Exception:
             pass
-    
+        finally:
+            self._update_filter_controls()
+
     @pyqtSlot(str)
     def on_image_loaded(self, image_path):
         """
@@ -354,31 +359,29 @@ class AnnotationViewerWindow(QWidget):
         # If filters are not currently applied (viewer in placeholder state),
         # do not auto-populate when the image changes. If the gallery was
         # previously populated, clear it so it reverts to placeholder state.
+        self.refresh_filter_options()
         if not getattr(self, '_filter_applied', False):
-            # Still refresh filter combos so the dropdowns reflect the new image
-            self._populate_filter_combos()
             return
 
-        # Remember current filter selection before refreshing
-        current_selection = None
-        if hasattr(self, 'image_filter_combo'):
-            try:
-                current_selection = self.image_filter_combo.selected_values()
-            except Exception:
-                try:
-                    current_selection = self.image_filter_combo.currentData()
-                except Exception:
-                    current_selection = None
+        # A gallery narrowed to particular images is cleared when an image
+        # outside them opens, so the user can re-apply if needed. One of its
+        # own images (Ctrl+Right-click always lands on one) leaves it alone.
+        if image_path and not self.is_image_in_applied_filter(image_path):
+            self.clear()
 
-        # Refresh filters to include any new images
-        self._populate_filter_combos()
+    def is_image_in_applied_filter(self, image_path):
+        """True when the applied image filter lets `image_path` through.
 
-        # If a specific image was selected previously, preserve selection if possible
-        if current_selection and image_path:
-            # For MultiSelectCombo we won't try to programmatically reselect by name
-            # Just clear the gallery so the user can re-apply if needed
-            if getattr(self, '_filter_applied', False):
-                self.clear()
+        Video annotations carry frame paths ('clip.mp4::frame_N') while the
+        Image window opens the video itself, so any frame of it counts.
+        """
+        spec = self.applied_filter_state.get('image')
+        if spec is None:
+            return True
+        if image_path in spec:
+            return True
+        prefix = f"{image_path}::frame_"
+        return any(value.startswith(prefix) for value in spec)
     
     # -------------------------------------------------------------------------
     # UI Setup
@@ -670,44 +673,17 @@ class AnnotationViewerWindow(QWidget):
         if not getattr(self, '_filter_applied', False):
             return False
 
-        # Get filter selections
-        selected_images = self._get_selected_images()
-        selected_types = self._get_selected_types()
-        selected_labels = self._get_selected_labels()
-        selected_verified = self._get_selected_verified()
-
         # Get annotations from AnnotationWindow
         if not hasattr(self.annotation_window, 'annotations_dict'):
             self.all_data_items = []
             self._update_annotations_display([])
             return False
-            
-        # Filter annotations
-        filtered_annotations = []
-        for ann in self.annotation_window.annotations_dict.values():
-            image_name = os.path.basename(ann.image_path)
-            type_name = type(ann).__name__
-            label_code = ann.label.short_label_code
-            
-            # Check image filter
-            if selected_images and image_name not in selected_images:
-                continue
-            
-            # Check type filter
-            if selected_types and type_name not in selected_types:
-                continue
-            
-            # Check label filter
-            if selected_labels and label_code not in selected_labels:
-                continue
 
-            # Check verified status filter
-            status = "Verified" if ann.verified else "Unverified"
-            if selected_verified and status not in selected_verified:
-                continue
+        # Filter annotations by the applied filter
+        matches = self.applied_filter_state.matches
+        filtered_annotations = [ann for ann in self.annotation_window.annotations_dict.values()
+                                if matches(ann)]
 
-            filtered_annotations.append(ann)
-        
         # Ensure cropped images are available. If any are missing, run
         # cropping in a background worker and show a modal ProgressBar.
         anns_needing_crops = [ann for ann in filtered_annotations
@@ -874,86 +850,9 @@ class AnnotationViewerWindow(QWidget):
             return True
 
         # Declined: leave the gallery exactly as it was and say why nothing happened.
-        try:
-            self.main_window.statusBar().showMessage(
-                "Filter cancelled - narrow the image or label filter and apply again.", 5000
-            )
-        except Exception:
-            pass
+        self._crop_batch_declined = True
+        self._show_status("Filter not applied. Narrow the filter and apply again.")
         return False
-
-    def _get_selected_images(self):
-        """Get list of selected image names from filter combo."""
-        if not hasattr(self, 'image_filter_combo'):
-            return None  # No filter = show all
-        # Support MultiSelectCombo's API
-        try:
-            vals = self.image_filter_combo.selected_values()
-            return vals
-        except Exception:
-            # Fallback to legacy QComboBox behavior if present
-            try:
-                current_data = self.image_filter_combo.currentData()
-                if current_data == "all":
-                    return None
-                current_text = self.image_filter_combo.currentText()
-                if current_text == "All Images":
-                    return None
-                return [current_text] if current_text else None
-            except Exception:
-                return None
-    
-    def _get_selected_types(self):
-        """Get list of selected annotation types from filter combo."""
-        if not hasattr(self, 'type_filter_combo'):
-            return None
-        try:
-            vals = self.type_filter_combo.selected_values()
-            return vals
-        except Exception:
-            try:
-                current_data = self.type_filter_combo.currentData()
-                if current_data == "all":
-                    return None
-                current_text = self.type_filter_combo.currentText()
-                if current_text == "All Types":
-                    return None
-                type_map = {
-                    "Patch": "PatchAnnotation",
-                    "Rectangle": "RectangleAnnotation",
-                    "Polygon": "PolygonAnnotation",
-                    "MultiPolygon": "MultiPolygonAnnotation"
-                }
-                if current_data:
-                    return [current_data]
-                return [type_map.get(current_text, current_text)] if current_text else None
-            except Exception:
-                return None
-    
-    def _get_selected_labels(self):
-        """Get list of selected labels from filter combo."""
-        if not hasattr(self, 'label_filter_combo'):
-            return None
-        try:
-            vals = self.label_filter_combo.selected_values()
-            return vals
-        except Exception:
-            try:
-                current_data = self.label_filter_combo.currentData()
-                if current_data == "all":
-                    return None
-                current_text = self.label_filter_combo.currentText()
-                if current_text == "All Labels":
-                    return None
-                return [current_text] if current_text else None
-            except Exception:
-                return None
-    
-    def _get_selected_verified(self):
-        """Get list of selected verified statuses ('Verified', 'Unverified'), or None for all."""
-        if not hasattr(self, 'verified_filter_combo'):
-            return None
-        return self.verified_filter_combo.selected_values()
 
     def _ensure_cropped_images(self, annotations):
         """Ensure cropped images are available for annotations."""
@@ -1029,21 +928,7 @@ class AnnotationViewerWindow(QWidget):
         if hasattr(self.annotation_window, 'annotations_dict'):
             ann = self.annotation_window.annotations_dict.get(annotation_id)
             if ann:
-                image_name = os.path.basename(ann.image_path)
-                type_name = type(ann).__name__
-                label_code = ann.label.short_label_code
-                
-                # Get filters (None means all selected)
-                selected_images = self._get_selected_images()
-                selected_types = self._get_selected_types()
-                selected_labels = self._get_selected_labels()
-                
-                # Check if annotation matches filter (None = no filter = include)
-                matches_image = selected_images is None or image_name in selected_images
-                matches_type = selected_types is None or type_name in selected_types
-                matches_label = selected_labels is None or label_code in selected_labels
-                
-                if matches_image and matches_type and matches_label:
+                if self.applied_filter_state.matches(ann):
                     if annotation_id not in self.data_item_cache:
                         self._ensure_cropped_images([ann])
                         self.data_item_cache[annotation_id] = AnnotationDataItem(ann)
@@ -1106,26 +991,11 @@ class AnnotationViewerWindow(QWidget):
         # Refresh filter options (in case new images/labels were added)
         self.refresh_filter_options()
 
-        selected_images = self._get_selected_images()
-        selected_types = self._get_selected_types()
-        selected_labels = self._get_selected_labels()
-
         annotations_to_add = []
 
         for ann_id in annotation_ids:
             ann = self.annotation_window.annotations_dict.get(ann_id)
-            if not ann:
-                continue
-
-            image_name = os.path.basename(ann.image_path)
-            type_name = type(ann).__name__
-            label_code = ann.label.short_label_code
-
-            matches_image = selected_images is None or image_name in selected_images
-            matches_type = selected_types is None or type_name in selected_types
-            matches_label = selected_labels is None or label_code in selected_labels
-
-            if matches_image and matches_type and matches_label:
+            if ann and self.applied_filter_state.matches(ann):
                 annotations_to_add.append(ann)
 
         if not annotations_to_add:
@@ -1225,7 +1095,7 @@ class AnnotationViewerWindow(QWidget):
         Process all coalesced label changes in one go.
 
         Called once per event-loop iteration after one or more label-change signals
-        fired.  Drains _pending_label_changes, updates the label filter combo once,
+        fired.  Drains _pending_label_changes, refreshes the filter options once,
         then either triggers a full refresh (when sorting/filtering requires it) or
         does a lightweight viewport repaint.
         """
@@ -1236,11 +1106,11 @@ class AnnotationViewerWindow(QWidget):
         _changed = self._pending_label_changes
         self._pending_label_changes = set()
 
-        # Refresh the label filter combo once for the whole batch
-        self._populate_label_filter()
+        # Refresh the filter options once for the whole batch
+        self.refresh_filter_options()
 
         # Check if structural changes are needed
-        active_label_filters = self._get_selected_labels()
+        active_label_filters = self.applied_filter_state.is_active('label')
         current_sort = self.sort_combo.currentText()
         is_sorting_by_label = (current_sort == "Label")
         is_sorting_by_confidence = (current_sort == "Confidence")
@@ -2127,7 +1997,7 @@ class AnnotationViewerWindow(QWidget):
                 
                 # Change image if needed
                 if self.annotation_window.current_image_path != ann.image_path:
-                    self.annotation_window.set_image(ann.image_path)
+                    self.main_window.image_window.open_image(ann.image_path)
                 
                 # Select and center on annotation
                 self.annotation_window.select_annotation(ann, quiet_mode=True)

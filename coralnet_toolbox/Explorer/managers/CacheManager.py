@@ -2,11 +2,33 @@ import os
 import glob
 import sqlite3
 import threading
-import warnings
 
 import faiss
+import numpy as np
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
+from coralnet_toolbox.paths import cache_dir
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Functions
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def read_faiss_index(path):
+    """faiss.read_index, through Python's file I/O.
+
+    FAISS opens files with C fopen, which on Windows cannot open a path with
+    characters outside the ANSI code page, and this cache lives under the
+    user's home folder, whose name may contain them.
+    """
+    with open(path, 'rb') as file:
+        return faiss.deserialize_index(np.fromfile(file, dtype=np.uint8))
+
+
+def write_faiss_index(index, path):
+    """faiss.write_index, through Python's file I/O (see read_faiss_index)."""
+    with open(path, 'wb') as file:
+        file.write(faiss.serialize_index(index).tobytes())
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -19,17 +41,17 @@ class CacheManager:
     Manages storing and retrieving annotation features for MULTIPLE models
     using a single SQLite database and multiple, model-specific FAISS indexes.
     
-    Cache files stored in .cache/embedding/ directory.
+    Cache files stored in the toolbox's cache folder, under embedding/ (see paths.py).
     """
-    CACHE_SUBDIR = '.cache/embedding'
-    
+    CACHE_SUBDIR = 'embedding'
+
     def __init__(self, db_path='manager.db', index_path_base='features'):
-        # Ensure cache directory exists
-        os.makedirs(self.CACHE_SUBDIR, exist_ok=True)
-        
+        # Created on first use
+        directory = cache_dir(self.CACHE_SUBDIR).as_posix()
+
         # Prepend cache directory to paths
-        self.db_path = os.path.join(self.CACHE_SUBDIR, db_path)
-        self.index_path_base = os.path.join(self.CACHE_SUBDIR, index_path_base)
+        self.db_path = os.path.join(directory, db_path)
+        self.index_path_base = os.path.join(directory, index_path_base)
         
         # Note: do NOT keep a long-lived sqlite3 connection here — sqlite3
         # connections are thread-affine. Open connections per-call instead.
@@ -71,7 +93,7 @@ class CacheManager:
         index_path = f"{self.index_path_base}_{model_key}.faiss"
         if os.path.exists(index_path):
             print(f"Loading FAISS index from {index_path}")
-            index = faiss.read_index(index_path)
+            index = read_faiss_index(index_path)
             return index
 
         # If not on disk, return None
@@ -145,7 +167,7 @@ class CacheManager:
 
             # Persist FAISS index to disk immediately
             index_path = f"{self.index_path_base}_{model_key}.faiss"
-            faiss.write_index(index, index_path)
+            write_faiss_index(index, index_path)
 
     def get_features(self, data_items, model_key):
         """

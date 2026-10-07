@@ -1,10 +1,6 @@
-import warnings
-
 from PyQt5.QtCore import Qt
 
 from coralnet_toolbox.Tools.QtTool import Tool
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

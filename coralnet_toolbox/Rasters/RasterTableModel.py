@@ -1,13 +1,11 @@
-import warnings
+import os
+from typing import Any, List, Optional
 
-from typing import Any, Dict, List, Optional, Set
-
-from PyQt5.QtCore import Qt, QAbstractTableModel, QModelIndex, QVariant, pyqtSignal
+from PyQt5.QtCore import Qt, QAbstractTableModel, QModelIndex, pyqtSignal
 from PyQt5.QtGui import QFont, QColor, QBrush
 
 from coralnet_toolbox.Rasters import RasterManager
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
+from coralnet_toolbox.Rasters.extracted_images import active_set
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -75,31 +73,17 @@ class RasterTableModel(QAbstractTableModel):
             return self.column_headers[section]
         return None
         
-    @staticmethod
-    def _training_split(raster) -> str:
-        """Return the train / val / test split this image would train in.
+    # raster_type -> the name the tooltip shows
+    RASTER_TYPE_NAMES = {
+        'ImageRaster': "Image",
+        'OrthoRaster': "Orthomosaic",
+        'VideoRaster': "Video",
+    }
 
-        Only meaningful for plain image rasters, which are the ones the project
-        can currently train from. A pinned split is reported as such so the
-        difference from a derived one is visible.
-        """
-        if getattr(raster, 'raster_type', '') != 'ImageRaster':
-            return ""
-
-        try:
-            from coralnet_toolbox.MachineLearning.InPlaceTraining import (
-                assign_split, get_split_ratios)
-        except Exception:
-            return ""
-
-        override = getattr(raster, 'split_override', None)
-        try:
-            train_ratio, val_ratio = get_split_ratios()
-            split = assign_split(raster.image_path, train_ratio, val_ratio, override)
-        except Exception:
-            return ""
-
-        return f"{split} (pinned)" if override else split
+    @classmethod
+    def _raster_type_name(cls, raster) -> str:
+        raster_type = getattr(raster, 'raster_type', '')
+        return cls.RASTER_TYPE_NAMES.get(raster_type, raster_type or "Unknown")
 
     def data(self, index: QModelIndex, role: int = Qt.DisplayRole) -> Any:
         """Return data for the given index and role."""
@@ -157,6 +141,7 @@ class RasterTableModel(QAbstractTableModel):
                         duration_s = raster.frame_count / raster.fps if raster.fps > 0 else 0
                         tooltip_parts = [
                             f"<b>Path:</b> {path}",
+                            f"<b>Type:</b> {self._raster_type_name(raster)}",
                             f"<b>Dimensions:</b> {raster.width}x{raster.height}",
                             f"<b>FPS:</b> {raster.fps:.2f}",
                             f"<b>Frames:</b> {raster.frame_count}",
@@ -170,19 +155,13 @@ class RasterTableModel(QAbstractTableModel):
                 
                 tooltip_parts = [
                     f"<b>Path:</b> {path}",
+                    f"<b>Type:</b> {self._raster_type_name(raster)}",
                     f"<b>Dimensions:</b> {dimensions}",
                 ]
 
                 # Add scale information if it exists
                 if raster.scale_x and raster.scale_units:
                     tooltip_parts.append(f"<b>Scale:</b> {raster.scale_x:.6f} {raster.scale_units}/pixel")
-
-                # Which split this image falls in when training from the project.
-                # Derived from the path unless the user pinned it, so it is shown
-                # rather than stored, and stays the same between training rounds.
-                split = self._training_split(raster)
-                if split:
-                    tooltip_parts.append(f"<b>Split:</b> {split}")
 
                 # Add z_channel information if it exists
                 if raster.z_channel is not None:
@@ -210,7 +189,15 @@ class RasterTableModel(QAbstractTableModel):
 
                 if raster.has_work_areas():
                     tooltip_parts.append(f"<b>Work Areas:</b> {raster.count_work_items()}")
-                
+
+                # Extract Work Areas links
+                extracted_set = active_set(raster)
+                if extracted_set is not None:
+                    tooltip_parts.append(f"<b>Extracted:</b> {len(extracted_set['tile_paths'])} images")
+                tile_of = getattr(raster, 'tile_of', None)
+                if tile_of:
+                    tooltip_parts.append(f"<b>Extracted from:</b> {os.path.basename(tile_of['parent_path'])}")
+
                 return "<br>".join(tooltip_parts)
 
             elif index.column() == self.ANNOTATION_COUNT_COL:

@@ -223,10 +223,6 @@ class AuthenticateDialog(QDialog):
             # Then get the token
             self.token, self.headers = self.get_token(username, password)
 
-            # Store credentials in environment variables
-            os.environ['CORALNET_USERNAME'] = username
-            os.environ['CORALNET_PASSWORD'] = password
-
             # Update UI
             self.token_display.setText(self.token)
             self.token_display.setEchoMode(QLineEdit.Password)  # Start in hidden mode
@@ -366,7 +362,13 @@ class AuthenticateDialog(QDialog):
         return self.authenticated
 
     def load_saved_credentials(self):
-        """Load saved credentials from environment variables if available."""
+        """Pre-fill credentials the user exported before launching, if any.
+
+        Read only: nothing in the toolbox writes these variables. A password
+        put in os.environ would be inherited, in plain text, by every child
+        process (chromedriver, data loader workers). The download dialogs read
+        the credentials from this dialog's fields instead.
+        """
         username = os.environ.get('CORALNET_USERNAME', '')
         password = os.environ.get('CORALNET_PASSWORD', '')
 

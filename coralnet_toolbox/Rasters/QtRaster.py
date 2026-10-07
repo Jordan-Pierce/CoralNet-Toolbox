@@ -29,7 +29,6 @@ from coralnet_toolbox.utilities import pixmap_to_numpy_bgr
 from coralnet_toolbox.utilities import load_z_channel_from_file
 from coralnet_toolbox.utilities import normalize_z_unit
 
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
 
@@ -165,7 +164,12 @@ class Raster(QObject):
         
         # Work Area state
         self.work_areas: List = []  # Store work area information
-        
+
+        # Extract Work Areas (see Rasters/extracted_images.py). On an image made
+        # from a work area: where it came from. On a parent: its set of images.
+        self.tile_of: Optional[dict] = None
+        self.tile_sets: List[dict] = []
+
         # Image dimensions and properties (populated when rasterio_src is loaded)
         self.width = 0
         self.height = 0
@@ -1414,6 +1418,13 @@ class Raster(QObject):
             raster_data['feature_map_dim'] = self.feature_map_dim
             raster_data['feature_map_normalized'] = self.feature_map_normalized
 
+        # Extract Work Areas links, only when present
+        if self.tile_of:
+            raster_data['tile_of'] = dict(self.tile_of)
+        if self.tile_sets:
+            raster_data['tile_sets'] = [{**record, 'tile_paths': list(record.get('tile_paths', []))}
+                                        for record in self.tile_sets]
+
         return raster_data
     
     def update_from_dict(self, raster_dict: dict):
@@ -1494,6 +1505,12 @@ class Raster(QObject):
                 )
             except Exception as e:
                 print(f"Error loading feature map for {self.image_path}: {str(e)}")
+
+        # Extract Work Areas links
+        tile_of = raster_dict.get('tile_of')
+        self.tile_of = dict(tile_of) if tile_of else None
+        self.tile_sets = [{**record, 'tile_paths': list(record.get('tile_paths', []))}
+                          for record in raster_dict.get('tile_sets') or []]
 
     @classmethod
     def from_dict(cls, raster_dict):

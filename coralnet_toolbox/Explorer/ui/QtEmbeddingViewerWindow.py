@@ -12,7 +12,6 @@ from functools import partial
 import os
 import time
 import traceback
-import warnings
 import numpy as np
 import torch
 import cv2
@@ -52,8 +51,7 @@ from coralnet_toolbox.Features.ModelRegistry import OPENCLIP_MODELS, is_openclip
 
 from coralnet_toolbox.Icons import get_icon
 from coralnet_toolbox.utilities import pixmap_to_numpy, pixmap_to_numpy_bgr, pixmap_to_pil
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
+from coralnet_toolbox.paths import resolve_weights
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -1135,24 +1133,22 @@ class EmbeddingViewerWindow(QWidget):
         """
         Handle when a new image is loaded in ImageWindow.
         
-        Clears the embedding viewer since the displayed embeddings are no longer
-        relevant to the current image (unless filter is "All Images").
-        
+        Clears the embedding viewer when the gallery is narrowed to particular
+        images and the new image is not one of them, matching the gallery.
+
         Args:
             image_path: Path to the loaded image.
         """
-        # Check if annotation viewer is filtering by specific image or showing all
+        # Keep the embeddings when the gallery's image filter covers the new
+        # image (or there is no image filter). Ctrl+Right-click navigation
+        # always lands on such an image.
         annotation_viewer = getattr(self.main_window, 'annotation_viewer_window', None)
-        if annotation_viewer and hasattr(annotation_viewer, 'image_filter_combo'):
-            current_filter = annotation_viewer.image_filter_combo.currentData()
-            
-            # If filter is "All Images", the embedding viewer can stay as-is
-            # since it may contain annotations from multiple images
-            if current_filter == "all":
+        if annotation_viewer and hasattr(annotation_viewer, 'is_image_in_applied_filter'):
+            if annotation_viewer.is_image_in_applied_filter(image_path):
                 return
-        
-        # Clear the embedding viewer since we're filtering by specific image
-        # and the current embeddings are from a different image
+
+        # Clear the embedding viewer since the gallery is filtered to other
+        # images and the current embeddings are from them
         self._clear_points()
         self._show_placeholder()
         
@@ -2142,7 +2138,7 @@ class EmbeddingViewerWindow(QWidget):
         
         try:
             from ultralytics import YOLO
-            model = YOLO(model_name)
+            model = YOLO(resolve_weights(model_name))
             if cache_allowed:
                 self._cached_yolo_model = model
                 self._cached_yolo_model_name = model_name
@@ -3542,8 +3538,7 @@ class EmbeddingViewerWindow(QWidget):
                     annotation = self.current_data_items[hit_index].annotation
                     if hasattr(self, 'annotation_window') and self.annotation_window:
                         if self.annotation_window.current_image_path != annotation.image_path:
-                            if hasattr(self.annotation_window, 'set_image'):
-                                self.annotation_window.set_image(annotation.image_path)
+                            self.main_window.image_window.open_image(annotation.image_path)
                         if hasattr(self.annotation_window, 'select_annotation'):
                             self.annotation_window.select_annotation(annotation, quiet_mode=True)
                         zoom = getattr(self.annotation_window, 'center_and_zoom_on_annotation', None)

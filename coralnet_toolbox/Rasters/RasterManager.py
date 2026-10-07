@@ -1,5 +1,3 @@
-import warnings
-
 import os
 import gc
 from typing import Dict, List, Optional, Set
@@ -8,6 +6,7 @@ from PyQt5.QtGui import QPixmap
 from PyQt5.QtCore import QObject, pyqtSignal, Qt
 
 from coralnet_toolbox.Rasters.QtRaster import Raster
+from coralnet_toolbox.Rasters.extracted_images import forget_raster
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -217,13 +216,20 @@ class RasterManager(QObject):
             return False
             
         try:
+            raster = self.rasters[image_path]
+
             # Clean up resources
-            self.rasters[image_path].cleanup(collect_garbage=collect_garbage)
-            
+            raster.cleanup(collect_garbage=collect_garbage)
+
             # Remove from collections
             del self.rasters[image_path]
             self.image_paths.remove(image_path)
-            
+
+            # Keep Extract Work Areas sets consistent: a parent leaving frees its
+            # images, and the last image of a set leaving releases the parent
+            for changed_path in forget_raster(self, image_path, raster):
+                self.rasterUpdated.emit(changed_path)
+
             # Emit signal
             self.rasterRemoved.emit(image_path)
             

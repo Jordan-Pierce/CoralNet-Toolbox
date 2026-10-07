@@ -1,12 +1,8 @@
-import warnings
-
 import pandas as pd
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox)
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------

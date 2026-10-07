@@ -21,8 +21,12 @@
 ARG KASM_VERSION=1.19.0
 FROM kasmweb/core-ubuntu-jammy:${KASM_VERSION}
 
-# jammy is Ubuntu 22.04, whose system Python is 3.10 -- exactly the range
-# pyproject.toml requires (>=3.10, <3.11). No conda needed.
+# jammy is Ubuntu 22.04, whose system Python is 3.10 -- inside the range
+# pyproject.toml supports (>=3.10, <3.13), though 3.12 is what users are told
+# to install. Ubuntu keeps patching jammy's python3.10 through the release's
+# standard support (April 2027), so upstream 3.10's end of life does not leave
+# the container unpatched. Moving to 3.12 means a noble (24.04) base image.
+# No conda needed.
 
 USER root
 

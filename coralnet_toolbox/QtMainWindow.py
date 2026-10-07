@@ -1,5 +1,3 @@
-import warnings
-
 import os
 import re
 import requests
@@ -160,9 +158,6 @@ from coralnet_toolbox.BreakTime import (
 )
 
 from coralnet_toolbox.Icons import get_icon, get_window_icon
-
-
-warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -385,6 +380,12 @@ class MainWindow(QMainWindow):
         self.import_images_action.triggered.connect(self.import_images.import_images)
         self.import_rasters_menu.addAction(self.import_images_action)
         self.import_rasters_menu.addSeparator()
+        # Import Orthomosaics
+        self.import_orthomosaics_action = QAction("Orthomosaics", self)
+        self.import_orthomosaics_action.setToolTip("Import orthomosaic GeoTIFF files with geospatial metadata")
+        self.import_orthomosaics_action.triggered.connect(self.import_images.import_orthomosaics)
+        self.import_rasters_menu.addAction(self.import_orthomosaics_action)
+        self.import_rasters_menu.addSeparator()
         # Import Videos
         self.import_videos_action = QAction("Videos", self)
         self.import_videos_action.setToolTip("Import video files to the project")
@@ -395,12 +396,6 @@ class MainWindow(QMainWindow):
         self.import_frames_action.setToolTip("Extract and import frames from a video file")
         self.import_frames_action.triggered.connect(self.open_import_frames_dialog)
         self.import_rasters_menu.addAction(self.import_frames_action)
-        self.import_rasters_menu.addSeparator()
-        # Import Orthomosaics
-        self.import_orthomosaics_action = QAction("Orthomosaics", self)
-        self.import_orthomosaics_action.setToolTip("Import orthomosaic GeoTIFF files with geospatial metadata")
-        self.import_orthomosaics_action.triggered.connect(self.import_images.import_orthomosaics)
-        self.import_rasters_menu.addAction(self.import_orthomosaics_action)
         
         # Labels submenu
         self.import_labels_menu = self.import_menu.addMenu("Labels")
