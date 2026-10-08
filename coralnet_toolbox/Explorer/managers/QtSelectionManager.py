@@ -631,8 +631,7 @@ class SelectionManager(QObject):
                     
                     # Change image if needed
                     if self._annotation_window.current_image_path != ann.image_path:
-                        if hasattr(self._annotation_window, 'set_image'):
-                            self._annotation_window.set_image(ann.image_path)
+                        self._open_image(ann.image_path)
                     
                     # Select and center on annotation
                     if hasattr(self._annotation_window, 'select_annotation'):
@@ -650,6 +649,18 @@ class SelectionManager(QObject):
             
         finally:
             self._syncing = False
+
+    def _open_image(self, image_path: str):
+        """Open an image through the Image window so its table and listeners follow.
+
+        Falls back to swapping the canvas only when there is no Image window.
+        """
+        main_window = getattr(self._annotation_window, 'main_window', None)
+        image_window = getattr(main_window, 'image_window', None)
+        if image_window is not None and hasattr(image_window, 'open_image'):
+            image_window.open_image(image_path)
+        elif hasattr(self._annotation_window, 'set_image'):
+            self._annotation_window.set_image(image_path)
 
     def navigate_to_annotation(self, annotation_id: str):
         """Navigate the AnnotationWindow to an annotation without touching selection.
@@ -674,8 +685,7 @@ class SelectionManager(QObject):
         self._syncing = True
         try:
             if self._annotation_window.current_image_path != annotation.image_path:
-                if hasattr(self._annotation_window, 'set_image'):
-                    self._annotation_window.set_image(annotation.image_path)
+                self._open_image(annotation.image_path)
 
             if hasattr(self._annotation_window, 'select_annotation'):
                 self._annotation_window.select_annotation(annotation, quiet_mode=True)

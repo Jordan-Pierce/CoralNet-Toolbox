@@ -67,7 +67,6 @@ except Exception as _rtdetr_error:  # pragma: no cover - depends on the install
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
-from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 
 from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedInstanceDataset
 from coralnet_toolbox.paths import cache_dir
@@ -89,11 +88,25 @@ SPLIT_SENTINELS = {
     'test': "__project_test__",
 }
 
-# Which annotation types each task can learn from. Detection derives a bounding
-# box from any shape; segmentation needs real polygon geometry.
+# Which annotation types each task learns from: detection from rectangles,
+# segmentation from polygons. Fixed, unlike Export Dataset's checkboxes, because
+# Active Learning offers no choice to make.
+#
+# Kept disjoint on purpose. Each task's rounds predict its own shape, and
+# whatever the map admits also fills that task's review queue. If detection
+# admitted polygons, a segmentation round's predictions would wait in the
+# detection queue and train a detector once verified. Patches are out of both: a
+# patch is a point with a fixed square around it, so its box says where somebody
+# clicked, not how far the object reaches.
 TASK_ANNOTATION_TYPES = {
-    'detect': (RectangleAnnotation, PolygonAnnotation, MultiPolygonAnnotation, PatchAnnotation),
+    'detect': (RectangleAnnotation,),
     'segment': (PolygonAnnotation, MultiPolygonAnnotation),
+}
+
+# The shapes a task trains on, as the readiness line names them.
+TASK_SHAPE_NAMES = {
+    'detect': "rectangles",
+    'segment': "polygons",
 }
 
 SUPPORTED_TASKS = tuple(TASK_ANNOTATION_TYPES)
@@ -135,10 +148,8 @@ def check_ultralytics_support():
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-# The ratios splits are currently derived from. Shared because two places need
-# to agree on them: the Train Model dialog, which sets them, and the Image
-# Window tooltip, which reports the split an image would land in. A tooltip
-# computed from different ratios than training uses would simply be wrong.
+# The ratios splits are currently derived from. Module state rather than an
+# argument so every reader of the assignment agrees with whoever set it last.
 #
 # Note this is the one thing that does move images between splits: the
 # assignment is stable for a fixed ratio, but changing the ratio moves the

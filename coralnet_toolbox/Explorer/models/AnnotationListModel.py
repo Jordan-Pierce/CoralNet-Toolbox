@@ -412,7 +412,7 @@ class AnnotationItemDelegate(QtWidgets.QStyledItemDelegate):
                                 # Fallback for when no SelectionManager is wired up.
                                 try:
                                     if viewer.annotation_window.current_image_path != ann.image_path:
-                                        viewer.annotation_window.set_image(ann.image_path)
+                                        viewer.main_window.image_window.open_image(ann.image_path)
                                 except Exception:
                                     pass
                                 try:

@@ -655,63 +655,103 @@ def work_area_to_numpy(rasterio_src, work_area):
     )
 
     try:
-        # Check for single-band image with colormap
-        has_colormap = False
-        if rasterio_src.count == 1:
-            try:
-                has_colormap = rasterio_src.colormap(1) is not None
-            except ValueError:
-                has_colormap = False
-
-        if rasterio_src.count == 1 and has_colormap:
-            # Read the single band
-            image = rasterio_src.read(1, window=window)
-            # Get the colormap
-            colormap = rasterio_src.colormap(1)
-
-            # Create a lookup table for the colormap
-            max_idx = max(colormap.keys()) + 1
-            lut = np.zeros((max_idx, 3), dtype=np.uint8)
-
-            # Fill the lookup table with RGB values
-            for idx, color in colormap.items():
-                if idx < max_idx:  # Safety check
-                    lut[idx] = [color[0], color[1], color[2]]  # Ignore alpha
-
-            # Clip image indices to valid range for the LUT
-            image_indices = np.clip(image, 0, max_idx - 1).astype(np.uint8)
-
-            # Use the image as indices into the lookup table
-            rgb_image = lut[image_indices]
-
-            # Use the colorized RGB version of the image
-            image = rgb_image
-
-        elif rasterio_src.count < 3:
-            # Grayscale image without colormap
-            image = rasterio_src.read(1, window=window)
-
-            # Convert to 3-channel grayscale image
-            image = np.stack([image] * 3, axis=-1)
-
-        else:
-            # Read RGB bands
-            image = rasterio_src.read([1, 2, 3], window=window)
-
-            # Transpose to height, width, channels format
-            image = np.transpose(image, (1, 2, 0))
-
-        # Convert to uint8 if not already
-        if image.dtype != np.uint8:
-            if image.max() > 0:  # Avoid division by zero
-                image = image.astype(float) * (255.0 / image.max())
-            image = image.astype(np.uint8)
-
-        return image
+        return read_window_rgb(rasterio_src, window)
 
     except Exception as e:
         traceback.print_exc()
         return None
+
+
+def _has_colormap(rasterio_src):
+    """True for a single-band raster carrying a colormap."""
+    if rasterio_src.count != 1:
+        return False
+    try:
+        return rasterio_src.colormap(1) is not None
+    except ValueError:
+        return False
+
+
+def read_window_rgb(rasterio_src, window, max_value=None):
+    """
+    Read one window of a raster as an (h, w, 3) uint8 RGB array.
+
+    Colormaps are applied, and grayscale is repeated into three channels, the
+    same way the image display converts pixels.
+
+    Data that is not uint8 is scaled into 0-255 by dividing by `max_value`.
+    Without one, each window is divided by its own maximum, which is what
+    work_area_to_numpy has always done. That gives every window of a 16-bit
+    raster a different brightness stretch, so callers cutting one raster into
+    many images should pass raster_display_max(src) to scale them all alike.
+
+    Args:
+        rasterio_src: open rasterio dataset.
+        window: rasterio Window to read.
+        max_value (float, optional): value that maps to 255 for non-uint8 data.
+
+    Returns:
+        numpy.ndarray: (h, w, 3) uint8 RGB.
+    """
+    if _has_colormap(rasterio_src):
+        image = rasterio_src.read(1, window=window)
+        colormap = rasterio_src.colormap(1)
+
+        # Lookup table from colormap index to RGB
+        max_idx = max(colormap.keys()) + 1
+        lut = np.zeros((max_idx, 3), dtype=np.uint8)
+        for idx, color in colormap.items():
+            if idx < max_idx:  # Safety check
+                lut[idx] = [color[0], color[1], color[2]]  # Ignore alpha
+
+        # Clip image indices to valid range for the LUT, then colorize
+        image_indices = np.clip(image, 0, max_idx - 1).astype(np.uint8)
+        image = lut[image_indices]
+
+    elif rasterio_src.count < 3:
+        # Grayscale image without colormap, as 3 channels
+        image = rasterio_src.read(1, window=window)
+        image = np.stack([image] * 3, axis=-1)
+
+    else:
+        # RGB bands, as height, width, channels
+        image = rasterio_src.read([1, 2, 3], window=window)
+        image = np.transpose(image, (1, 2, 0))
+
+    # Convert to uint8 if not already
+    if image.dtype != np.uint8:
+        if max_value:
+            image = np.clip(image.astype(float) * (255.0 / max_value), 0, 255)
+        elif image.max() > 0:  # Avoid division by zero
+            image = image.astype(float) * (255.0 / image.max())
+        image = image.astype(np.uint8)
+
+    return image
+
+
+def raster_display_max(rasterio_src):
+    """
+    Largest pixel value over the bands read_window_rgb uses, for scaling a whole raster alike.
+
+    The full-resolution display divides by the whole image's maximum, so
+    passing this to read_window_rgb gives windows the brightness the image
+    shows on screen. Read block by block, so memory stays bounded on large
+    orthomosaics.
+
+    Returns:
+        float or None: None when no scaling applies (uint8 data, or a colormap).
+    """
+    if _has_colormap(rasterio_src):
+        return None
+
+    bands = [1] if rasterio_src.count < 3 else [1, 2, 3]
+    if all(rasterio_src.dtypes[band - 1] == 'uint8' for band in bands):
+        return None
+
+    max_value = 0
+    for _, block in rasterio_src.block_windows(1):
+        max_value = max(max_value, float(rasterio_src.read(bands, window=block).max()))
+    return max_value or None
 
 
 def get_view_scale(transform):

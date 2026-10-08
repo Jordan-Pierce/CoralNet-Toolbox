@@ -227,18 +227,22 @@ class TrainModelWorker(QThread):
         # Set when training reads straight from the project instead of a
         # dataset on disk; owns the patched dataset class and its scaffolding.
         self.in_place_dataset = None
-        # Set by request_stop(); read at the end of each epoch. A round is
-        # minutes long, and abandoning one has to be possible without killing
-        # the application.
+        # Set by request_stop(); read after every batch. A round is minutes
+        # long, and abandoning one has to be possible without killing the
+        # application.
         self._stop_requested = False
 
     def request_stop(self):
-        """Ask training to end cleanly after the current epoch.
+        """Ask training to end cleanly, without killing the thread.
 
-        Ultralytics' own early stopping sets ``trainer.stop``, and the trainer
-        checks it at the end of every epoch, saves, and exits the loop -- so a
-        stopped round still produces best.pt and results.csv. Killing the thread
-        instead would leave the patched dataset class installed.
+        Ultralytics' own early stopping sets ``trainer.stop``. The trainer reads
+        it between batches as well as between epochs, and whichever one breaks
+        the loop, it still validates and saves on the way out -- so a stopped
+        round produces best.pt and a results.csv row. Killing the thread instead
+        would leave the patched dataset class installed.
+
+        What follows training is skipped as well: a run the user abandoned
+        should not then pay for a full test-set evaluation.
         """
         self._stop_requested = True
 
@@ -302,7 +306,8 @@ class TrainModelWorker(QThread):
 
         except Exception as e:
             print(f"Error during setup: {e}\n\nTraceback:\n{traceback.format_exc()}")
-            self.training_error.emit(f"Error during setup: {e} (see console log)")
+            # Not emitted here: _train() catches the re-raise and emits once.
+            # Emitting in both places put up two critical dialogs per failure.
             raise
 
     def _reroot_dataset_yaml(self, data_yaml_path):
@@ -462,11 +467,13 @@ class TrainModelWorker(QThread):
             for event, callback in callbacks.items():
                 self.model.add_callback(event, callback)
 
-            # on_train_epoch_end, which fires before validation: the trainer
-            # reads `stop` after validating, so the epoch still validates,
-            # reports through on_fit_epoch_end and saves before the loop exits.
-            # A stopped round therefore still produces best.pt and a full
-            # results.csv row rather than half of one.
+            # Both hooks, because the trainer reads `stop` in both places:
+            # after every batch (so Stop lands in seconds rather than waiting
+            # out an epoch that can run for minutes) and again at epoch end.
+            # Either way the break leaves `stop` set, so the trainer still
+            # validates and still saves -- a stopped round keeps best.pt and
+            # gets a results.csv row, it just carries a partial train loss.
+            self.model.add_callback('on_train_batch_end', self._stop_if_requested)
             self.model.add_callback('on_train_epoch_end', self._stop_if_requested)
 
             # Train the model. `trainer` is Ultralytics' own hook for a custom
@@ -478,8 +485,15 @@ class TrainModelWorker(QThread):
             # Post-run cleanup
             self.post_run()
 
-            # Evaluate the model after training
-            self.evaluate_model()
+            # Evaluate the model after training. Not after a stop: evaluation is
+            # a full pass over the test set, and running it is most of why Stop
+            # looked like it had done nothing.
+            if self._stop_requested:
+                message = "Training stopped early; skipping the test-set evaluation."
+                print(f"Note: {message}")
+                self.training_status.emit(message)
+            else:
+                self.evaluate_model()
 
             # Emit signal to indicate training has completed
             self.training_completed.emit()
@@ -1658,6 +1672,10 @@ class Base(QDialog):
         self.worker.training_error.connect(self.on_training_error)
         self.worker.training_status.connect(self.on_training_status)
         self.worker.epoch_completed.connect(self.on_epoch_completed)
+        # The thread's own finished signal, not training_completed: the worker
+        # emits that from inside run() with cleanup still to come, so letting go
+        # of it there could collect a QThread that is still running.
+        self.worker.finished.connect(self.release_worker)
         self.worker.start()
         self.sync_training_buttons()
 
@@ -1712,7 +1730,7 @@ class Base(QDialog):
         Args:
             error_message (str): The error message.
         """
-        self.release_worker()
+        # The worker is released on its finished signal, not here
         QMessageBox.critical(self, "Error", error_message)
         print(error_message)
     
@@ -1750,7 +1768,17 @@ class Base(QDialog):
             self.main_window.statusBar().showMessage(message, 5000)
 
     def release_worker(self):
-        """Let go of a finished run and put the buttons back."""
+        """Let go of a run once its thread has actually finished.
+
+        Connected to the worker's finished signal. training_completed arrives
+        earlier, from inside run(), with _cleanup() and the log capture still to
+        unwind -- dropping the last reference to the QThread there is what
+        "QThread: Destroyed while thread is still running" comes from.
+        """
+        worker = self.sender()
+        if worker is not None and worker is not self.worker:
+            # An older run finishing after this dialog moved on
+            return
         self.worker = None
         self.sync_training_buttons()
 
@@ -1758,7 +1786,7 @@ class Base(QDialog):
         """
         Handle the event when the training completes.
         """
-        self.release_worker()
+        # The worker is released on its finished signal, not here
         msg_box = QMessageBox(self)
         msg_box.setWindowTitle("Model Training Status")
         msg_box.setText("Model training has successfully been completed.")
@@ -1854,12 +1882,14 @@ class Base(QDialog):
         weights_folder = f"{output_folder}/weights"
         
         if model_path is None:
-            # Find the best weights file (usually 'best.pt' or similar)
-            best_weights = None
-            for fname in os.listdir(weights_folder):
-                if fname.startswith("best") and fname.endswith(".pt"):
-                    best_weights = f"{weights_folder}/{fname}"
-                    break
+            # best.pt by name, not by prefix scan. The old scan took the first
+            # os.listdir entry starting with "best", which is arbitrary order and
+            # would happily deploy any future best-something checkpoint instead.
+            # A PU run also leaves recall_best.pt here; best.pt is deliberately
+            # still what deploys (see PUDetection.RECALL_CHECKPOINT).
+            best_weights = f"{weights_folder}/best.pt"
+            if not os.path.isfile(best_weights):
+                best_weights = None
 
             if not best_weights:
                 QMessageBox.warning(self, "Deploy Model", "Could not find trained model weights.")

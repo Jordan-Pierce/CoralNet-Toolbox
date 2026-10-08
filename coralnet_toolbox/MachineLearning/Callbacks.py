@@ -413,8 +413,22 @@ def create_training_callbacks(signal_emitter):
             loss_str = ", ".join([f"{k}: {v}" for k, v in list(losses_dict.items())[:5]])
             if len(losses_dict) > 5:
                 loss_str += f", +{len(losses_dict) - 5} more"
+
+            # A PU run says what its ignore band did, so the one thing that makes
+            # the run different from a stock one is visible in the dialog rather
+            # than only in pu_diagnostics.csv. Absent on every other trainer.
+            note = ""
+            try:
+                pu_note = getattr(trainer, 'pu_epoch_note', None)
+                if callable(pu_note):
+                    note = pu_note() or ""
+            except Exception as e:
+                logger.debug(f"PU epoch note unavailable: {e}")
+            if note:
+                note = f" - {note}"
+
             signal_emitter.training_status.emit(
-                f"Epoch {epoch}/{total_epochs} - {loss_str}"
+                f"Epoch {epoch}/{total_epochs} - {loss_str}{note}"
             )
         except Exception as e:
             logger.error(f"Error in on_fit_epoch_end callback: {e}", exc_info=True)

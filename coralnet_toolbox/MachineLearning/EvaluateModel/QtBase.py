@@ -1,12 +1,17 @@
 import gc
+import os
 import datetime
+import tempfile
 import traceback
 from pathlib import Path
+
+import yaml
 
 from torch.cuda import empty_cache
 
 from ultralytics import YOLO
 import ultralytics.engine.validator as validator
+from ultralytics.data.utils import check_det_dataset
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtWidgets import (QFileDialog, QMessageBox, QVBoxLayout,
@@ -18,7 +23,7 @@ from coralnet_toolbox.MachineLearning.Callbacks import EvaluationSignalEmitter
 from coralnet_toolbox.MachineLearning.ConfusionMatrix import ConfusionMatrixMetrics
 from coralnet_toolbox.MachineLearning.RunLog import capture_run_log
 
-from coralnet_toolbox.Icons import get_icon, get_window_icon
+from coralnet_toolbox.Icons import get_window_icon
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -53,6 +58,8 @@ class EvaluateModelWorker(QThread):
         """
         super().__init__()
         self.model = model
+        # Pulled out of params so it is never forwarded to model.val()
+        self.temp_data_yaml = params.pop('_temp_data_yaml', None)
         self.params = params
 
     def run(self):
@@ -110,6 +117,14 @@ class EvaluateModelWorker(QThread):
         except Exception as e:
             print(f"Error during evaluation: {e}\n\nTraceback:\n{traceback.format_exc()}")
             self.evaluation_error.emit(str(e))
+
+        finally:
+            # Discard the merged-split YAML; the user's data.yaml was never touched
+            if self.temp_data_yaml:
+                try:
+                    Path(self.temp_data_yaml).unlink()
+                except OSError:
+                    pass
 
             
 class Base(QDialog):
@@ -175,7 +190,20 @@ class Base(QDialog):
         self.split_combo = QComboBox()
         self.split_combo.addItems(["train", "val", "test"])
         self.split_combo.setCurrentText("test")
-        self.split_combo.setToolTip("Which dataset split to evaluate on.\ntest: separate test set (most reliable).\nval: validation set.\ntrain: training set (may overfit).")
+        split_tooltip = ("Which dataset split to evaluate on.\n"
+                         "test: separate test set (most reliable).\n"
+                         "val: validation set.\n"
+                         "train: training set (may overfit).")
+
+        # Classification evaluates a split directory rather than a data YAML, so there is
+        # nothing to merge. Note self.task is still None here for the YAML-based subclasses
+        # (they set it after super().__init__), which is why this tests against 'classify'.
+        if self.task != 'classify':
+            self.split_combo.insertSeparator(self.split_combo.count())
+            self.split_combo.addItem("All")
+            split_tooltip += "\nAll: train + val + test merged in memory (data.yaml is not modified)."
+
+        self.split_combo.setToolTip(split_tooltip)
         layout.addRow("Split:", self.split_combo)
         
         group_box.setLayout(layout)
@@ -297,6 +325,57 @@ class Base(QDialog):
         self.evaluate_model()
         super().accept()
 
+    def build_combined_split_yaml(self, data_yaml):
+        """
+        Write a throwaway data YAML whose splits are the union of the original
+        train/val/test image sources. The original YAML is never modified.
+
+        Args:
+            data_yaml (str): Path to the original dataset YAML.
+
+        Returns:
+            str: Path to the temporary YAML file (the caller owns deleting it).
+        """
+        # Let ultralytics resolve 'path', the split entries, names and masks_dir exactly as
+        # it would on a normal run, so the union below is already absolute and consistent.
+        data = check_det_dataset(data_yaml)
+
+        combined = []
+        for key in ("train", "val", "test"):
+            entry = data.get(key)
+            if not entry:
+                continue
+            for item in (entry if isinstance(entry, list) else [entry]):
+                # Forward slashes throughout, matching how Rasters store paths
+                item = Path(item).as_posix()
+                # Splits may share a source (or be listed twice); count each image once
+                if item not in combined:
+                    combined.append(item)
+
+        if not combined:
+            raise ValueError(f"No train, val, or test splits found in {data_yaml}")
+
+        # Every split key gets the union, so whichever one the validator reads it sees
+        # all the images. Labels are re-scanned because the combined label cache hash
+        # will not match the per-split one.
+        merged = {
+            'path': Path(data.get('path') or Path(data_yaml).parent).as_posix(),
+            'train': list(combined),
+            'val': list(combined),
+            'test': list(combined),
+            'names': data['names'],
+            'nc': len(data['names']),
+        }
+        if data.get('masks_dir'):
+            merged['masks_dir'] = data['masks_dir']
+
+        fd, temp_path = tempfile.mkstemp(prefix='data_all_', suffix='.yaml')
+        with os.fdopen(fd, 'w') as f:
+            yaml.safe_dump(merged, f, default_flow_style=False)
+
+        print(f"Evaluating on merged splits ({len(combined)} sources): {temp_path}")
+        return temp_path
+
     def get_evaluation_parameters(self):
         params = {
             'exist_ok': True,
@@ -331,6 +410,13 @@ class Base(QDialog):
     def evaluate_model(self):
         self.params = self.get_evaluation_parameters()
         try:
+            if self.params['split'] == "All":
+                # Merge the splits into a temp YAML and evaluate that as 'val'
+                temp_yaml = self.build_combined_split_yaml(self.params['data'])
+                self.params['data'] = temp_yaml
+                self.params['split'] = 'val'
+                self.params['_temp_data_yaml'] = temp_yaml
+
             self.model = YOLO(self.params['model'], task=self.params['task'])
             self.worker = EvaluateModelWorker(self.model, self.params)
             self.worker.evaluation_started.connect(self.on_evaluation_started)

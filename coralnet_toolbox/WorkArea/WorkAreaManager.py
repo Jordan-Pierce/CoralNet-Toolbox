@@ -1,10 +1,12 @@
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QPen
-from PyQt5.QtWidgets import (QMessageBox, QVBoxLayout, QLabel, QDialog, QDialogButtonBox, 
-                             QGroupBox, QPushButton, QHBoxLayout, QCheckBox,
+from PyQt5.QtWidgets import (QMessageBox, QVBoxLayout, QLabel, QDialog, QDialogButtonBox,
+                             QGroupBox, QPushButton, QHBoxLayout, QComboBox, QFormLayout,
                              QTableWidget, QTableWidgetItem, QApplication)
 
 from coralnet_toolbox.WorkArea.QtWorkArea import WorkArea
+from coralnet_toolbox.WorkArea.tile_grid import (compute_tile_grid, EDGE_SKIP, EDGE_SHIFT,
+                                                 EDGE_SHRINK)
 
 from coralnet_toolbox.Common.QtTileSizeInput import TileSizeInput
 from coralnet_toolbox.Common.QtOverlapInput import OverlapInput
@@ -13,6 +15,18 @@ from coralnet_toolbox.Common.QtMarginInput import MarginInput
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Icons import get_icon, get_window_icon
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Constants
+# ----------------------------------------------------------------------------------------------------------------------
+
+# (combo text, edge mode, status label wording)
+EDGE_MODE_CHOICES = [
+    ("Skip partial tiles", EDGE_SKIP, "skipping partial tiles"),
+    ("Shift inward (full coverage)", EDGE_SHIFT, "with full coverage"),
+    ("Smaller edge tiles", EDGE_SHRINK, "with smaller edge tiles"),
+]
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -150,15 +164,21 @@ class WorkAreaManager(QDialog):
     def setup_options_layout(self):
         """Set up additional options layout."""
         group_box = QGroupBox("Tiling Options")
-        layout = QVBoxLayout()
+        layout = QFormLayout()
 
-        # Option to ensure full coverage (enabled by default)
-        self.ensure_coverage_checkbox = QCheckBox("Ensure full coverage of usable area")
-        self.ensure_coverage_checkbox.setChecked(True)
-        self.ensure_coverage_checkbox.setToolTip(
-            "When enabled, adds additional tiles at the right and bottom edges to ensure the entire area is covered"
+        # How tiles meet the right and bottom edges of the usable area
+        self.edge_mode_combo = QComboBox()
+        for text, mode, _ in EDGE_MODE_CHOICES:
+            self.edge_mode_combo.addItem(text, mode)
+        self.edge_mode_combo.setCurrentIndex(self.edge_mode_combo.findData(EDGE_SHIFT))
+        self.edge_mode_combo.setToolTip(
+            "How tiles meet the right and bottom edges of the usable area.\n"
+            "Skip partial tiles: leave out tiles that would not fit whole.\n"
+            "Shift inward: add full size tiles slid against the edge, overlapping their neighbors.\n"
+            "Smaller edge tiles: cut the last column and row smaller, so tiles overlap\n"
+            "only by the amount set below. With no overlap, every pixel is in exactly one tile."
         )
-        layout.addWidget(self.ensure_coverage_checkbox)
+        layout.addRow("Edge tiles:", self.edge_mode_combo)
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
@@ -376,19 +396,16 @@ class WorkAreaManager(QDialog):
         left, top, right, bottom = margins
         usable_width = image_width - left - right
         usable_height = image_height - top - bottom
-        
-        # Calculate effective tile size (adjusted for overlap)
-        effective_width = tile_width - overlap_width
-        effective_height = tile_height - overlap_height
-        
-        if effective_width <= 0 or effective_height <= 0:
-            QMessageBox.warning(self, 
-                                "Invalid Parameters", 
-                                f"Effective tile size must be positive. Reduce overlap.\n"
-                                f"Current overlap: {overlap_width}×{overlap_height} pixels\n"
-                                f"Tile size: {tile_width}×{tile_height} pixels")
+
+        # Lay out the tiles (validate_parameters has already checked overlap and margins)
+        edge_mode = self.edge_mode_combo.currentData()
+        try:
+            grid = compute_tile_grid(image_width, image_height, tile_width, tile_height,
+                                     overlap_width, overlap_height, margins, edge_mode)
+        except ValueError as e:
+            QMessageBox.warning(self, "Invalid Parameters", str(e))
             return
-        
+
         # Create a margin work area to show the boundary with shadow
         self.margin_work_area = WorkArea(
             left, top, usable_width, usable_height,
@@ -411,178 +428,19 @@ class WorkAreaManager(QDialog):
         if self.margin_work_area.shadow_area:
             self.all_graphics.append(self.margin_work_area.shadow_area)
         
-        # Calculate tile positions using the ensure full coverage option
-        ensure_coverage = self.ensure_coverage_checkbox.isChecked()
-        if ensure_coverage:
-            # Calculate number of tiles in each dimension for the regular grid
-            num_tiles_x = max(1, int(usable_width / effective_width))
-            num_tiles_y = max(1, int(usable_height / effective_height))
-            
-            # Calculate the exact covered area with the regular grid
-            covered_width = num_tiles_x * effective_width + overlap_width
-            covered_height = num_tiles_y * effective_height + overlap_height
-            
-            # Create work areas for the regular grid
-            for i in range(num_tiles_y):
-                for j in range(num_tiles_x):
-                    # Calculate tile coordinates
-                    x = left + j * effective_width
-                    y = top + i * effective_height
-                    
-                    # Ensure tile doesn't exceed image boundaries
-                    if x + tile_width > image_width or y + tile_height > image_height:
-                        continue
-                    
-                    # Create work area for this tile
-                    tile_work_area = WorkArea(
-                        x, y, tile_width, tile_height,
-                        self.annotation_window.current_image_path
-                    )
-                    
-                    
-                    # Add to scene with thinner line and store the graphics
-                    tile_graphics = tile_work_area.create_graphics(
-                        self.annotation_window.scene, 
-                    )
-                    
-                    # Store the graphics for later removal
-                    self.all_graphics.append(tile_graphics)
-                    
-                    # Store the work area
-                    self.tile_work_areas.append(tile_work_area)
-            
-            # Check if we need extra columns on the right
-            if covered_width < usable_width:
-                # Calculate right edge position ensuring tile fits within image
-                right_edge = min(left + usable_width - tile_width, image_width - tile_width)
-                
-                # Only add right edge tiles if they would be valid
-                if right_edge >= left and right_edge + tile_width <= image_width:
-                    for i in range(num_tiles_y):
-                        y = top + i * effective_height
-                        
-                        # Ensure tile doesn't exceed image boundaries
-                        if y + tile_height > image_height:
-                            continue
-                        
-                        # Create work area aligned to right edge
-                        tile_work_area = WorkArea(
-                            right_edge, y, tile_width, tile_height,
-                            self.annotation_window.current_image_path
-                        )
-                        
-                        
-                        # Add to scene with thinner line and store the graphics
-                        tile_graphics = tile_work_area.create_graphics(
-                            self.annotation_window.scene, 
-                        )
-                        
-                        # Store the graphics for later removal
-                        self.all_graphics.append(tile_graphics)
-                        
-                        # Store the work area
-                        self.tile_work_areas.append(tile_work_area)
-            
-            # Check if we need extra rows at the bottom
-            if covered_height < usable_height:
-                # Calculate bottom edge position ensuring tile fits within image
-                bottom_edge = min(top + usable_height - tile_height, image_height - tile_height)
-                
-                # Only add bottom edge tiles if they would be valid
-                if bottom_edge >= top and bottom_edge + tile_height <= image_height:
-                    for j in range(num_tiles_x):
-                        x = left + j * effective_width
-                        
-                        # Ensure tile doesn't exceed image boundaries
-                        if x + tile_width > image_width:
-                            continue
-                        
-                        # Create work area aligned to bottom edge
-                        tile_work_area = WorkArea(
-                            x, bottom_edge, tile_width, tile_height,
-                            self.annotation_window.current_image_path
-                        )
-                        
-                        
-                        # Add to scene with thinner line and store the graphics
-                        tile_graphics = tile_work_area.create_graphics(
-                            self.annotation_window.scene, 
-                        )
-                        
-                        # Store the graphics for later removal
-                        self.all_graphics.append(tile_graphics)
-                        
-                        # Store the work area
-                        self.tile_work_areas.append(tile_work_area)
-                    
-                    # Check if we need a corner tile (if both right and bottom need coverage)
-                    if covered_width < usable_width:
-                        # Calculate corner position ensuring tile fits within image
-                        right_edge = min(left + usable_width - tile_width, image_width - tile_width)
-                        
-                        # Only add corner tile if it would be valid
-                        if (right_edge >= left and right_edge + tile_width <= image_width and 
-                            bottom_edge >= top and bottom_edge + tile_height <= image_height):
-                            
-                            # Create the bottom right corner tile
-                            tile_work_area = WorkArea(
-                                right_edge, bottom_edge, tile_width, tile_height,
-                                self.annotation_window.current_image_path
-                            )
-                            
-                            
-                            # Add to scene with thinner line and store the graphics
-                            tile_graphics = tile_work_area.create_graphics(
-                                self.annotation_window.scene, 
-                            )
-                            
-                            # Store the graphics for later removal
-                            self.all_graphics.append(tile_graphics)
-                            
-                            # Store the work area
-                            self.tile_work_areas.append(tile_work_area)
-        else:
-            # Original logic when ensure_coverage is disabled
-            num_tiles_x = max(1, int((usable_width - overlap_width) / effective_width) + 1)
-            num_tiles_y = max(1, int((usable_height - overlap_height) / effective_height) + 1)
-            
-            # Create work areas for each tile
-            for i in range(num_tiles_y):
-                for j in range(num_tiles_x):
-                    # Calculate tile coordinates
-                    x = left + j * effective_width
-                    y = top + i * effective_height
-                    
-                    # Ensure the tile doesn't go beyond the usable area OR image boundaries
-                    if (x + tile_width > left + usable_width or y + tile_height > top + usable_height or
-                        x + tile_width > image_width or y + tile_height > image_height):
-                        continue
-                    
-                    # Create work area for this tile
-                    tile_work_area = WorkArea(
-                        x, y, tile_width, tile_height,
-                        self.annotation_window.current_image_path
-                    )
-                    
-                    
-                    # Add to scene with thinner line and store the graphics
-                    tile_graphics = tile_work_area.create_graphics(
-                        self.annotation_window.scene, 
-                    )
-                    
-                    # Store the graphics for later removal
-                    self.all_graphics.append(tile_graphics)
-                    
-                    # Store the work area
-                    self.tile_work_areas.append(tile_work_area)
-        
-        # Count tiles
-        total_tiles = len(self.tile_work_areas)
-        
+        # Create a work area and its graphics for each tile
+        for x, y, width, height in grid.rects:
+            tile_work_area = WorkArea(x, y, width, height, self.annotation_window.current_image_path)
+            tile_graphics = tile_work_area.create_graphics(self.annotation_window.scene)
+
+            # Store the graphics and work area for later removal
+            self.all_graphics.append(tile_graphics)
+            self.tile_work_areas.append(tile_work_area)
+
         # Update tile status label
-        coverage_status = "with full coverage" if ensure_coverage else "with standard grid"
+        edge_status = next(status for _, mode, status in EDGE_MODE_CHOICES if mode == edge_mode)
         self.tiles_status_label.setText(
-            f"Tiles: {total_tiles} ({num_tiles_x}×{num_tiles_y} grid, {coverage_status}) | "
+            f"Tiles: {len(grid)} ({grid.cols}×{grid.rows} grid, {edge_status}) | "
             f"Size: {tile_width}×{tile_height} | Overlap: {overlap_width}×{overlap_height}"
         )
 
@@ -669,119 +527,13 @@ class WorkAreaManager(QDialog):
         Generate tile work areas for a given image and parameters.
         Returns a list of WorkArea objects.
         """
-        # Extract tiling parameters
-        tile_width = params["tile_width"]
-        tile_height = params["tile_height"]
-        overlap_width = params["overlap_width"]
-        overlap_height = params["overlap_height"]
-        margins = params["margins"]
-        image_width = params["image_width"]
-        image_height = params["image_height"]
-        ensure_coverage = self.ensure_coverage_checkbox.isChecked()
-
-        # Calculate usable area inside margins
-        left, top, right, bottom = margins
-        usable_width = image_width - left - right
-        usable_height = image_height - top - bottom
-        effective_width = tile_width - overlap_width
-        effective_height = tile_height - overlap_height
-
-        tile_work_areas = []
-        if ensure_coverage:
-            # Calculate number of tiles for regular grid
-            num_tiles_x = max(1, int(usable_width / effective_width))
-            num_tiles_y = max(1, int(usable_height / effective_height))
-            
-            # Calculate covered area by the grid
-            covered_width = num_tiles_x * effective_width + overlap_width
-            covered_height = num_tiles_y * effective_height + overlap_height
-            
-            # Create tiles for the regular grid
-            for i in range(num_tiles_y):
-                for j in range(num_tiles_x):
-                    x = left + j * effective_width
-                    y = top + i * effective_height
-                    
-                    # Ensure tile doesn't exceed image boundaries
-                    if x + tile_width > image_width or y + tile_height > image_height:
-                        continue
-                        
-                    tile_work_area = WorkArea(
-                        x, y, tile_width, tile_height, image_path
-                    )
-                    tile_work_areas.append(tile_work_area)
-                    
-            # Add extra column of tiles at the right edge if needed
-            if covered_width < usable_width:
-                # Calculate right edge position ensuring tile fits within image
-                right_edge = min(left + usable_width - tile_width, image_width - tile_width)
-                
-                # Only add right edge tiles if they would be valid
-                if right_edge >= left and right_edge + tile_width <= image_width:
-                    for i in range(num_tiles_y):
-                        y = top + i * effective_height
-                        
-                        # Ensure tile doesn't exceed image boundaries
-                        if y + tile_height > image_height:
-                            continue
-                            
-                        tile_work_area = WorkArea(
-                            right_edge, y, tile_width, tile_height, image_path
-                        )
-                        tile_work_areas.append(tile_work_area)
-                    
-            # Add extra row of tiles at the bottom edge if needed
-            if covered_height < usable_height:
-                # Calculate bottom edge position ensuring tile fits within image
-                bottom_edge = min(top + usable_height - tile_height, image_height - tile_height)
-                
-                # Only add bottom edge tiles if they would be valid
-                if bottom_edge >= top and bottom_edge + tile_height <= image_height:
-                    for j in range(num_tiles_x):
-                        x = left + j * effective_width
-                        
-                        # Ensure tile doesn't exceed image boundaries
-                        if x + tile_width > image_width:
-                            continue
-                            
-                        tile_work_area = WorkArea(
-                            x, bottom_edge, tile_width, tile_height, image_path
-                        )
-                        tile_work_areas.append(tile_work_area)
-                        
-                    # Add bottom-right corner tile if both right and bottom need coverage
-                    if covered_width < usable_width:
-                        # Calculate corner position ensuring tile fits within image
-                        right_edge = min(left + usable_width - tile_width, image_width - tile_width)
-                        
-                        # Only add corner tile if it would be valid
-                        if (right_edge >= left and right_edge + tile_width <= image_width and 
-                            bottom_edge >= top and bottom_edge + tile_height <= image_height):
-                            
-                            tile_work_area = WorkArea(
-                                right_edge, bottom_edge, tile_width, tile_height, image_path
-                            )
-                            tile_work_areas.append(tile_work_area)
-        else:
-            # Standard grid logic (no extra coverage)
-            num_tiles_x = max(1, int((usable_width - overlap_width) / effective_width) + 1)
-            num_tiles_y = max(1, int((usable_height - overlap_height) / effective_height) + 1)
-            for i in range(num_tiles_y):
-                for j in range(num_tiles_x):
-                    x = left + j * effective_width
-                    y = top + i * effective_height
-                    
-                    # Skip tiles that would exceed the usable area OR image boundaries
-                    if (x + tile_width > left + usable_width or y + tile_height > top + usable_height or
-                        x + tile_width > image_width or y + tile_height > image_height):
-                        continue
-                        
-                    tile_work_area = WorkArea(
-                        x, y, tile_width, tile_height, image_path
-                    )
-                    tile_work_areas.append(tile_work_area)
-                    
-        return tile_work_areas
+        grid = compute_tile_grid(
+            params["image_width"], params["image_height"],
+            params["tile_width"], params["tile_height"],
+            params["overlap_width"], params["overlap_height"],
+            params["margins"], self.edge_mode_combo.currentData(),
+        )
+        return [WorkArea(x, y, width, height, image_path) for x, y, width, height in grid.rects]
 
     def apply(self):
         """

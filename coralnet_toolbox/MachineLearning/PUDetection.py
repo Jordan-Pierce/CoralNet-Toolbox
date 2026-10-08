@@ -16,28 +16,89 @@ the student ever sees.
     teacher score >= ignore_conf, no GT   -> excluded from the cls loss
     everything else                       -> background, as normal
 
-Why only the ignore band, when the teacher could also *inject* its confident
-boxes as positives: injection was measured on FathomNet-2026, the African
-Wildlife label-drop benchmark, and real MDBC coral data, and it is the one part
-of this method that can fail badly. It teaches the student its own false
-positives -- on multiclass data the teacher staples the wrong species onto a
-recovered box, and on DETR-family models it collapses precision outright
-(recall 0.61 at precision 0.03: over-prediction, not detection). The ignore
-band never had that failure mode in any arm, so it is the whole feature here
-and there is no confidence knob to get wrong.
+The band is the whole feature, and there is no confidence knob to get wrong.
 
 Scope: the anchor-based v8 detection loss (yolov3u through yolo12x, and the
 segmentation heads built on it). Not end-to-end models (yolov10, yolo26 -- they
 use E2ELoss, a different object), and not RT-DETR (Hungarian matching over
-queries; the port exists but is a separate piece of work). ``supports_pu``
-is the gate, and it reads the built model rather than guessing from the
-filename.
+queries). ``supports_pu`` is the gate, and it reads the built model rather than
+guessing from the filename.
 
-Measured caveat worth repeating wherever this is offered to a user: the edge is
-capacity-gated. It showed up on medium backbones at large imgsz and did *not*
-show up at nano -- an isolation run at yolo11n/1408 came out slightly behind
-its own baseline. It is not free, either: the teacher costs a forward pass per
-batch and a frozen copy of the model in VRAM.
+What this is measured against, and the numbers to repeat wherever it is offered
+to a user. Four arms -- {complete labels, 20% of train boxes removed} x {stock
+trainer, this one} -- on African Wildlife at yolo11n/1024, 60 epochs, three
+seeds, the drop resampled per seed, every comparison paired within a seed, and
+scored on a test split whose labels were never touched. Harness and tables in
+data/PU_results:
+
+    20% of train boxes removed  -> +0.0222 mAP50-95, +0.0272 recall,
+                                   ahead in 3 of 3 seeds
+    labels already complete     -> +0.0054 mAP50-95, sd 0.0097, and *behind*
+                                   its own baseline in 1 of 3 seeds
+
+What separates those two arms is how much was actually missing, not the model.
+Given a complete dataset there is nothing for the band to recover and it buys
+nothing reliable -- the spread across seeds there is wider than the mean. Offer
+this for a dataset that really is positive-unlabeled, not as a general
+improvement.
+
+It does not fully undo the damage, either. On the thinned arm it stayed 0.0032
+mAP50-95 behind the complete-label baseline, in every seed: the band recovers
+most of what the missing labels cost, never all of it. And it is not free -- the
+teacher costs a forward pass per batch, a frozen copy of the model in VRAM, and
+about 1.4x wall-clock time.
+
+Those numbers are one dataset and one model size: african-wildlife is small
+(1052 train images, 1.8 boxes each) and 4-class, so nothing above speaks to
+dense scenes or many classes. Rerun the harness before extending the claim.
+
+**The numbers above were scored on complete labels, and a real project's val and
+test splits are PU too.** That was measured separately -- the same checkpoints
+re-scored against a test split thinned the same 20%, in data/PU_results/PU_VAL_BIAS.md:
+
+    mAP50-95   -0.125   |  precision  -0.184   <- the measurement, not the model
+    mAP50      -0.145   |  recall     within 0.017, no consistent sign
+
+The damage is near-uniform across all four arms, which is why **the ranking
+survives**: the thinned-label arm still beat its baseline in 3 of 3 seeds under PU
+scoring (+0.0172 mAP50-95, +0.0392 recall). So comparisons on one PU split are
+valid and conservative -- the real gain is larger than the measured one -- while
+absolute numbers are not reportable at all. Recall is the metric to trust and to
+select on; a "false positive" and a recovered object are indistinguishable on a PU
+split, so precision there is a lower bound rather than an estimate. A small
+exhaustively labeled val set is still worth more than any of this, because it is
+the only thing that restores honest absolutes, fitness and early stopping.
+
+Early stopping is the part of that which this module has to handle rather than
+document, because the user cannot be asked to notice it. Ultralytics stops on
+``fitness``, and ``Metric.fitness()`` weights are ``[0, 0, 0, 1]`` over
+``[P, R, mAP50, mAP50-95]`` -- mAP50-95 alone, the number PU spends. On a PU val
+split a run that is still getting better at finding unlabeled objects can have
+falling fitness and be stopped while improving. :class:`_PUEarlyStopping` is the
+answer: patience over the *union* of fitness and recall, so a PU run ends only
+once both have stalled. It can stop later than the stock rule, never earlier.
+
+That is not hypothetical. Three further runs trained with a PU validation split
+(A5/A6 in data/PU_results) show the divergence directly -- on one seed fitness
+peaked at epoch 48 while recall went on improving to epoch 59, and the Active
+Learning dialog's ``patience`` of 10 would have ended that run at epoch 58, one
+epoch before its best recall. The union rule does not stop it at all. Training a
+PU run against a PU val split also costs about 0.014 mAP50-95 purely through
+checkpoint selection, since the training data is identical and only the labels
+fitness is computed against differ.
+
+With a PU val split the ignore band's recall gain survives intact (+0.0364, 3 of 3
+seeds) while its mAP gain mostly does not (+0.0053, 2 of 3) -- more evidence that
+recall is the signal to steer by here, and the reason this class exists.
+
+Two things deliberately left out, neither measured against the above. *Injection*
+-- adding the teacher's confident boxes to the batch as positives, rather than
+only masking uncertain regions out of the loss -- would break the contract this
+module is built on, that the student's positives are exactly the boxes the user
+drew, so it is not a knob here. And RT-DETR, whose Hungarian matching over
+queries gives the band no anchors to mask; that port is separate work. In
+previous works, both of these failed to improve over the baseline in a consistent 
+manner. Only Ignore-Band PU consistently worked.
 
 References:
     - S2Teacher (2025): https://arxiv.org/abs/2504.11111
@@ -76,9 +137,23 @@ WARMUP_FRACTION = 0.12  # GT-only epochs before the teacher is worth listening t
 
 # The extra checkpoint a PU run leaves beside best.pt: the epoch that recalled
 # best, rather than the epoch that scored best. Ultralytics selects best.pt on
-# fitness, which for detection is mAP50-95 alone -- precision and recall are
-# both weighted zero -- and mAP is exactly the number PU is expected to spend.
-# Without this the run can train past its own best model and never save it.
+# fitness, which for detection is mAP50-95 alone -- precision and recall are both
+# weighted zero -- and mAP is exactly the number PU is expected to spend.
+#
+# What this is NOT: the checkpoint to deploy. That was measured directly -- three
+# seeds trained with a PU *validation* split, which is the case it exists for, then
+# both checkpoints scored on clean test:
+#
+#     recall    -0.0036 mean, better in 1 of 3 seeds
+#     mAP50-95  +0.0129 mean, better in 2 of 3 (one of them an exact tie, the
+#               same epoch chosen twice)
+#
+# It does not reliably deliver more recall even when val is PU, which is the one
+# thing it is for. No consistent winner, so best.pt stays what every consumer
+# loads -- that also keeps it consistent with how Active Learning ranks rounds and
+# with read_metrics' invariant that the reported epoch is the deployed one. This is
+# kept as the record of the best-recall epoch, and it is worth something: on the
+# one seed where fitness selection went wrong it was +0.0366 mAP50-95 ahead.
 RECALL_CHECKPOINT = 'recall_best.pt'
 
 # The families the anchor-based v8 loss covers, as a user reads them. Every
@@ -517,6 +592,85 @@ class PUDetectionLoss(v8DetectionLoss):
 
 
 # ----------------------------------------------------------------------------------------------------------------------
+# Early stopping
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+class _PUEarlyStopping:
+    """``EarlyStopping`` over the union of fitness and validation recall.
+
+    Ultralytics stops on ``fitness``, which for detection is mAP50-95 alone, and
+    that is the number PU spends: on a positive-unlabeled val split every object
+    the model newly finds counts against it, so a run can be improving at exactly
+    the job it was given while its fitness falls. Stock early stopping then ends
+    it mid-improvement, and the Active Learning dialog's ``patience`` of 10 makes
+    that likely rather than theoretical.
+
+    So this waits for **both** signals to stall: ``patience`` is measured from the
+    more recent of the last fitness improvement and the last recall improvement.
+    It can stop later than the stock rule and never earlier, which is why it is
+    safe to install unconditionally on a PU run. The user's ``patience`` value is
+    still the user's -- this changes what counts as "no improvement", not how long
+    to wait for it.
+
+    Deliberately not a subclass: ``EarlyStopping.__call__`` logs its own stop
+    message, and delegating would print "training stopped early" on epochs this
+    rule goes on to veto.
+
+    ``possible_stop`` is as load-bearing as the return value. The trainer reads it
+    to decide whether to validate at all (``if self.args.val or final_epoch or
+    self.stopper.possible_stop or self.stop``), and recall only exists if
+    validation ran, so it is reported from the union too.
+    """
+
+    def __init__(self, patience, recall_of):
+        self.patience = patience or float('inf')
+        # Called with no arguments; returns this epoch's validation recall or None.
+        self._recall_of = recall_of
+        self.best_fitness = 0.0
+        self.best_epoch = 0
+        self.best_recall = None
+        self.best_recall_epoch = 0
+        self.possible_stop = False
+
+    def __call__(self, epoch, fitness):
+        if fitness is None:  # val=False; matches EarlyStopping's own guard
+            return False
+
+        if fitness > self.best_fitness or self.best_fitness == 0:
+            self.best_epoch = epoch
+            self.best_fitness = fitness
+        fitness_delta = epoch - self.best_epoch
+
+        recall = None
+        try:
+            recall = self._recall_of()
+        except Exception:  # a metrics dict this cannot read must not end the run
+            recall = None
+        if recall is not None and (self.best_recall is None or recall > self.best_recall):
+            self.best_recall = recall
+            self.best_recall_epoch = epoch
+        # With no recall to read, fall back to fitness alone rather than to a
+        # delta of zero, which would be a run that can never stop.
+        recall_delta = (epoch - self.best_recall_epoch
+                        if self.best_recall is not None else fitness_delta)
+
+        # The union: stalled only where neither has improved recently.
+        delta = min(fitness_delta, recall_delta)
+        self.possible_stop = delta >= (self.patience - 1)
+        stop = delta >= self.patience
+        if stop and RANK in (-1, 0):
+            LOGGER.info(
+                f"PU early stopping: no improvement in fitness (best epoch "
+                f"{self.best_epoch}, {self.best_fitness:.4f}) or recall (best epoch "
+                f"{self.best_recall_epoch}"
+                + (f", {self.best_recall:.4f}" if self.best_recall is not None else "")
+                + f") for {self.patience} epochs. Both are required to stall, because "
+                f"fitness alone is the metric PU trades away.")
+        return stop
+
+
+# ----------------------------------------------------------------------------------------------------------------------
 # Trainer
 # ----------------------------------------------------------------------------------------------------------------------
 
@@ -562,6 +716,13 @@ class PUDetectionTrainer(DetectionTrainer):
         with open(self.pu_diag_csv, "w") as f:
             f.write("epoch,pu_enabled,ignore_conf,ignore_count\n")
 
+        # Stop on the union of fitness and recall, not on fitness alone. Installed
+        # after super()._setup_train(), which is what creates the stock stopper.
+        self.stopper = _PUEarlyStopping(
+            getattr(self.args, 'patience', 0),
+            lambda: self.epoch_recall(getattr(self, 'metrics', None) or {}),
+        )
+
         self._pu_best_recall = None
         self.add_callback("on_train_epoch_start", self._pu_epoch_start)
         self.add_callback("on_train_batch_end", self._pu_update_teacher)
@@ -571,6 +732,25 @@ class PUDetectionTrainer(DetectionTrainer):
         if RANK in (-1, 0):
             LOGGER.info(f"PU: ignore-band training. warmup={self.pu_warmup} epochs "
                         f"(GT only), ignore_conf={IGNORE_CONF}, ema_decay={EMA_DECAY}.")
+            LOGGER.info(f"PU: early stopping waits for fitness AND recall to stall "
+                        f"(patience={self.stopper.patience}), because mAP50-95 alone "
+                        f"is the metric PU trades away.")
+
+    def pu_epoch_note(self):
+        """One short phrase describing what PU did this epoch, for the GUI log.
+
+        Read by the training callbacks, which have the trainer but not the loss.
+        Uses ``epoch_ignore_count`` rather than ``last_ignore_count``: this is
+        called at ``on_fit_epoch_end``, after every training batch of the epoch
+        has run, so the running total is complete and the rolled-over figure is
+        still the previous epoch's.
+        """
+        crit = getattr(self.model, "criterion", None)
+        if not getattr(crit, "is_pu_criterion", False):
+            return ""
+        if not getattr(crit, "pu_enabled", False):
+            return f"PU warmup {self.epoch + 1}/{self.pu_warmup}"
+        return f"PU band: {crit.epoch_ignore_count} regions excluded"
 
     def _pu_decay(self):
         """Decay with a short ramp, so an EMA that starts at the student's own

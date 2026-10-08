@@ -1,6 +1,5 @@
 import os
 import random
-from collections import Counter
 import ujson as json
 
 from PyQt5.QtCore import Qt
@@ -20,18 +19,32 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Icons import get_icon, get_window_icon
 from coralnet_toolbox.MachineLearning.ExportDataset.export_dataset_utils import (
+    REFRESH_SLOW_MS,
+    RefreshTimings,
+    format_refresh_duration,
     build_export_sample_paths,
+    build_video_frame_path,
     busy_cursor,
     closing_progress_bar,
     frame_matches_stride,
     group_annotations_by_source,
     locked_window,
     normalize_source_path,
+    parse_frame_path,
 )
 from coralnet_toolbox.MachineLearning.TrainModel.QtBase import (
     open_train_model_dialog_later,
     prompt_train_model,
 )
+from coralnet_toolbox.Rasters.extracted_images import has_active_set
+
+
+# How long the refresh summary stays in the status bar
+REFRESH_STATUS_TIMEOUT_MS = 6000
+
+# Used when nothing more specific set a trigger: a label row checkbox is the
+# only control wired straight to update_summary_statistics.
+DEFAULT_REFRESH_TRIGGER = "label checkbox"
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -43,6 +56,9 @@ class Base(QDialog):
     supports_unlabeled_video_frames = False
     # Task the exported dataset trains; set by the subclasses
     task = None
+    # Every dialog here is on the index now. A subclass that cannot be set
+    # this False and keeps the per-annotation rescan in its own override.
+    uses_annotation_index = True
 
     def __init__(self, main_window, parent=None):
         """
@@ -65,6 +81,34 @@ class Base(QDialog):
         self.selected_labels = []
         self.selected_annotations = []
         self.updating_summary_statistics = False
+
+        # Annotation index. One pass over the annotations groups them by label
+        # and image path; after that a label checkbox costs a walk of that one
+        # label's paths, not a rescan of every annotation. Rebuilt only when a
+        # structural option changes - annotation types, image source, stride.
+        self._index_dirty = True
+        self._label_paths = {}         # label -> {image_path: [annotations]}
+        self._label_totals = {}        # label -> annotation count
+        self._path_counts = {}         # image_path -> {label: count}
+        self._path_source = {}         # image_path -> source path
+        self._path_frame = {}          # image_path -> frame index, or None
+        self._paths_by_source = {}     # source path -> [image_path]
+        self._video_frame_counts = {}  # source path -> frame count (video only)
+        self._index_sources = []
+        # Running selection totals, folded forward by _apply_label_selection
+        self._path_selected = {}
+        self._source_selected = {}
+        self._applied_labels = set()
+        # (row, label, checkbox) per table row, so the hot loop skips findChild
+        self._label_rows = []
+        self._split_dirty = True
+        self._split_label_counts = ({}, {}, {})
+        self._split_totals = (0, 0, 0)
+        # What caused the refresh that is about to run, for the readout
+        self._refresh_trigger = DEFAULT_REFRESH_TRIGGER
+        # A record opened before update_summary_statistics was called, so the
+        # phases that ran first are part of the same total
+        self._pending_timings = None
 
         self.output_dir = None
         self.dataset_name = None
@@ -144,11 +188,29 @@ class Base(QDialog):
             event: The show event.
         """
         super().showEvent(event)
-        self.update_annotation_type_checkboxes()
-        self.update_video_options()
-        # After update_video_options: the Video Frames group changes the height
-        self.fit_to_options()
-        self.populate_class_filter_list()
+        # Opening a dialog does its heaviest work in populate_class_filter_list,
+        # which runs before update_summary_statistics and used to sit outside
+        # the timing record - so the readout claimed a fraction of the real
+        # wait. One record spans both, and the refresh appends to it.
+        timings = RefreshTimings(type(self).__name__, "dialog open")
+
+        # Setting these option widgets fires their signals, and those now
+        # invalidate the index. Hold the summary off until the rows exist, or
+        # every setChecked() here rebuilds the index for nothing.
+        self.updating_summary_statistics = True
+        try:
+            self.update_annotation_type_checkboxes()
+            self.update_video_options()
+            self.update_extracted_note()
+            # After update_video_options: the Video Frames group changes the height
+            self.fit_to_options()
+            timings.mark("options and layout")
+            self.populate_class_filter_list()
+            timings.mark("populate class list")
+        finally:
+            self.updating_summary_statistics = False
+        self._refresh_trigger = "dialog open"
+        self._pending_timings = timings
         self.update_summary_statistics()
 
     def setup_info_layout(self):
@@ -205,6 +267,12 @@ class Base(QDialog):
         self.test_ratio_spinbox.setValue(0.1)
         self.test_ratio_spinbox.setToolTip("Fraction of data for test set (0.0 to 1.0).\nStandard: 0.1 (10%). Used to evaluate final model performance.\nNote: ratios should sum to 1.0")
 
+        # A ratio change re-splits. Without this the table - and the export
+        # that reads train_images - kept the split built from the ratios the
+        # dialog opened with.
+        for spinbox in (self.train_ratio_spinbox, self.val_ratio_spinbox, self.test_ratio_spinbox):
+            spinbox.valueChanged.connect(self.invalidate_split)
+
         layout.addWidget(QLabel("Train Ratio:"))
         layout.addWidget(self.train_ratio_spinbox)
         layout.addWidget(QLabel("Validation Ratio:"))
@@ -245,6 +313,13 @@ class Base(QDialog):
         self.include_polygons_checkbox = QCheckBox("Include Polygon Annotations")
         self.include_polygons_checkbox.setToolTip("Include polygon annotations in the export.\nPolygons are converted to normalized coordinate format for segmentation tasks.")
 
+        # These are user-editable, so they have to invalidate the index; before
+        # this the table ignored them until Refresh was pressed.
+        for checkbox in (self.include_patches_checkbox,
+                         self.include_rectangles_checkbox,
+                         self.include_polygons_checkbox):
+            checkbox.stateChanged.connect(self.refresh_structure)
+
         layout.addWidget(self.include_patches_checkbox)
         layout.addWidget(self.include_rectangles_checkbox)
         layout.addWidget(self.include_polygons_checkbox)
@@ -272,7 +347,8 @@ class Base(QDialog):
         # at, and equals every image when no filter is active.
         self.filtered_images_radio.setChecked(True)
 
-        self.all_images_radio.toggled.connect(self.update_image_selection)
+        # One connection for the pair: a click toggles both buttons, so wiring
+        # both ran the whole update twice per click.
         self.filtered_images_radio.toggled.connect(self.update_image_selection)
 
         layout.addWidget(self.all_images_radio)
@@ -300,7 +376,8 @@ class Base(QDialog):
         self.exclude_negatives_radio.setChecked(True)
 
         # Connect to update stats when changed. Only one needed for the group.
-        self.include_negatives_radio.toggled.connect(self.update_summary_statistics)
+        # Negatives decide which sources yield sample paths, so the split goes too.
+        self.include_negatives_radio.toggled.connect(self.refresh_structure)
 
         layout.addWidget(self.include_negatives_radio)
         layout.addWidget(self.exclude_negatives_radio)
@@ -321,7 +398,7 @@ class Base(QDialog):
             "Keep frames from the same source video together when splitting train, val, and test.\n"
             "Prevents the model from seeing different frames from the same video across splits."
         )
-        self.split_by_source_checkbox.stateChanged.connect(self.update_summary_statistics)
+        self.split_by_source_checkbox.stateChanged.connect(self.invalidate_split)
         layout.addWidget(self.split_by_source_checkbox)
 
         layout.addStretch(1)
@@ -339,7 +416,7 @@ class Base(QDialog):
         self.frame_stride_spinbox.setRange(1, 999999)
         self.frame_stride_spinbox.setValue(1)
         self.frame_stride_spinbox.setToolTip("Extract every Nth frame (stride=1 means all frames).\nUseful to reduce redundancy in video-based datasets.")
-        self.frame_stride_spinbox.valueChanged.connect(self.update_summary_statistics)
+        self.frame_stride_spinbox.valueChanged.connect(self.refresh_structure)
         stride_layout.addWidget(self.frame_stride_spinbox)
 
         layout.addWidget(stride_widget)
@@ -352,7 +429,7 @@ class Base(QDialog):
             "Also export video frames without annotations in the export.\n"
             "Useful for negative samples. Disabled for classification exports."
         )
-        self.export_unlabeled_video_frames_checkbox.stateChanged.connect(self.update_summary_statistics)
+        self.export_unlabeled_video_frames_checkbox.stateChanged.connect(self.invalidate_split)
         layout.addWidget(self.export_unlabeled_video_frames_checkbox)
 
         layout.addStretch(1)
@@ -386,10 +463,37 @@ class Base(QDialog):
             self.export_unlabeled_video_frames_checkbox.setChecked(False)
 
     def get_selected_image_paths(self):
-        """Return the currently selected image paths from the project or the filtered table."""
+        """Return the currently selected image paths from the project or the filtered table.
+
+        A raster whose work areas are extracted is left out: its extracted
+        images carry the same pixels, and exporting both counts them twice.
+        """
+        paths, _ = self._split_extracted_parents(self._candidate_image_paths())
+        return paths
+
+    def _candidate_image_paths(self):
         if self.filtered_images_radio.isChecked():
             return list(self.image_window.table_model.filtered_paths)
         return list(self.image_window.raster_manager.image_paths)
+
+    def _split_extracted_parents(self, paths):
+        """(paths to export, paths left out because their work areas are extracted)."""
+        raster_manager = self.image_window.raster_manager
+        kept, left_out = [], []
+        for path in paths:
+            raster = raster_manager.get_raster(path)
+            (left_out if raster is not None and has_active_set(raster) else kept).append(path)
+        return kept, left_out
+
+    def update_extracted_note(self):
+        """Say how many rasters are left out because their work areas are extracted."""
+        _, left_out = self._split_extracted_parents(self._candidate_image_paths())
+        if left_out:
+            count = len(left_out)
+            self.extracted_note_label.setText(
+                f"{count} raster{'s' if count != 1 else ''} left out: "
+                f"{'its' if count == 1 else 'their'} work areas are extracted.")
+        self.extracted_note_label.setVisible(bool(left_out))
 
     def get_selected_source_paths(self):
         """Return the selected paths normalized to their underlying source path."""
@@ -450,6 +554,11 @@ class Base(QDialog):
         self.ready_label = QLabel("❌ Not Ready")
         layout.addWidget(self.ready_label)
 
+        # Rasters left out because their work areas are extracted
+        self.extracted_note_label = QLabel()
+        self.extracted_note_label.setVisible(False)
+        layout.addWidget(self.extracted_note_label)
+
         # Add a spacer to push image counts to the right
         layout.addStretch() 
 
@@ -473,7 +582,7 @@ class Base(QDialog):
         # Add Refresh button
         self.refresh_button = QPushButton("Refresh | Shuffle")
         self.refresh_button.setToolTip("Recalculate stats and re-shuffle train/val/test splits")
-        self.refresh_button.clicked.connect(self.update_summary_statistics)
+        self.refresh_button.clicked.connect(self.refresh_all)
         button_layout.addWidget(self.refresh_button)
 
         # Add spacer to push OK/Cancel to right
@@ -712,6 +821,7 @@ class Base(QDialog):
                 # the Image Source defaults to the filtered table.
                 hidden_codes = self.get_hidden_label_codes()
 
+                label_rows = []
                 self.label_counts_table.setUpdatesEnabled(False)
                 row = 0
                 for label, count in sorted_label_counts:
@@ -734,9 +844,16 @@ class Base(QDialog):
                     self.label_counts_table.setItem(row, 5, test_item)
                     self.label_counts_table.setItem(row, 6, images_item)
 
+                    label_rows.append((row, label, container.findChild(QCheckBox)))
                     row += 1
                 self.label_counts_table.setUpdatesEnabled(True)
                 progress_bar.finish_progress()
+
+        # The rows hold new checkboxes, and the annotations may have changed
+        # since this dialog last opened, so both caches start over.
+        self._label_rows = label_rows
+        self._index_dirty = True
+        self._reset_selection_state()
 
     def split_data(self):
         """
@@ -867,107 +984,480 @@ class Base(QDialog):
                 return False
             return True
     
-        train_label_counts = Counter(a.label.short_label_code for a in self.train_annotations)
-        val_label_counts = Counter(a.label.short_label_code for a in self.val_annotations)
-        test_label_counts = Counter(a.label.short_label_code for a in self.test_annotations)
+        # These come from the index, already summed for the table. The old
+        # Counters here were a second pass over the same three split lists.
+        train_label_counts, val_label_counts, test_label_counts = self._split_label_counts
+        train_total, val_total, test_total = self._split_totals
 
         # Check the conditions for each split
         for label in self.selected_labels:
-            if train_ratio > 0 and train_label_counts[label] == 0:
+            if train_ratio > 0 and train_label_counts.get(label, 0) == 0:
                 return False
-            if val_ratio > 0 and val_label_counts[label] == 0:
+            if val_ratio > 0 and val_label_counts.get(label, 0) == 0:
                 return False
-            if test_ratio > 0 and test_label_counts[label] == 0:
+            if test_ratio > 0 and test_label_counts.get(label, 0) == 0:
                 return False
     
         # Additional checks to ensure no empty splits
-        if train_ratio > 0 and len(self.train_annotations) == 0:
+        if train_ratio > 0 and train_total == 0:
             return False
-        if val_ratio > 0 and len(self.val_annotations) == 0:
+        if val_ratio > 0 and val_total == 0:
             return False
-        if test_ratio > 0 and len(self.test_annotations) == 0:
+        if test_ratio > 0 and test_total == 0:
             return False
     
         return True
+
+    def _begin_timings(self):
+        """Open a timing record for the refresh that is starting.
+
+        A record left in _pending_timings by a caller that began earlier is
+        continued instead, so its phases and the refresh's add up to one total.
+        """
+        trigger = self._refresh_trigger
+        self._refresh_trigger = DEFAULT_REFRESH_TRIGGER
+
+        pending, self._pending_timings = self._pending_timings, None
+        return pending if pending is not None else RefreshTimings(type(self).__name__, trigger)
+
+    def _refresh_scope(self):
+        """(labels, images, annotations) currently selected, for the readout.
+
+        An annotation carrying several selected labels counts once per label, so
+        for a semantic project the annotation figure reads high. It is a status
+        line, not a total an export depends on.
+        """
+        images = len(self.train_images) + len(self.val_images) + len(self.test_images)
+        annotations = sum(self._label_totals.get(label, 0) for label in self.selected_labels)
+        return len(self.selected_labels), images, annotations
+
+    def _report_timings(self, timings):
+        """Summarise the refresh in the status bar.
+
+        A refresh that takes a noticeable moment should say what it covered and
+        how long it took, rather than leaving the dialog looking stuck. Past
+        REFRESH_SLOW_MS it also names the phase that accounted for most of it,
+        which is the first thing worth knowing when one is slow.
+        """
+        try:
+            labels, images, annotations = self._refresh_scope()
+        except Exception:
+            # A readout must never be the reason a refresh fails
+            return
+
+        duration = format_refresh_duration(timings.total_ms)
+        if timings.total_ms >= REFRESH_SLOW_MS:
+            slowest = timings.slowest()
+            if slowest:
+                duration += f", most of it {slowest[0]}"
+
+        message = (f"Export summary: {labels:,} labels, {images:,} images, "
+                   f"{annotations:,} annotations ({duration})")
+
+        try:
+            status_bar = getattr(self.main_window, 'status_bar', None)
+            if status_bar is not None:
+                status_bar.showMessage(message, REFRESH_STATUS_TIMEOUT_MS)
+        except Exception:
+            pass
+
+    def refresh_all(self):
+        """Rebuild the index from scratch and re-shuffle the splits."""
+        self._refresh_trigger = "Refresh button"
+        self._index_dirty = True
+        self._split_dirty = True
+        self.update_summary_statistics()
+
+    def refresh_structure(self):
+        """Mark the index stale - an option changed which annotations qualify."""
+        self._refresh_trigger = "structural option"
+        self._index_dirty = True
+        self.update_summary_statistics()
+
+    def invalidate_split(self):
+        """Mark the split stale - an option changed how samples are divided."""
+        self._refresh_trigger = "split option"
+        self._split_dirty = True
+        self.update_summary_statistics()
+
+    def _allowed_annotation_types(self):
+        """Return the annotation classes the type checkboxes currently allow."""
+        allowed = set()
+        if self.include_patches_checkbox.isChecked():
+            allowed.add(PatchAnnotation)
+        if self.include_rectangles_checkbox.isChecked():
+            allowed.add(RectangleAnnotation)
+        if self.include_polygons_checkbox.isChecked():
+            allowed.add(PolygonAnnotation)
+        return allowed
+
+    def _indexable_annotations(self):
+        """The annotations the index should consider, before path filtering.
+
+        The type checkboxes are applied here, so a subclass that indexes
+        something else - masks, which are not in annotations_dict - overrides
+        this rather than the index itself.
+        """
+        allowed_types = self._allowed_annotation_types()
+        return [annotation for annotation in self.annotation_window.annotations_dict.values()
+                if type(annotation) in allowed_types]
+
+    def _annotation_labels(self, annotation):
+        """The label codes this annotation counts towards.
+
+        One for a vector annotation. A subclass whose annotations carry several
+        - a semantic mask holds a label per painted class - returns all of them,
+        and the index then lists that annotation under each.
+        """
+        return (annotation.label.short_label_code,)
+
+    def rebuild_annotation_index(self):
+        """Group every exportable annotation by label and by image path.
+
+        This is the only pass over the annotations. It applies the filters that
+        do not depend on the label checkboxes - annotation type, image source,
+        frame stride - and parses each distinct image path once rather than
+        twice per annotation, which is what the old per-click rescan did.
+        """
+        sources = self.get_selected_source_paths()
+        source_set = set(sources)
+        frame_stride = self._frame_stride()
+
+        label_paths = {}
+        label_totals = {}
+        path_counts = {}
+        path_source = {}
+        path_frame = {}
+        excluded_paths = set()
+
+        for annotation in self._indexable_annotations():
+            image_path = annotation.image_path
+            source = path_source.get(image_path)
+            if source is None:
+                if image_path in excluded_paths:
+                    continue
+                # Parse once per distinct path, not once per annotation
+                source, frame_idx = parse_frame_path(image_path)
+                if source not in source_set or not frame_matches_stride(image_path, frame_stride):
+                    excluded_paths.add(image_path)
+                    continue
+                path_source[image_path] = source
+                path_frame[image_path] = frame_idx
+                path_counts[image_path] = {}
+
+            counts = path_counts[image_path]
+            for label in self._annotation_labels(annotation):
+                label_paths.setdefault(label, {}).setdefault(image_path, []).append(annotation)
+                label_totals[label] = label_totals.get(label, 0) + 1
+                counts[label] = counts.get(label, 0) + 1
+
+        paths_by_source = {}
+        for image_path, source in path_source.items():
+            paths_by_source.setdefault(source, []).append(image_path)
+
+        # Frame counts for the video sources, so the split never calls
+        # get_raster() again while the user is clicking labels.
+        raster_manager = self.image_window.raster_manager
+        video_frame_counts = {}
+        for source in sources:
+            raster = raster_manager.get_raster(source)
+            if getattr(raster, 'raster_type', '') == 'VideoRaster':
+                video_frame_counts[source] = int(getattr(raster, 'frame_count', 0) or 0)
+
+        self._label_paths = label_paths
+        self._label_totals = label_totals
+        self._path_counts = path_counts
+        self._path_source = path_source
+        self._path_frame = path_frame
+        self._paths_by_source = paths_by_source
+        self._video_frame_counts = video_frame_counts
+        self._index_sources = sources
+        self._index_dirty = False
+
+        # The running totals belong to the old index, so start them over
+        self._reset_selection_state()
+
+    def _reset_selection_state(self):
+        """Drop the running selection totals and force a re-split."""
+        self._path_selected = {}
+        self._source_selected = {}
+        self._applied_labels = set()
+        self._split_dirty = True
+
+    def _apply_label_selection(self, selected_labels):
+        """Fold the checkbox changes into the running per-path totals.
+
+        Only the labels that changed are walked, so one checkbox costs that
+        label's paths and nothing else.
+
+        Args:
+            selected_labels: Short label codes currently checked.
+
+        Returns:
+            tuple: (paths, sources) whose selected count crossed zero.
+        """
+        selected = set(selected_labels)
+        path_selected = self._path_selected
+        source_selected = self._source_selected
+        path_source = self._path_source
+
+        crossed_paths = set()
+        crossed_sources = set()
+
+        for labels, sign in ((selected - self._applied_labels, 1),
+                             (self._applied_labels - selected, -1)):
+            for label in labels:
+                for image_path, annotations in self._label_paths.get(label, {}).items():
+                    delta = sign * len(annotations)
+
+                    before = path_selected.get(image_path, 0)
+                    after = before + delta
+                    path_selected[image_path] = after
+                    if (before == 0) != (after == 0):
+                        crossed_paths.add(image_path)
+
+                    source = path_source[image_path]
+                    source_before = source_selected.get(source, 0)
+                    source_after = source_before + delta
+                    source_selected[source] = source_after
+                    if (source_before == 0) != (source_after == 0):
+                        crossed_sources.add(source)
+
+        self._applied_labels = selected
+        return crossed_paths, crossed_sources
+
+    def _selection_changes_splits(self, crossed_paths, crossed_sources):
+        """Return True when the label change alters which samples get split.
+
+        Most label clicks do not: a static source contributes itself whatever
+        its labels are. Only a source appearing or disappearing, or a video
+        frame gaining or losing its last annotation, moves the split.
+        """
+        if self.exclude_negatives_radio.isChecked() and crossed_sources:
+            return True
+
+        if self.allows_unlabeled_video_export() and self.include_negatives_radio.isChecked():
+            # Every frame by stride, annotated or not, so labels do not matter
+            return False
+
+        for image_path in crossed_paths:
+            if self._path_source[image_path] in self._video_frame_counts:
+                return True
+        return False
+
+    def _annotated_frame_paths(self, source_path):
+        """Return this video source's frame paths that still hold a selection."""
+        path_frame = self._path_frame
+        paths = [path for path in self._paths_by_source.get(source_path, ())
+                 if self._path_selected.get(path, 0) > 0 and path_frame[path] is not None]
+        paths.sort(key=lambda path: path_frame[path])
+        return paths
+
+    def split_data_from_index(self):
+        """Split the data by images, reading the index instead of annotations.
+
+        Mirrors split_data(), which still serves the subclasses that do not use
+        the index, but builds each source's sample paths from the running
+        totals rather than from a fresh pass over the annotation objects.
+        """
+        self.train_ratio = self.train_ratio_spinbox.value()
+        self.val_ratio = self.val_ratio_spinbox.value()
+        self.test_ratio = self.test_ratio_spinbox.value()
+
+        frame_stride = self._frame_stride()
+        split_by_source = not hasattr(self, 'split_by_source_checkbox') or self.split_by_source_checkbox.isChecked()
+        export_unlabeled_video_frames = self.allows_unlabeled_video_export() and self.include_negatives_radio.isChecked()
+        exclude_negatives = self.exclude_negatives_radio.isChecked()
+
+        source_entries = []
+        for source_path in self._index_sources:
+            if exclude_negatives and self._source_selected.get(source_path, 0) == 0:
+                continue
+
+            frame_count = self._video_frame_counts.get(source_path)
+            if frame_count is None:
+                sample_paths = [source_path]
+            elif export_unlabeled_video_frames:
+                sample_paths = [build_video_frame_path(source_path, frame_idx)
+                                for frame_idx in range(0, frame_count, frame_stride)]
+            else:
+                sample_paths = self._annotated_frame_paths(source_path)
+
+            if not sample_paths:
+                continue
+
+            source_entries.append(sample_paths)
+
+        self.train_images = []
+        self.val_images = []
+        self.test_images = []
+
+        if not source_entries:
+            return
+
+        if split_by_source:
+            random.shuffle(source_entries)
+            train_split = int(len(source_entries) * self.train_ratio)
+            val_split = int(len(source_entries) * (self.train_ratio + self.val_ratio))
+
+            train_entries = source_entries[:train_split] if self.train_ratio > 0 else []
+            val_entries = source_entries[train_split:val_split] if self.val_ratio > 0 else []
+            test_entries = source_entries[val_split:] if self.test_ratio > 0 else []
+
+            self.train_images = [path for paths in train_entries for path in paths]
+            self.val_images = [path for paths in val_entries for path in paths]
+            self.test_images = [path for paths in test_entries for path in paths]
+            return
+
+        sample_paths = [path for paths in source_entries for path in paths]
+        random.shuffle(sample_paths)
+
+        train_split = int(len(sample_paths) * self.train_ratio)
+        val_split = int(len(sample_paths) * (self.train_ratio + self.val_ratio))
+
+        if self.train_ratio > 0:
+            self.train_images = sample_paths[:train_split]
+        if self.val_ratio > 0:
+            self.val_images = sample_paths[train_split:val_split]
+        if self.test_ratio > 0:
+            self.test_images = sample_paths[val_split:]
+
+    def compute_split_label_counts(self):
+        """Sum each split's per-label counts straight out of the index.
+
+        Sets self._split_label_counts and self._split_totals, which stand in
+        for the train/val/test annotation lists the table used to need.
+        """
+        selected = self._applied_labels
+        path_counts = self._path_counts
+
+        split_counts = []
+        split_totals = []
+        for image_paths in (self.train_images, self.val_images, self.test_images):
+            counts = {}
+            total = 0
+            for image_path in image_paths:
+                for label, count in path_counts.get(image_path, {}).items():
+                    if label in selected:
+                        counts[label] = counts.get(label, 0) + count
+                        total += count
+            split_counts.append(counts)
+            split_totals.append(total)
+
+        self._split_label_counts = tuple(split_counts)
+        self._split_totals = tuple(split_totals)
+
+    def _selected_annotations_from_index(self):
+        """Return the selected annotations - the set filter_annotations gives.
+
+        Deduplicated by id: an annotation carrying more than one selected label
+        is listed under each of them, and an export must see it once.
+        """
+        unique = {}
+        for label in self._applied_labels:
+            for annotations in self._label_paths.get(label, {}).values():
+                for annotation in annotations:
+                    unique[annotation.id] = annotation
+        return list(unique.values())
+
+    def materialize_selection(self):
+        """Build the concrete annotation lists an export needs.
+
+        The table runs off the index, which counts without ever holding the
+        split lists, so they are built here - once, on the way into an export -
+        instead of on every checkbox click.
+        """
+        if not self.uses_annotation_index:
+            return
+
+        if self._index_dirty:
+            self.rebuild_annotation_index()
+            self._apply_label_selection(self.selected_labels)
+        if self._split_dirty:
+            self.split_data_from_index()
+            self._split_dirty = False
+
+        self.selected_annotations = self._selected_annotations_from_index()
+        self.determine_splits()
 
     def update_image_selection(self):
         """
         Update the table based on the selected image option.
         """
-        self.selected_annotations = self.filter_annotations()
-        self.update_summary_statistics()
+        self.update_extracted_note()
+        # The index is keyed on the selected sources, so it has to go. The old
+        # body also filtered the annotations here and again inside the update.
+        self.refresh_structure()
 
     def update_summary_statistics(self):
         """
         Update the summary statistics for the dataset creation.
+
+        Everything expensive lives in the annotation index. A label checkbox
+        folds its own paths into the running totals and re-sums the split
+        columns; it never touches an annotation object.
         """
         if self.updating_summary_statistics:
             return
 
         with busy_cursor():
             self.updating_summary_statistics = True
+            timings = self._begin_timings()
             try:
+                if self._index_dirty:
+                    self.rebuild_annotation_index()
+                timings.mark("rebuild index")
+
                 # Selected labels based on user's selection
-                self.selected_labels = []
-                for row in range(self.label_counts_table.rowCount()):
-                    container = self.label_counts_table.cellWidget(row, 0)
-                    include_checkbox = container.findChild(QCheckBox)
-                    if include_checkbox.isChecked():
-                        label = self.label_counts_table.item(row, 1).text()
-                        self.selected_labels.append(label)
+                self.selected_labels = [label for _, label, checkbox in self._label_rows
+                                        if checkbox.isChecked()]
+                timings.mark("read checkboxes")
 
-                # Filter annotations based on the selected annotation types and current tab
-                self.selected_annotations = self.filter_annotations()
+                # Fold the change into the running totals, then re-split only
+                # if the change moved which samples there are to split
+                crossed = self._apply_label_selection(self.selected_labels)
+                if self._split_dirty or self._selection_changes_splits(*crossed):
+                    self.split_data_from_index()
+                    self._split_dirty = False
+                timings.mark("selection and split")
 
-                # Split the data by images
-                self.split_data()
+                self.compute_split_label_counts()
+                timings.mark("split counts")
+                train_counts, val_counts, test_counts = self._split_label_counts
 
-                # Split the data by annotations
-                self.determine_splits()
-
-                # Precompute counts in a single pass each — O(n) instead of O(labels × n)
-                selected_counts = Counter(a.label.short_label_code for a in self.selected_annotations)
-                train_counts = Counter(a.label.short_label_code for a in self.train_annotations)
-                val_counts = Counter(a.label.short_label_code for a in self.val_annotations)
-                test_counts = Counter(a.label.short_label_code for a in self.test_annotations)
-
-                # Unique images per label from the currently filtered selection, so the
-                # "Images" column reflects the chosen Image Source (All vs Filtered).
-                selected_image_counts = {}
-                for a in self.selected_annotations:
-                    selected_image_counts.setdefault(a.label.short_label_code, set()).add(a.image_path)
                 unlabeled_video_export = self.allows_unlabeled_video_export() and self.include_negatives_radio.isChecked()
 
                 red = QColor(255, 220, 220)
                 green = QColor(220, 255, 220)
 
+                # Whole-split emptiness, read once instead of once per row
+                train_empty = self.train_ratio > 0 and len(self.train_images) == 0
+                val_empty = self.val_ratio > 0 and len(self.val_images) == 0
+                test_empty = self.test_ratio > 0 and len(self.test_images) == 0
+
                 # Update the label counts table
                 self.label_counts_table.setUpdatesEnabled(False)
-                for row in range(self.label_counts_table.rowCount()):
-                    container = self.label_counts_table.cellWidget(row, 0)
-                    include_checkbox = container.findChild(QCheckBox)
-                    label = self.label_counts_table.item(row, 1).text()
-                    anno_count = selected_counts.get(label, 0)
-                    if include_checkbox.isChecked():
-                        train_count = train_counts.get(label, 0)
-                        val_count = val_counts.get(label, 0)
-                        test_count = test_counts.get(label, 0)
-                    else:
-                        train_count = 0
-                        val_count = 0
-                        test_count = 0
+                for row, label, include_checkbox in self._label_rows:
+                    checked = include_checkbox.isChecked()
+                    # An unchecked label reads zero, the same as when its
+                    # annotations were filtered out of the old selection pass
+                    anno_count = self._label_totals.get(label, 0) if checked else 0
+                    image_count = len(self._label_paths.get(label, ())) if checked else 0
+                    train_count = train_counts.get(label, 0) if checked else 0
+                    val_count = val_counts.get(label, 0) if checked else 0
+                    test_count = test_counts.get(label, 0) if checked else 0
 
                     self.label_counts_table.item(row, 2).setText(str(anno_count))
                     self.label_counts_table.item(row, 3).setText(str(train_count))
                     self.label_counts_table.item(row, 4).setText(str(val_count))
                     self.label_counts_table.item(row, 5).setText(str(test_count))
-                    self.label_counts_table.item(row, 6).setText(str(len(selected_image_counts.get(label, ()))))
+                    self.label_counts_table.item(row, 6).setText(str(image_count))
 
-                    if include_checkbox.isChecked():
+                    if checked:
                         if unlabeled_video_export:
-                            self.set_cell_color(row, 3, red if (self.train_ratio > 0 and len(self.train_images) == 0) else green)
-                            self.set_cell_color(row, 4, red if (self.val_ratio > 0 and len(self.val_images) == 0) else green)
-                            self.set_cell_color(row, 5, red if (self.test_ratio > 0 and len(self.test_images) == 0) else green)
+                            self.set_cell_color(row, 3, red if train_empty else green)
+                            self.set_cell_color(row, 4, red if val_empty else green)
+                            self.set_cell_color(row, 5, red if test_empty else green)
                         else:
                             self.set_cell_color(row, 3, red if train_count == 0 and self.train_ratio > 0 else green)
                             self.set_cell_color(row, 4, red if val_count == 0 and self.val_ratio > 0 else green)
@@ -977,6 +1467,7 @@ class Base(QDialog):
                         self.set_cell_color(row, 4, green)
                         self.set_cell_color(row, 5, green)
                 self.label_counts_table.setUpdatesEnabled(True)
+                timings.mark("table")
 
                 self.ready_status = self.check_label_distribution()
                 self.split_status = abs(self.train_ratio + self.val_ratio + self.test_ratio - 1.0) < 1e-9
@@ -991,10 +1482,12 @@ class Base(QDialog):
                 # Update the new labels
                 self.total_images_label.setText(f"Total Images: {total_count}")
                 self.split_summary_label.setText(f"(Train: {train_count}, Val: {val_count}, Test: {test_count})")
+                timings.mark("status")
             finally:
                 # An exception here must not leave the guard set - every later
                 # refresh would return at the top without updating anything.
                 self.updating_summary_statistics = False
+                self._report_timings(timings)
 
     def is_ready(self):
         """Check if the dataset is ready to be created."""
@@ -1018,6 +1511,10 @@ class Base(QDialog):
                                 "Input Error",
                                 "Train, Validation, and Test ratios must sum to 1.0")
             return False
+
+        # The table runs off the index, which counts without holding the split
+        # lists, so build them here - once, on the way into an export.
+        self.materialize_selection()
 
         if not self.ready_status:
             reply = QMessageBox.question(

@@ -85,11 +85,13 @@ from coralnet_toolbox.Features.FeatureMapCodec import load_feature_vector
 from coralnet_toolbox.MachineLearning import InPlaceTraining
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 from coralnet_toolbox.MachineLearning.TrainModel.QtBase import TrainModelWorker
-from coralnet_toolbox.MachineLearning.PUDetection import (PU_MODELS_NOTE, pu_supported_model,
+from coralnet_toolbox.MachineLearning.PUDetection import (PU_MODELS_NOTE, pu_alternative,
+                                                         pu_supported_model,
                                                          pu_unavailable_tooltip)
 from coralnet_toolbox.MachineLearning.TrainModel.QtDetect import STANDARD_MODELS as DETECT_MODELS
 from coralnet_toolbox.MachineLearning.TrainModel.QtSegment import STANDARD_MODELS as SEGMENT_MODELS
 
+from coralnet_toolbox.Rasters.extracted_images import has_active_set
 from coralnet_toolbox.Results.ResultsProcessor import ResultsProcessor
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
@@ -141,10 +143,12 @@ TRAINING_DEFAULTS = {
     # through WeightedInMemoryDataset, which is what the MRO composition test
     # covers, so this costs nothing here.
     'weighted': True,
-    # Off by default, unlike weighted sampling: it changes what training
-    # optimises, costs a teacher forward pass per batch, and the measured edge
-    # needs a bigger model than a round wants to run. Offered, not assumed.
-    'pu_dataset': False,
+    # On, like weighted sampling: an Active Learning project is positive
+    # unlabeled by construction, and treating it that way helps enough here to
+    # be worth the teacher forward pass per batch. update_pu_availability forces
+    # it back off for a model that cannot run it, so this is a default rather
+    # than an assumption.
+    'pu_dataset': True,
     'val': True,
     'verbose': True,
     'exist_ok': True,
@@ -165,6 +169,11 @@ MODELS = {
 
 # Small models by default. Rounds are only useful if they are cheap enough to run
 # often; a large model turns a five-minute loop into an afternoon.
+# Appended to a dropdown entry PU refuses, so the cost of choosing it is
+# visible before it is chosen rather than after. chosen_model() strips it back
+# off, and nothing but the dropdown text ever carries it.
+PU_SUFFIX = "  (no PU)"
+
 DEFAULT_MODEL = {
     'detect': 'yolo11n.pt',
     'segment': 'yolo11n-seg.pt',
@@ -980,9 +989,11 @@ class Base(QDialog):
                 "model that nothing is there. Your labels are never added to.\n\n"
                 "Costs a forward pass per batch and a second copy of the model in memory,\n"
                 "and turns mosaic off for the epochs it is active.\n\n"
-                "Two things to know before turning it on. The measured benefit needs a\n"
-                "medium or larger model at a large image size; at nano, which is the\n"
-                "default here, it came out level with or slightly behind normal training.\n"
+                "On by default here, because an Active Learning project is positive\n"
+                "unlabeled by construction. Two things to know. The measured benefit\n"
+                "needs a medium or larger model at a large image size; at nano, which is\n"
+                "the default model here, it came out level with or slightly behind\n"
+                "normal training.\n"
                 "And it usually lowers mAP while raising recall, because finding an\n"
                 "unlabeled object scores as a false positive. PU rounds are therefore\n"
                 "only ever compared with other PU rounds, and are marked (PU) in the\n"
@@ -991,7 +1002,18 @@ class Base(QDialog):
             self.pu_dataset_combo = bool_combo(TRAINING_DEFAULTS['pu_dataset'],
                                                self.pu_dataset_tooltip)
             self.pu_dataset_label = QLabel("PU Dataset:")
-            layout.addRow(self.pu_dataset_label, self.pu_dataset_combo)
+            # Said in place rather than left in a tooltip. The default is on, so
+            # a model that cannot run PU turns off the thing the round wanted,
+            # and a greyed out box does not explain itself.
+            self.pu_unavailable_note = QLabel()
+            self.pu_unavailable_note.setWordWrap(True)
+            self.pu_unavailable_note.setVisible(False)
+            pu_column = QVBoxLayout()
+            pu_column.setContentsMargins(0, 0, 0, 0)
+            pu_column.setSpacing(2)
+            pu_column.addWidget(self.pu_dataset_combo)
+            pu_column.addWidget(self.pu_unavailable_note)
+            layout.addRow(self.pu_dataset_label, pu_column)
             # create_model_group() has already run, so the combo exists to
             # watch. Browse writes into it too, so this covers both ways the
             # model can change.
@@ -1668,7 +1690,11 @@ class Base(QDialog):
         return group_box
 
     def setup_buttons_layout(self):
-        """The action row, outside the tabs so it never goes out of reach."""
+        """The ready line and the action row, outside the tabs so they never go out of reach."""
+        self.ready_label = QLabel()
+        self.layout.addWidget(self.ready_label)
+        self.show_readiness(False)
+
         button_layout = QHBoxLayout()
 
         # On the left, away from Train: it undoes a session rather than
@@ -1697,12 +1723,6 @@ class Base(QDialog):
         self.save_session_button.clicked.connect(self.save_session)
         self.save_session_button.setEnabled(False)
         button_layout.addWidget(self.save_session_button)
-
-        button_layout.addSpacing(16)
-
-        self.ready_label = QLabel("❌ Not Ready")
-        self.ready_label.setToolTip("Whether a round can be started with the current selection.")
-        button_layout.addWidget(self.ready_label)
 
         button_layout.addStretch()
 
@@ -1748,19 +1768,65 @@ class Base(QDialog):
         self.layout.addLayout(button_layout)
 
     def load_models(self):
-        """Fill the model combo exactly as the Train Model dialog fills its own."""
-        self.model_combo.clear()
-        standard = MODELS.get(self.task, [])
-        self.model_combo.addItems(standard)
+        """Fill the model combo with the same models the Train Model dialog offers.
 
-        community = get_available_configs(task=self.task)
-        if community:
-            self.model_combo.insertSeparator(len(standard))
-            self.model_combo.addItems(list(community.keys()))
+        For detect, the ones PU can run come first and the ones it refuses come
+        last, marked. Nothing is removed. PU is the default on one setting, not a
+        requirement of the dialog, and the combo is editable while Browse writes
+        straight into it, so a hidden family would still be reachable by typing
+        or browsing. Ordering plus a label says the same thing without taking
+        the model away, and without this dialog keeping its own model list to
+        drift against the shared one.
+        """
+        self.model_combo.clear()
+        standard = list(MODELS.get(self.task, []))
+        community = list(get_available_configs(task=self.task) or [])
+
+        # Only detect offers PU at all, so only detect gets reordered
+        if self.task != 'detect':
+            capable, refused = standard + community, []
+        else:
+            capable = [m for m in standard + community if pu_supported_model(m)[0]]
+            refused = [m for m in standard + community if not pu_supported_model(m)[0]]
+
+        standard_capable = [m for m in capable if m in set(standard)]
+        community_capable = [m for m in capable if m not in set(standard)]
+
+        for model in standard_capable:
+            self.model_combo.addItem(model, model)
+        for group in (community_capable, refused):
+            if group:
+                self.model_combo.insertSeparator(self.model_combo.count())
+                for model in group:
+                    suffix = PU_SUFFIX if model in set(refused) else ""
+                    self.model_combo.addItem(model + suffix, model)
 
         default = DEFAULT_MODEL.get(self.task)
-        if default in standard:
-            self.model_combo.setCurrentIndex(standard.index(default))
+        if default:
+            index = self.model_combo.findData(default)
+            if index >= 0:
+                self.model_combo.setCurrentIndex(index)
+
+    def chosen_model(self):
+        """The model name or path the dialog is set to, without the PU marker.
+
+        The dropdown shows a refused model as "name  (no PU)". That text is for
+        reading, never for passing on, so every caller goes through here instead
+        of model_combo.currentText(). A typed or browsed path comes back as it
+        was entered.
+        """
+        text = self.model_combo.currentText().strip()
+
+        index = self.model_combo.currentIndex()
+        if index >= 0 and self.model_combo.itemText(index) == text:
+            data = self.model_combo.itemData(index)
+            if data:
+                return data
+
+        # Pasted or typed with the marker still attached
+        if text.endswith(PU_SUFFIX):
+            return text[:-len(PU_SUFFIX)].strip()
+        return text
 
     # ------------------------------------------------------------------
     # Reading the project
@@ -1934,6 +2000,9 @@ class Base(QDialog):
             raster = raster_manager.get_raster(annotation.image_path)
             if raster is None or getattr(raster, 'raster_type', '') != 'ImageRaster':
                 continue
+            # Its extracted images carry the same pixels; training both counts them twice
+            if has_active_set(raster):
+                continue
 
             grouped.setdefault(annotation.image_path, []).append(annotation)
 
@@ -1944,11 +2013,15 @@ class Base(QDialog):
 
         Video frames are virtual paths the trainer cannot open, and an
         orthomosaic is one enormous sample that means nothing without tiling.
+        An image whose work areas are extracted is left out too: its extracted
+        images stand in for it.
         """
         raster_manager = self.image_window.raster_manager
         for image_path in raster_manager.image_paths:
             raster = raster_manager.get_raster(image_path)
             if raster is None or getattr(raster, 'raster_type', '') != 'ImageRaster':
+                continue
+            if has_active_set(raster):
                 continue
             yield image_path, raster
 
@@ -2004,7 +2077,7 @@ class Base(QDialog):
         eligible, annotated, unsupported, already = [], 0, 0, 0
         for path in paths:
             raster = raster_manager.get_raster(path)
-            if raster is None or getattr(raster, 'raster_type', '') != 'ImageRaster':
+            if raster is None or getattr(raster, 'raster_type', '') != 'ImageRaster' or has_active_set(raster):
                 unsupported += 1
             elif self.task_annotations(path):
                 annotated += 1
@@ -2218,7 +2291,8 @@ class Base(QDialog):
             selected = self.selected_labels()
             if not selected:
                 self.plan = None
-                self.set_not_ready(self.nothing_yet_advice(self.awaiting['total']))
+                untrainable = not verified and self.has_untrainable_annotations()
+                self.set_not_ready(self.nothing_yet_advice(self.awaiting['total'], self.task, untrainable))
                 return
 
             self.plan = {
@@ -2230,7 +2304,7 @@ class Base(QDialog):
 
             ready, reason = self.readiness(groups, grouped, negatives)
             self.ready_status = ready
-            self.ready_label.setText("✅ Ready" if ready else f"❌ Not Ready - {reason}")
+            self.show_readiness(ready, reason)
             self.train_button.setEnabled(ready and self.worker is None)
             self.new_session_button.setEnabled(self.worker is None)
             self.save_session_button.setEnabled(self.saveable_round() is not None)
@@ -2322,16 +2396,28 @@ class Base(QDialog):
         if getattr(self, 'pu_dataset_combo', None) is None:
             return
 
-        model = self.model_combo.currentText()
+        model = self.chosen_model()
         supported, reason, source = pu_supported_model(model)
 
         self.pu_dataset_combo.setEnabled(supported)
         self.pu_dataset_label.setEnabled(supported)
         if supported:
             self.pu_dataset_combo.setToolTip(self.pu_dataset_tooltip)
+            self.pu_unavailable_note.setVisible(False)
         else:
             self.pu_dataset_combo.setCurrentText("False")
             self.pu_dataset_combo.setToolTip(pu_unavailable_tooltip(model, reason, source))
+
+            # pu_alternative already works out the same size YOLO11; saying it
+            # here beats leaving it in a tooltip nobody hovers.
+            name = os.path.basename(source) or source
+            alternative = pu_alternative(source)
+            if alternative:
+                note = f"PU is off: {name} cannot run it. {alternative} is the same size and can."
+            else:
+                note = f"PU is off: {name} cannot run it."
+            self.pu_unavailable_note.setText(note)
+            self.pu_unavailable_note.setVisible(True)
 
     def pu_dataset_requested(self):
         """Whether the next round trains as positive-unlabeled."""
@@ -2398,8 +2484,19 @@ class Base(QDialog):
             f"{MIN_OBJECT_PIXELS} px. Raise Image Size, or wait for Work Area tiling.")
         self.warning_label.setVisible(True)
 
+    def has_untrainable_annotations(self):
+        """Whether the project holds annotations this task cannot learn from.
+
+        A project of CoralNet points holds thousands of confirmed patches, and
+        "nothing confirmed yet" reads as wrong to somebody looking at them
+        unless it says why they do not count.
+        """
+        allowed_types = InPlaceTraining.TASK_ANNOTATION_TYPES.get(self.task, ())
+        return any(not isinstance(annotation, allowed_types)
+                   for annotation in self.annotation_window.annotations_dict.values())
+
     @staticmethod
-    def nothing_yet_advice(awaiting_total):
+    def nothing_yet_advice(awaiting_total, task=None, untrainable=False):
         """What to do when there is nothing to train on yet.
 
         This is the state the dialog opens in for the person the feature exists
@@ -2409,6 +2506,10 @@ class Base(QDialog):
         if awaiting_total:
             return ("nothing confirmed yet - review some of the waiting predictions "
                     "(Review Predictions) and they become training data")
+        if untrainable and task in TASK_LABELS:
+            return (f"nothing to train on - {TASK_LABELS[task]} learns from "
+                    f"{InPlaceTraining.TASK_SHAPE_NAMES[task]} only, so draw a handful "
+                    f"of examples of each label on a few images, then train a first round")
         return ("nothing confirmed yet - draw a handful of examples of each label "
                 "on a few images, then train a first round")
 
@@ -2439,8 +2540,20 @@ class Base(QDialog):
         """
         self.plan = None
         self.ready_status = False
-        self.ready_label.setText(f"❌ Not Ready - {message}")
+        self.show_readiness(False, message)
         self.train_button.setEnabled(False)
+
+    def show_readiness(self, ready, reason=""):
+        """Set the ready line. The label stays short; the reason goes in its tooltip."""
+        self.ready_reason = "" if ready else reason
+        self.ready_label.setText("✅ Ready" if ready else "❌ Not Ready")
+        if ready:
+            tooltip = "A round can be started with the current selection."
+        elif reason:
+            tooltip = reason[:1].upper() + reason[1:]
+        else:
+            tooltip = "Whether a round can be started with the current selection."
+        self.ready_label.setToolTip(tooltip)
 
     def readiness(self, groups, grouped, negatives):
         """Return (ready, reason) for what a round would train on.
@@ -2653,7 +2766,7 @@ class Base(QDialog):
         self.refresh_dataset(quiet=False)
         if not self.ready_status or self.plan is None:
             QMessageBox.warning(self, "Not Ready",
-                                f"Cannot train: {self.ready_label.text()}")
+                                f"Cannot train: {self.ready_reason or 'not ready'}.")
             return
 
         dataset = self.build_dataset()
@@ -2746,7 +2859,7 @@ class Base(QDialog):
           * The label set changed shape. The old head would be loaded onto
             different classes, so warm starting is skipped for this round.
         """
-        base = self.model_combo.currentText()
+        base = self.chosen_model()
         if self.warm_start_combo.currentText() != "True":
             return base, ""
         if not self.last_model_path or not os.path.isfile(self.last_model_path):
@@ -2974,7 +3087,7 @@ class Base(QDialog):
     def session_settings(self):
         """The settings this session ran with, so a saved model can be repeated."""
         return {
-            'model': self.model_combo.currentText(),
+            'model': self.chosen_model(),
             'warm_start': self.warm_start_combo.currentText() == "True",
             'epochs': self.epochs_spinbox.value(),
             'patience': self.patience_spinbox.value(),

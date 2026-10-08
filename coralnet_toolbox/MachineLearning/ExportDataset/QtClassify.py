@@ -93,6 +93,36 @@ class Classify(Base):
 
         super().determine_splits()
 
+    def compute_split_label_counts(self):
+        """Mirror determine_splits() for the single static image case.
+
+        There the export splits annotations, not images, so the image based
+        counts the base class sums would drop every annotation into one split.
+        Slice each label by the ratios instead - what a shuffle gives on
+        average - while the shuffle itself still happens at export time.
+        """
+        annotated = [path for path, count in self._path_selected.items() if count > 0]
+        if len(annotated) != 1 or is_video_frame_path(annotated[0]):
+            super().compute_split_label_counts()
+            return
+
+        train_counts, val_counts, test_counts = {}, {}, {}
+        totals = [0, 0, 0]
+
+        for label, count in self._path_counts.get(annotated[0], {}).items():
+            if label not in self._applied_labels:
+                continue
+            train_end = int(count * self.train_ratio)
+            val_end = int(count * (self.train_ratio + self.val_ratio))
+            for counts, split_count, index in ((train_counts, train_end, 0),
+                                               (val_counts, val_end - train_end, 1),
+                                               (test_counts, count - val_end, 2)):
+                counts[label] = split_count
+                totals[index] += split_count
+
+        self._split_label_counts = (train_counts, val_counts, test_counts)
+        self._split_totals = tuple(totals)
+
     def accept(self):
         """
         Handle the OK button click event to create the dataset.

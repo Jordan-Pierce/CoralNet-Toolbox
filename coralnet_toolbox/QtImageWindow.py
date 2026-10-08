@@ -15,6 +15,7 @@ from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QWidget, QVBoxLayout, QLa
 from coralnet_toolbox.Rasters import RasterManager
 from coralnet_toolbox.Rasters import ImageFilter
 from coralnet_toolbox.Rasters import RasterTableModel
+from coralnet_toolbox.Rasters import extracted_images
 
 from coralnet_toolbox.Z import ZImportDialog
 
@@ -1369,6 +1370,28 @@ class ImageWindow(QWidget):
         finally:
             self.is_loading = False  # Release the lock
 
+    def open_image(self, image_path):
+        """Open an image from outside the Image window, as a table double-click would.
+
+        Anything that changes the open image (the Explorer's Ctrl+Right-click,
+        for one) must come through here or load_image_by_path rather than call
+        annotation_window.set_image directly. set_image only swaps the canvas:
+        the table's open row, selected_image_path and every imageLoaded /
+        imageSelected listener (work areas, z-channel, scale) stay on the
+        previous image, and double-clicking that previous image then does
+        nothing because it still counts as open.
+
+        Accepts a video frame path ('clip.mp4::frame_N'). The table row is the
+        video, so that is what gets loaded; the frame is then shown on top.
+
+        Args:
+            image_path (str): Path to the image, or a video frame path
+        """
+        base_path = image_path.rsplit('::frame_', 1)[0] if '::frame_' in image_path else image_path
+        self.load_image_by_path(base_path)
+        if base_path != image_path and self.selected_image_path == base_path:
+            self.annotation_window.set_image(image_path)
+
     def set_current_row_for_path(self, path):
         """
         Make the row for a given path the table's current row, without selecting it.
@@ -1679,35 +1702,50 @@ class ImageWindow(QWidget):
             )
             context_menu.addSeparator()
 
+        # Work Areas sub-menu (images and orthomosaics only)
+        self._add_work_areas_menu(context_menu, highlighted_paths, highlighted_rasters)
+
+        # Videos take neither a z-channel nor a feature map, so these sub-menus
+        # count only the other rasters and are left out when there are none
+        non_video = [r for r in highlighted_rasters
+                     if r is not None and getattr(r, 'raster_type', '') != 'VideoRaster']
+
         # Create Z-Channel sub-menu
-        z_channel_menu = context_menu.addMenu("Z-Channel...")
+        if non_video:
+            z_channel_menu = context_menu.addMenu("Z-Channel...")
 
-        # Add import z-channel action
-        import_z_channel_action = z_channel_menu.addAction(
-            f"Import for {count} Highlighted Raster{'s' if count > 1 else ''}"
-        )
-        import_z_channel_action.triggered.connect(
-            lambda: self.import_z_channel_highlighted_images()
-        )
+            # Add import z-channel action
+            import_z_channel_action = z_channel_menu.addAction(
+                f"Import for {len(non_video)} Highlighted Raster{'s' if len(non_video) > 1 else ''}"
+            )
+            import_z_channel_action.triggered.connect(
+                lambda: self.import_z_channel_highlighted_images()
+            )
 
-        z_channel_menu.addSeparator()
+            # Add remove z-channel action, only when there is one to remove
+            with_z_channel = [r for r in non_video if r.has_z_channel_metadata()]
+            if with_z_channel:
+                z_channel_menu.addSeparator()
+                remove_z_channel_action = z_channel_menu.addAction(
+                    f"Remove from {len(with_z_channel)} Highlighted Raster{'s' if len(with_z_channel) > 1 else ''}"
+                )
+                remove_z_channel_action.triggered.connect(
+                    lambda: self.remove_z_channel_highlighted_images()
+                )
 
-        # Add remove z-channel action
-        remove_z_channel_action = z_channel_menu.addAction(
-            f"Remove from {count} Highlighted Raster{'s' if count > 1 else ''}"
-        )
-        remove_z_channel_action.triggered.connect(
-            lambda: self.remove_z_channel_highlighted_images()
-        )
-
-        # Create Features sub-menu (Tier-1 dense feature maps)
-        feature_menu = context_menu.addMenu("Features...")
-        remove_feature_action = feature_menu.addAction(
-            f"Remove from {count} Highlighted Raster{'s' if count > 1 else ''}"
-        )
-        remove_feature_action.triggered.connect(
-            lambda: self.remove_feature_map_highlighted_images()
-        )
+        # Create Features sub-menu (Tier-1 dense feature maps), only when there is
+        # one to remove. Checked without loading: has_feature_map() reads the map
+        # from disk. A video is included here so a map it wrongly got can be removed.
+        with_feature_map = [r for r in highlighted_rasters if r is not None and
+                            (getattr(r, 'feature_map_path', None) or getattr(r, '_feature_map', None) is not None)]
+        if with_feature_map:
+            feature_menu = context_menu.addMenu("Features...")
+            remove_feature_action = feature_menu.addAction(
+                f"Remove from {len(with_feature_map)} Highlighted Raster{'s' if len(with_feature_map) > 1 else ''}"
+            )
+            remove_feature_action.triggered.connect(
+                lambda: self.remove_feature_map_highlighted_images()
+            )
 
         # Active Learning review-state and Training Split pin used to be set from
         # bulk actions here. Pulled out: setting them from a raster list decoupled
@@ -1742,6 +1780,137 @@ class ImageWindow(QWidget):
         from coralnet_toolbox.IO.QtImportFrames import ImportFrames
         dialog = ImportFrames(self.main_window, parent=self, video_raster=raster)
         dialog.exec_()
+
+    def _add_work_areas_menu(self, context_menu, highlighted_paths, highlighted_rasters):
+        """Add the Work Areas sub-menu when any highlighted raster is an image or orthomosaic.
+
+        Extract is shown greyed out, with the reason in its label, when none of
+        them can be extracted: Qt menus show no tooltips by default.
+        """
+        image_rasters = [r for r in highlighted_rasters if r is not None and
+                         getattr(r, 'raster_type', '') in extracted_images.SOURCE_RASTER_TYPES]
+        if not image_rasters:
+            return
+
+        work_areas_menu = context_menu.addMenu("Work Areas")
+
+        reasons = [extracted_images.extraction_block_reason(r) for r in image_rasters]
+        extractable = sum(1 for reason in reasons if reason is None)
+        if extractable:
+            label = f"Extract Work Areas ({extractable} Raster{'s' if extractable > 1 else ''})..."
+        else:
+            # The first reason that applies, most specific first
+            reason = next(r for r in (extracted_images.REASON_ALREADY_EXTRACTED,
+                                      extracted_images.REASON_EXTRACTED_IMAGE,
+                                      extracted_images.REASON_NO_WORK_AREAS) if r in reasons)
+            label = f"Extract Work Areas ({reason})"
+        extract_action = work_areas_menu.addAction(label)
+        extract_action.setEnabled(bool(extractable))
+        extract_action.triggered.connect(
+            lambda checked=False, paths=list(highlighted_paths): self._open_extract_work_areas_dialog(paths)
+        )
+
+        # Merge Back, Highlight and Unlink act on the sets the highlighted rows belong to
+        sets = self._extracted_sets(highlighted_paths)
+        if sets:
+            work_areas_menu.addSeparator()
+
+            # Merge Back takes a whole set, so one set at a time
+            if len(sets) == 1:
+                set_id, (parent_path, _) = next(iter(sets.items()))
+                if parent_path in highlighted_paths:
+                    merge_label = "Merge Back Extracted Images..."
+                else:
+                    merge_label = f"Merge Back Into {os.path.basename(parent_path)}..."
+                merge_action = work_areas_menu.addAction(merge_label)
+                merge_action.triggered.connect(
+                    lambda checked=False, p=parent_path, s=set_id: self.merge_back_extracted_images(p, s)
+                )
+            else:
+                merge_action = work_areas_menu.addAction(f"Merge Back ({len(sets)} sets, one at a time)")
+                merge_action.setEnabled(False)
+
+            highlight_action = work_areas_menu.addAction("Highlight Extracted Images")
+            highlight_action.triggered.connect(
+                lambda checked=False, paths=list(highlighted_paths): self.highlight_extracted_images(paths)
+            )
+            unlink_action = work_areas_menu.addAction("Unlink Extracted Images...")
+            unlink_action.triggered.connect(
+                lambda checked=False, paths=list(highlighted_paths): self.unlink_extracted_images(paths)
+            )
+
+    def _open_extract_work_areas_dialog(self, raster_paths):
+        """Open Extract Work Areas for the highlighted rasters; it lists any it skips, and why."""
+        from coralnet_toolbox.IO.QtExtractWorkAreas import ExtractWorkAreas
+        dialog = ExtractWorkAreas(self.main_window, raster_paths, parent=self)
+        dialog.exec_()
+
+    def _extracted_sets(self, paths):
+        """{set_id: (parent_path, record)} for the sets the given rasters are parents or images of."""
+        sets = {}
+        for path in paths:
+            parent_path, record = extracted_images.find_set(self.raster_manager, path)
+            if record is not None:
+                sets[record['set_id']] = (parent_path, record)
+        return sets
+
+    def merge_back_extracted_images(self, parent_path, set_id):
+        """Open Merge Back for one set of extracted images."""
+        parent = self.raster_manager.get_raster(parent_path)
+        record = next((r for r in getattr(parent, 'tile_sets', None) or [] if r['set_id'] == set_id), None)
+        if record is None:
+            return
+        from coralnet_toolbox.IO.QtMergeBack import MergeBack
+        dialog = MergeBack(self.main_window, parent_path, record, parent=self)
+        dialog.exec_()
+
+    def highlight_extracted_images(self, paths):
+        """Highlight the extracted images of the sets the given rasters belong to."""
+        tile_paths = []
+        for _, record in self._extracted_sets(paths).values():
+            tile_paths.extend(extracted_images.tile_paths_in_project(self.raster_manager, record))
+        if tile_paths:
+            self.table_model.set_highlighted_paths(list(dict.fromkeys(tile_paths)))
+            self.update_highlighted_count_label()
+
+    def unlink_extracted_images(self, paths):
+        """Dissolve the sets the given rasters belong to, after confirming."""
+        sets = self._extracted_sets(paths)
+        if not sets:
+            return
+
+        image_count = sum(len(extracted_images.tile_paths_in_project(self.raster_manager, record))
+                          for _, record in sets.values())
+        parent_paths = [parent_path for parent_path, _ in sets.values()]
+        parent_names = ", ".join(os.path.basename(path) for path in parent_paths)
+
+        # What the parents return to: Active Learning never uses orthomosaics or
+        # videos, only plain images, so an orthomosaic only goes back to Export
+        image_names = [os.path.basename(path) for path in parent_paths
+                       if getattr(self.raster_manager.get_raster(path), 'raster_type', '') == 'ImageRaster']
+        ortho_names = [os.path.basename(path) for path in parent_paths
+                       if os.path.basename(path) not in image_names]
+        returns = []
+        if image_names:
+            returns.append(f"{', '.join(image_names)} will be used by Active Learning and Export again.")
+        if ortho_names:
+            returns.append(f"{', '.join(ortho_names)} will be included in Export again.")
+
+        reply = QMessageBox.question(
+            self,
+            "Unlink Extracted Images",
+            f"Unlink {image_count} extracted image{'s' if image_count != 1 else ''} from {parent_names}?\n\n"
+            "They stay in the project as ordinary images, and their annotations are not changed. "
+            + " ".join(returns),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        for set_id, (parent_path, _) in sets.items():
+            for changed_path in extracted_images.unlink_set(self.raster_manager, parent_path, set_id):
+                self.raster_manager.rasterUpdated.emit(changed_path)
 
     def open_batch_inference_dialog(self, highlighted_image_paths):
         """
@@ -2005,12 +2174,17 @@ class ImageWindow(QWidget):
         
     def remove_z_channel_highlighted_images(self):
         """Remove z-channel from the highlighted images."""
-        # Get all highlighted paths
-        highlighted_paths = self.table_model.get_highlighted_paths()
-        
+        # Only the highlighted rasters that have a z-channel to remove; videos never do
+        highlighted_paths = []
+        for path in self.table_model.get_highlighted_paths():
+            raster = self.raster_manager.get_raster(path)
+            if (raster is not None and getattr(raster, 'raster_type', '') != 'VideoRaster'
+                    and raster.has_z_channel_metadata()):
+                highlighted_paths.append(path)
+
         if not highlighted_paths:
             return
-        
+
         # Confirm removal
         count = len(highlighted_paths)
         plural = 's' if count > 1 else ''
@@ -2126,11 +2300,20 @@ class ImageWindow(QWidget):
             
         # Confirm deletion
         plural = 's' if len(highlighted_paths) > 1 else ''
+        message = (f"Are you sure you want to delete {len(highlighted_paths)} raster{plural}?\n"
+                   "This will delete all associated annotations.")
+
+        # Deleting a raster whose work areas were extracted leaves its images behind, unlinked
+        parents = [path for path in highlighted_paths
+                   if extracted_images.has_active_set(self.raster_manager.get_raster(path))]
+        if parents:
+            message += (f"\n\n{len(parents)} of these {'has' if len(parents) == 1 else 'have'} extracted "
+                        "images in this project. The extracted images stay, as ordinary images.")
+
         reply = QMessageBox.question(
             self,
             "Confirm Multiple Image Deletions",
-            f"Are you sure you want to delete {len(highlighted_paths)} raster{plural}?\n"
-            "This will delete all associated annotations.",
+            message,
             QMessageBox.Yes | QMessageBox.No
         )
         
