@@ -105,7 +105,7 @@ class PatchAnnotation(Annotation):
 
             # Create a Shapely polygon and return its area
             shapely_polygon = Polygon(shell=shell_coords)
-            return np.around(shapely_polygon.area, 2)   # Round to 2 decimal places
+            return round(shapely_polygon.area, 2)   # Round to 2 decimal places
 
         except Exception:
             # Fallback to the original implementation if Shapely fails

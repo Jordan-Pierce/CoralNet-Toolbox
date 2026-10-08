@@ -94,13 +94,13 @@ class RectangleAnnotation(Annotation):
                                self.top_left.y(),
                                self.bottom_right.x(), 
                                self.bottom_right.y())
-            return np.around(shapely_rect.area, 2)  # Round to 2 decimal places
+            return round(shapely_rect.area, 2)  # Round to 2 decimal places
 
         except Exception:
             # Fallback to the original implementation if Shapely fails
             width = self.bottom_right.x() - self.top_left.x()
             height = self.bottom_right.y() - self.top_left.y()
-            return np.around(width * height, 2)
+            return round(width * height, 2)
 
     def get_perimeter(self):
         """Calculate the perimeter of the rectangle using Shapely."""

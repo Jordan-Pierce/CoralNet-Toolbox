@@ -231,7 +231,7 @@ class PolygonAnnotation(Annotation):
             shapely_polygon = Polygon(shell=shell_coords, holes=holes_coords)
 
             # Return the net area calculated by Shapely
-            return np.around(shapely_polygon.area, 2)
+            return round(shapely_polygon.area, 2)
 
         except Exception:
             # If Shapely fails (e.g., due to invalid geometry), fall back to
@@ -243,7 +243,7 @@ class PolygonAnnotation(Annotation):
                 j = (i + 1) % n
                 area += self.points[i].x() * self.points[j].y()
                 area -= self.points[j].x() * self.points[i].y()
-            return np.around(abs(area) / 2.0, 2)
+            return round(abs(area) / 2.0, 2)
 
     def get_perimeter(self):
         """

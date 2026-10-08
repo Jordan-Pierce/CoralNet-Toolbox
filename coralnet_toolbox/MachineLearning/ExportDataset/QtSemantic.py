@@ -31,6 +31,30 @@ from coralnet_toolbox.Rasters.extracted_images import has_active_set
 from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 
+def shoelace_area(points):
+    """Polygon area from its vertices, by the shoelace formula.
+
+    The same formula PolygonAnnotation.get_area() already falls back to when
+    Shapely refuses a geometry, done without building a Shapely polygon first.
+
+    Args:
+        points: Sequence of QPointF.
+
+    Returns:
+        float: Unsigned area, or 0.0 for fewer than three points.
+    """
+    count = len(points)
+    if count < 3:
+        return 0.0
+
+    total = 0.0
+    for index in range(count):
+        current = points[index]
+        following = points[(index + 1) % count]
+        total += current.x() * following.y() - following.x() * current.y()
+    return abs(total) / 2.0
+
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
@@ -178,6 +202,12 @@ class Semantic(Base):
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
+    # Set for the length of one index rebuild, which needs the mask list twice:
+    # once for the statistics pass and once for _indexable_annotations. Building
+    # it walks every image in the source with a get_raster() per image. A class
+    # attribute so it exists before __init__ has run.
+    _cached_mask_annotations = None
+
     def get_mask_annotations(self):
         """
         Get all mask annotations from the current images.
@@ -191,6 +221,9 @@ class Semantic(Base):
         Returns:
             list: Deduplicated list of MaskAnnotation objects
         """
+        if self._cached_mask_annotations is not None:
+            return self._cached_mask_annotations
+
         seen_ids = set()
         mask_annotations = []
 
@@ -242,8 +275,9 @@ class Semantic(Base):
         regardless of whether the internal cache was previously set to an
         empty dict (e.g. computed before any pixels were painted).
 
-        Vector annotations use their own get_class_statistics() which is
-        already fast (typically just a label lookup).
+        Vector annotations go through _vector_class_statistics() rather than
+        their own get_class_statistics(), which is anything but cheap: see that
+        method.
         """
         if force:
             self._stats_cache.clear()
@@ -270,11 +304,73 @@ class Semantic(Base):
                         stats = anno.recalculate_class_statistics()
                     self._stats_cache[anno.id] = stats or {}
                 else:
-                    self._stats_cache[anno.id] = anno.get_class_statistics()
+                    self._stats_cache[anno.id] = self._vector_class_statistics(anno)
             except Exception as e:
                 if anno.id not in self._stats_cache:
                     self._stats_cache[anno.id] = {}
                 print(f"Error caching stats for annotation {anno.id}: {e}")
+
+    @staticmethod
+    def _vector_area(annotation):
+        """A vector annotation's area, without constructing a Shapely polygon.
+
+        Each branch is the value that annotation's own get_area() computes: a
+        patch is a square of side annotation_size, a rectangle's box area is its
+        width times its height, and a polygon's is the shoelace of its shell
+        less its holes. Anything else falls through to get_area() itself, so an
+        annotation type added later is correct before it is fast.
+
+        Args:
+            annotation: The vector annotation to measure.
+
+        Returns:
+            float: Area in pixels.
+        """
+        kind = annotation.__class__.__name__
+
+        if kind == 'PatchAnnotation':
+            size = float(annotation.annotation_size)
+            return size * size
+
+        if kind == 'RectangleAnnotation':
+            width = annotation.bottom_right.x() - annotation.top_left.x()
+            height = annotation.bottom_right.y() - annotation.top_left.y()
+            return abs(width) * abs(height)
+
+        if kind == 'PolygonAnnotation':
+            area = shoelace_area(annotation.points)
+            for hole in (annotation.holes or ()):
+                area -= shoelace_area(hole)
+            return max(area, 0.0)
+
+        return float(annotation.get_area())
+
+    def _vector_class_statistics(self, annotation):
+        """One vector annotation's statistics entry, without Shapely.
+
+        get_class_statistics() routes through get_area(), which builds a Shapely
+        polygon per call: measured at 16 to 24 us, so a project of a million
+        annotations spent most of twenty seconds here on every Refresh, which
+        clears this cache and so re-reads every one of them.
+
+        The area itself is never read. _annotation_labels, the readiness check
+        and the table all ask only whether pixel_count is above zero, so the
+        whole of that time went on computing exact polygon areas to answer a
+        question about zero.
+
+        Args:
+            annotation: The vector annotation to describe.
+
+        Returns:
+            dict: {label code: {pixel_count, percentage}}, as
+                get_class_statistics() returns for a vector.
+        """
+        return {
+            annotation.label.short_label_code: {
+                "pixel_count": int(self._vector_area(annotation)),
+                "percentage": 100.0,
+            }
+        }
 
     def refresh_all(self):
         """Refresh recomputes the mask statistics as well as the index.
@@ -327,11 +423,17 @@ class Semantic(Base):
 
     def rebuild_annotation_index(self):
         """Make sure the statistics are in hand, then index against them."""
-        self._update_annotation_stats_cache(force=self._stats_cache_force,
-                                            recompute_masks=self._stats_mask_recompute)
-        self._stats_cache_force = False
-        self._stats_mask_recompute = False
-        super().rebuild_annotation_index()
+        # Scanned once here and read from the cache by both passes below
+        self._cached_mask_annotations = self.get_mask_annotations()
+        try:
+            self._update_annotation_stats_cache(force=self._stats_cache_force,
+                                                recompute_masks=self._stats_mask_recompute)
+            self._stats_cache_force = False
+            self._stats_mask_recompute = False
+            super().rebuild_annotation_index()
+        finally:
+            # Held for one rebuild only, so a mask edited later is still seen
+            self._cached_mask_annotations = None
 
     def compute_split_label_counts(self):
         """Sum the splits, counting masks that sit on a source path.
@@ -451,17 +553,27 @@ class Semantic(Base):
             # Set the row count to 0
             self.label_counts_table.setRowCount(0)
 
-            # The index is built right after this, against these statistics
-            self._update_annotation_stats_cache(force=self._stats_cache_force,
-                                                recompute_masks=self._stats_mask_recompute)
-            self._stats_cache_force = False
-            self._stats_mask_recompute = False
+            # One mask scan for this whole pass: the statistics below and the
+            # annotation list after them both want the same list, and building
+            # it walks every image with a get_raster() per image.
+            self._cached_mask_annotations = self.get_mask_annotations()
+            try:
+                # The index is built right after this, against these statistics
+                self._update_annotation_stats_cache(force=self._stats_cache_force,
+                                                    recompute_masks=self._stats_mask_recompute)
+                self._stats_cache_force = False
+                self._stats_mask_recompute = False
 
-            label_counts = {}  # Number of annotations/masks containing each label
-            label_image_counts = {}  # Set of unique images containing each label
+                label_counts = {}  # Number of annotations/masks containing each label
+                label_image_counts = {}  # Set of unique images containing each label
 
-            # Get all annotations we have stats for
-            all_annotations = (list(self.annotation_window.annotations_dict.values()) + self.get_mask_annotations())
+                # Get all annotations we have stats for
+                all_annotations = (list(self.annotation_window.annotations_dict.values())
+                                   + self._cached_mask_annotations)
+            finally:
+                # Held for this pass only, so a mask edited later is still seen
+                self._cached_mask_annotations = None
+
             unique_annotations = {anno.id: anno for anno in all_annotations}.values()
 
             unique_annotations_list = list(unique_annotations)
@@ -511,45 +623,25 @@ class Semantic(Base):
                 # Sort and populate the table
                 sorted_label_counts = sorted(label_counts.items(), key=lambda item: item[1], reverse=True)
 
-                self.label_counts_table.setColumnCount(7)
-                self.label_counts_table.setHorizontalHeaderLabels(["Include", 
-                                                                   "Label", 
-                                                                   "Annotations", 
-                                                                   "Train", 
-                                                                   "Val", 
-                                                                   "Test", 
-                                                                   "Images"])
+                self.label_counts_table.setColumnCount(len(self.TABLE_HEADERS))
+                self.label_counts_table.setHorizontalHeaderLabels(self.TABLE_HEADERS)
                 self.label_counts_table.horizontalHeader().setDefaultAlignment(Qt.AlignCenter)
 
                 # Labels hidden in the Label Window start unchecked, the same way
                 # the Image Source defaults to the filtered table.
                 hidden_codes = self.get_hidden_label_codes()
+                target_codes = self.remap_target_codes()
+                self._prune_label_remap(target_codes)
 
                 label_rows = []
                 self.label_counts_table.setUpdatesEnabled(False)
-                row = 0
-                for label, count in sorted_label_counts:
-                    container = self.create_include_checkbox_cell(label, hidden_codes)
-
-                    # Create centered table items using helper function from Base class
-                    label_item = self.create_centered_item(label)
-                    anno_item = self.create_centered_item(count)
-                    train_item = self.create_centered_item("0")
-                    val_item = self.create_centered_item("0")
-                    test_item = self.create_centered_item("0")
-                    images_item = self.create_centered_item(len(label_image_counts.get(label, set())))
-
-                    self.label_counts_table.insertRow(row)
-                    self.label_counts_table.setCellWidget(row, 0, container)
-                    self.label_counts_table.setItem(row, 1, label_item)
-                    self.label_counts_table.setItem(row, 2, anno_item)
-                    self.label_counts_table.setItem(row, 3, train_item)
-                    self.label_counts_table.setItem(row, 4, val_item)
-                    self.label_counts_table.setItem(row, 5, test_item)
-                    self.label_counts_table.setItem(row, 6, images_item)
-
-                    label_rows.append((row, label, container.findChild(QCheckBox)))
-                    row += 1
+                for row, (label, count) in enumerate(sorted_label_counts):
+                    label_rows.append(self.add_label_row(row,
+                                                         label,
+                                                         count,
+                                                         len(label_image_counts.get(label, set())),
+                                                         hidden_codes,
+                                                         target_codes))
                 self.label_counts_table.setUpdatesEnabled(True)
                 progress_bar.finish_progress()
 
@@ -604,16 +696,20 @@ class Semantic(Base):
         # Summed for the table already, straight out of the index. The
         # three passes over the split annotation lists that stood here
         # were the same arithmetic over the same statistics.
-        train_label_counts, val_label_counts, test_label_counts = self._split_label_counts
+        # Folded onto the export class names first: pointing a sparse label at
+        # a well covered one is the reason the remap exists, so the question is
+        # whether the class that reaches disk is covered, not the source label.
+        train_label_counts, val_label_counts, test_label_counts = [
+            self._fold_counts_to_targets(counts) for counts in self._split_label_counts]
         train_total, val_total, test_total = self._split_totals
 
         # Check the conditions for each split
-        for label in self.selected_labels:
-            if train_ratio > 0 and (label not in train_label_counts or train_label_counts[label] == 0):
+        for label in self.export_class_names():
+            if train_ratio > 0 and train_label_counts.get(label, 0) == 0:
                 return False
-            if val_ratio > 0 and (label not in val_label_counts or val_label_counts[label] == 0):
+            if val_ratio > 0 and val_label_counts.get(label, 0) == 0:
                 return False
-            if test_ratio > 0 and (label not in test_label_counts or test_label_counts[label] == 0):
+            if test_ratio > 0 and test_label_counts.get(label, 0) == 0:
                 return False
     
         # Additional checks to ensure no empty splits
@@ -682,7 +778,7 @@ class Semantic(Base):
         val_dir = os.path.join(output_dir_path, 'valid')
         test_dir = os.path.join(output_dir_path, 'test')
         
-        names = self.selected_labels
+        names = self.export_class_names()
         treat_as_background = self.background_radio.isChecked()
 
         # SHIFT LOGIC: Inject Background at 0 if selected
@@ -808,13 +904,15 @@ class Semantic(Base):
         fill_value = 0 if treat_as_background else 255
         index_offset = 1 if treat_as_background else 0
         
+        # One pass over the mask's own classes, resolved through the export
+        # index, so a remapped pair of labels lands on one value.
+        export_index = self.export_label_index()
         label_to_index = {}
-        for i, label in enumerate(self.selected_labels):
-            for class_id, label_obj in mask_annotation.class_id_to_label_map.items():
-                if label_obj.short_label_code == label:
-                    # Apply offset here
-                    label_to_index[class_id] = i + index_offset
-                    break
+        for class_id, label_obj in mask_annotation.class_id_to_label_map.items():
+            index = export_index.get(label_obj.short_label_code)
+            if index is not None:
+                # Apply offset here
+                label_to_index[class_id] = index + index_offset
 
         # Create output mask defaulting to our chosen fill_value
         output_mask = np.full_like(mask_data, fill_value, dtype=np.uint8)
@@ -849,12 +947,12 @@ class Semantic(Base):
             
             if mask_annotation is not None:
                 mask_data = mask_annotation.mask_data.copy()
+                export_index = self.export_label_index()
                 label_to_index = {}
-                for i, label in enumerate(self.selected_labels):
-                    for class_id, label_obj in mask_annotation.class_id_to_label_map.items():
-                        if label_obj.short_label_code == label:
-                            label_to_index[class_id] = i + index_offset
-                            break
+                for class_id, label_obj in mask_annotation.class_id_to_label_map.items():
+                    index = export_index.get(label_obj.short_label_code)
+                    if index is not None:
+                        label_to_index[class_id] = index + index_offset
                 
                 for class_id, label_index in label_to_index.items():
                     class_mask = ((mask_data == class_id) |
@@ -924,10 +1022,11 @@ class Semantic(Base):
                     annotations_by_label[label_code] = []
                 annotations_by_label[label_code].append(annotation)
             
+            export_index = self.export_label_index()
             for label_code, label_annotations in annotations_by_label.items():
-                if label_code in self.selected_labels:
+                if label_code in export_index:
                     # Apply offset to the class index
-                    class_index = self.selected_labels.index(label_code) + index_offset
+                    class_index = export_index[label_code] + index_offset
                     
                     geometries = []
                     for annotation in label_annotations:
