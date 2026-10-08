@@ -19,13 +19,13 @@
 # Set LOCKOUT_LEVEL=1 for a full desktop; the default 2 is kiosk mode.
 
 ARG KASM_VERSION=1.19.0
-FROM kasmweb/core-ubuntu-jammy:${KASM_VERSION}
+FROM kasmweb/core-ubuntu-noble:${KASM_VERSION}
 
-# jammy is Ubuntu 22.04, whose system Python is 3.10 -- inside the range
-# pyproject.toml supports (>=3.10, <3.13), though 3.12 is what users are told
-# to install. Ubuntu keeps patching jammy's python3.10 through the release's
-# standard support (April 2027), so upstream 3.10's end of life does not leave
-# the container unpatched. Moving to 3.12 means a noble (24.04) base image.
+# noble is Ubuntu 24.04, whose system Python is 3.12 -- the version users are
+# told to install, and the one CI builds the docs and Ubuntu/macOS jobs on.
+# (pyproject.toml still accepts >=3.10, <3.13; the container just does not need
+# to be the oldest member of that range, and 3.10 is end-of-life in October
+# 2026.) The previous jammy (22.04) base pinned the image to 3.10.
 # No conda needed.
 
 USER root
@@ -37,10 +37,14 @@ ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR $HOME
 
 # ---------------------------------------------------------------------------
-# System packages: Python 3.10 and the runtime libs PyQt5's xcb plugin needs
+# System packages: Python 3.12 and the runtime libs PyQt5's xcb plugin needs
+#
+# No python3-pip: 24.04 marks the system interpreter externally-managed
+# (PEP 668), so its pip refuses to install anything anyway. Every install below
+# runs inside /opt/venv, whose pip comes from python3.12-venv's ensurepip.
 # ---------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3.10 python3.10-venv python3.10-dev python3-pip \
+        python3.12 python3.12-venv python3.12-dev \
         build-essential curl ca-certificates gnupg \
         libgl1 libgl1-mesa-dri libglib2.0-0 libegl1 libdbus-1-3 \
         libfontconfig1 libxkbcommon-x11-0 \
@@ -50,7 +54,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 ENV VIRTUAL_ENV=/opt/venv
-RUN python3.10 -m venv $VIRTUAL_ENV
+RUN python3.12 -m venv $VIRTUAL_ENV
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 

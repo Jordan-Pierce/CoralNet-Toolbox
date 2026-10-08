@@ -12,7 +12,7 @@ conda activate coralnet12
 pip install uv
 ```
 
-> **Python version**: Python 3.12 is recommended. 3.10 and 3.11 are still supported, but Python 3.10 reaches end-of-life in October 2026 and newer releases of several dependencies already require 3.11 or 3.12. 3.13 and later are not supported yet. Python cannot be upgraded inside an existing environment: to move an old `coralnet10` (Python 3.10) environment to 3.12, create a new environment as above.
+> **Python version**: **3.12 is recommended, and 3.11 is fully supported.** 3.10 still installs, but it reaches end-of-life in October 2026 and newer releases of several dependencies already require 3.11 or 3.12, so treat it as deprecated. 3.13 and later are not supported yet. Already on an older environment? See [Moving an Existing Environment to Python 3.12](#moving-an-existing-environment-to-python-312).
 
 ### ⚡ GPU Acceleration (Optional)
 
@@ -77,6 +77,51 @@ uv pip install coralnet-toolbox==[version_number]
 > **Fallback**: If `uv` fails, use `pip` instead: `pip install --upgrade coralnet-toolbox`
 
 > **Note**: Using `-U` or `--upgrade-all` upgrades **all packages**, which may trigger a regression to the CPU version of `torch`. To avoid this, use the commands above to upgrade only coralnet-toolbox. If you do experience a regression, uninstall `torch` and `torchvision`, and reinstall the CUDA versions.
+
+### 🐍 Moving an Existing Environment to Python 3.12
+
+The `toolbox` accepts Python 3.10, 3.11 and 3.12, with **3.12 recommended**. If you installed
+earlier, your environment is probably named `coralnet10` and running Python 3.10. Check with:
+
+```bash
+conda activate coralnet10
+python --version
+```
+
+**Python is not upgraded in place.** `conda install python=3.12` inside an existing environment
+makes `conda` re-solve every `conda`-installed package at once, and it does not rebuild the
+`pip`-installed ones -- `torch`, `PyQt5`, `ultralytics` and the rest keep their old
+`cp310` wheels, which the new interpreter cannot import. Create a new environment instead:
+
+```bash
+# Leave the old environment
+conda deactivate
+
+# Create and activate a Python 3.12 environment alongside it
+conda create --name coralnet12 python=3.12 -y
+conda activate coralnet12
+
+# Install uv
+pip install uv
+
+# Re-install PyTorch with CUDA support first, if you use a GPU
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+
+# Then the toolbox
+uv pip install coralnet-toolbox
+
+# Confirm
+coralnet-toolbox
+```
+
+Nothing of yours lives inside the environment -- your images, annotation files and model weights
+are ordinary files on disk, so the new environment opens them unchanged.
+
+Once the new environment works, delete the old one to reclaim the disk space:
+
+```bash
+conda env remove --name coralnet10
+```
 
 
 ## 🐍 Install from Source (GitHub Repository)
