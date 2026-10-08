@@ -1882,12 +1882,14 @@ class Base(QDialog):
         weights_folder = f"{output_folder}/weights"
         
         if model_path is None:
-            # Find the best weights file (usually 'best.pt' or similar)
-            best_weights = None
-            for fname in os.listdir(weights_folder):
-                if fname.startswith("best") and fname.endswith(".pt"):
-                    best_weights = f"{weights_folder}/{fname}"
-                    break
+            # best.pt by name, not by prefix scan. The old scan took the first
+            # os.listdir entry starting with "best", which is arbitrary order and
+            # would happily deploy any future best-something checkpoint instead.
+            # A PU run also leaves recall_best.pt here; best.pt is deliberately
+            # still what deploys (see PUDetection.RECALL_CHECKPOINT).
+            best_weights = f"{weights_folder}/best.pt"
+            if not os.path.isfile(best_weights):
+                best_weights = None
 
             if not best_weights:
                 QMessageBox.warning(self, "Deploy Model", "Could not find trained model weights.")
