@@ -85,7 +85,8 @@ from coralnet_toolbox.Features.FeatureMapCodec import load_feature_vector
 from coralnet_toolbox.MachineLearning import InPlaceTraining
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 from coralnet_toolbox.MachineLearning.TrainModel.QtBase import TrainModelWorker
-from coralnet_toolbox.MachineLearning.PUDetection import (PU_MODELS_NOTE, pu_alternative,
+from coralnet_toolbox.MachineLearning.PUDetection import (PU_MODELS_NOTE, PU_TRAINERS,
+                                                         pu_alternative,
                                                          pu_supported_model,
                                                          pu_unavailable_tooltip)
 from coralnet_toolbox.MachineLearning.TrainModel.QtDetect import STANDARD_MODELS as DETECT_MODELS
@@ -971,16 +972,18 @@ class Base(QDialog):
             "definition early on, when one label has been drawn far more than the rest.")
         layout.addRow("Weighted Sampling:", self.weighted_combo)
 
-        # Detection only: the ignore band masks anchors of the detection loss,
-        # which is not what a segmentation round trains through. Absent rather
-        # than disabled for segment, so it is not a question with no answer.
+        # Detection and instance segmentation: the ignore band masks anchors of
+        # the detection loss, and the segmentation loss is built on that same
+        # loss. Absent rather than disabled for the tasks that have no PU
+        # trainer, so it is never a question with no answer.
         self.pu_dataset_combo = None
-        if self.task == 'detect':
+        if self.task in PU_TRAINERS:
             # Kept so update_pu_availability can restore it after a model
             # that cannot run PU has replaced it with the reason.
+            unlabeled = "boxed" if self.task == 'detect' else "outlined"
             self.pu_dataset_tooltip = (
                 "Train the project as a positive-unlabeled dataset: regions you have not\n"
-                "boxed are treated as unknown rather than as guaranteed background.\n\n"
+                f"{unlabeled} are treated as unknown rather than as guaranteed background.\n\n"
                 "This is the normal state of an Active Learning project. You confirm what\n"
                 "the round put in front of you and leave the rest of the frame alone, so\n"
                 "real objects sit unlabeled in images that count as fully reviewed. A slow\n"
@@ -998,6 +1001,10 @@ class Base(QDialog):
                 "unlabeled object scores as a false positive. PU rounds are therefore\n"
                 "only ever compared with other PU rounds, and are marked (PU) in the\n"
                 "Rounds table.\n\n"
+                + ("All of that was measured on detection. On segmentation the band is\n"
+                   "the same code masking the same classification loss, and the mask\n"
+                   "loss still sees only your polygons, but the size of the trade there\n"
+                   "has not been measured.\n\n" if self.task != 'detect' else "")
                 + PU_MODELS_NOTE)
             self.pu_dataset_combo = bool_combo(TRAINING_DEFAULTS['pu_dataset'],
                                                self.pu_dataset_tooltip)
@@ -1782,8 +1789,10 @@ class Base(QDialog):
         standard = list(MODELS.get(self.task, []))
         community = list(get_available_configs(task=self.task) or [])
 
-        # Only detect offers PU at all, so only detect gets reordered
-        if self.task != 'detect':
+        # Only a task with a PU trainer offers PU at all, so only those get
+        # reordered -- elsewhere the suffix would mark models for a control the
+        # dialog never shows.
+        if self.task not in PU_TRAINERS:
             capable, refused = standard + community, []
         else:
             capable = [m for m in standard + community if pu_supported_model(m)[0]]

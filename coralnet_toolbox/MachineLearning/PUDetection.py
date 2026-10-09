@@ -18,11 +18,25 @@ the student ever sees.
 
 The band is the whole feature, and there is no confidence knob to get wrong.
 
-Scope: the anchor-based v8 detection loss (yolov3u through yolo12x, and the
-segmentation heads built on it). Not end-to-end models (yolov10, yolo26 -- they
-use E2ELoss, a different object), and not RT-DETR (Hungarian matching over
-queries). ``supports_pu`` is the gate, and it reads the built model rather than
-guessing from the filename.
+Scope: the anchor-based v8 detection loss, and the instance segmentation loss
+built on top of it. ``v8SegmentationLoss`` subclasses ``v8DetectionLoss`` and
+reaches its classification term through the same
+``get_assigned_targets_and_loss``, so the band is the same one line on both
+tasks -- :class:`PUDetectionLoss` and :class:`PUSegmentationLoss` differ only in
+which loss :class:`_PUIgnoreBand` is mixed into. The mask term is left alone,
+and not by choice: it is computed from ``fg_mask``, the anchors the assigner
+matched to something the user actually drew, and the band never touches those.
+So a PU segmentation run spends its mAP in the classification head exactly as a
+detection run does, and its masks are trained on the user's polygons and nothing
+else.
+
+Not end-to-end models (yolov10, yolo26, and the ``Segment26`` head that
+yolo26-seg carries -- they use E2ELoss, a different object), not semantic
+segmentation (``SemanticSegment`` is a per-pixel classifier with no anchor grid
+to mask; the Export Dataset dialog's "Treat as Ignore (Index 255)" option is the
+blunt, static version of this feature for that task), and not RT-DETR (Hungarian
+matching over queries). ``supports_pu`` is the gate, and it reads the built model
+rather than guessing from the filename.
 
 What this is measured against, and the numbers to repeat wherever it is offered
 to a user. Four arms -- {complete labels, 20% of train boxes removed} x {stock
@@ -48,9 +62,14 @@ most of what the missing labels cost, never all of it. And it is not free -- the
 teacher costs a forward pass per batch, a frozen copy of the model in VRAM, and
 about 1.4x wall-clock time.
 
-Those numbers are one dataset and one model size: african-wildlife is small
-(1052 train images, 1.8 boxes each) and 4-class, so nothing above speaks to
-dense scenes or many classes. Rerun the harness before extending the claim.
+Those numbers are one dataset, one model size and one task: african-wildlife is
+small (1052 train images, 1.8 boxes each) and 4-class, so nothing above speaks
+to dense scenes or many classes. **None of it was measured on segmentation.**
+The mechanism carries over exactly -- the same loss method, the same single
+masked term -- but a segmentation run is selected and reported on mask mAP while
+the band spends its budget in the classification head, so the size of that trade
+is an open question there rather than the one measured here. Rerun the harness
+before extending the claim.
 
 **The numbers above were scored on complete labels, and a real project's val and
 test splits are PU too.** That was measured separately -- the same checkpoints
@@ -118,7 +137,8 @@ import yaml
 import torch
 
 from ultralytics.models.yolo.detect.train import DetectionTrainer
-from ultralytics.utils.loss import v8DetectionLoss
+from ultralytics.models.yolo.segment.train import SegmentationTrainer
+from ultralytics.utils.loss import v8DetectionLoss, v8SegmentationLoss
 from ultralytics.utils.nms import non_max_suppression
 from ultralytics.utils.tal import make_anchors
 from ultralytics.utils.torch_utils import unwrap_model
@@ -157,14 +177,16 @@ WARMUP_FRACTION = 0.12  # GT-only epochs before the teacher is worth listening t
 RECALL_CHECKPOINT = 'recall_best.pt'
 
 # The families the anchor-based v8 loss covers, as a user reads them. Every
-# community detection config ends in that same Detect head, so they qualify too.
+# community detection or segmentation config ends in that same Detect or Segment
+# head, so they qualify too.
 PU_FAMILIES = "YOLOv3u, YOLOv5u, YOLOv8, YOLOv9, YOLO11 or YOLO12"
 
 # What the dialogs append to the PU Dataset tooltip, enabled or not, so the
 # models it works with are stated rather than left to be found by elimination.
-PU_MODELS_NOTE = ("Works with: YOLOv3u, YOLOv5u, YOLOv8, YOLOv9, YOLO11, YOLO12, and the\n"
-                  "community detection models.\n"
-                  "Not available for: RT-DETR, YOLOv10, YOLO26.")
+PU_MODELS_NOTE = ("Works with: YOLOv3u, YOLOv5u, YOLOv8, YOLOv9, YOLO11 and YOLO12, for\n"
+                  "detection and for instance segmentation (-seg), plus the community\n"
+                  "models.\n"
+                  "Not available for: RT-DETR, YOLOv10, YOLO26 (yolo26-seg included).")
 
 # How far back pu_supported_model follows a checkpoint's run records. A warm
 # started Active Learning round is a chain of best.pt files, one per round.
@@ -214,15 +236,26 @@ def supports_pu(model):
     a checkpoint can be named anything. What separates them is the last module
     and whether it carries a one-to-one branch --
 
-        Detect, no one2one_cv2   -> v8DetectionLoss   (PU works)
-        Detect / v10Detect with
+        Detect, no one2one_cv2   -> v8DetectionLoss      (PU works)
+        Segment, no one2one_cv2  -> v8SegmentationLoss   (PU works)
+        Detect / Segment26 /
+          v10Detect, with
           one2one_cv2            -> E2ELoss           (yolov10, yolo26)
+        SemanticSegment          -> SemanticSegmentationLoss
         RTDETRDecoder            -> RTDETRDetectionLoss
 
     -- so those are what is asked. The final check is the same one
     ``v8DetectionLoss.__init__`` makes: it reads ``stride``, ``nc`` and
     ``reg_max`` off the head, and a head missing any of them raises inside the
-    constructor rather than returning a usable loss.
+    constructor rather than returning a usable loss. That is also what refuses
+    ``SemanticSegment``, which has ``stride`` and ``nc`` but no ``reg_max``
+    because it predicts no boxes at all -- there is no name check for it, and it
+    needs none.
+
+    What this does *not* settle is which task the run is. A ``Segment`` head
+    passes here, and training it through the detection trainer would build a
+    ``DetectionModel`` and never train a mask, so the caller has to pair the
+    answer with :func:`pu_trainer_for`.
     """
     inner = getattr(model, 'model', model)
     layers = getattr(inner, 'model', None)
@@ -359,12 +392,20 @@ _REFUSED_SIZE = re.compile(r'yolo_?v?(?:10|26)([nsmblx])|rtdetr-([lx])', re.I)
 
 
 def pu_alternative(name):
-    """The YOLO11 model of the same size as a refused one, or None if unknown."""
-    match = _REFUSED_SIZE.search(os.path.basename(str(name or "")))
+    """The YOLO11 model of the same size and task as a refused one, or None.
+
+    The task suffix is carried across, because the offer has to be a model the
+    user can actually train: the alternative to ``yolo26n-seg.pt`` is
+    ``yolo11n-seg.pt``, and suggesting ``yolo11n.pt`` there would answer a
+    segmentation question with a detection model.
+    """
+    base = os.path.basename(str(name or ""))
+    match = _REFUSED_SIZE.search(base)
     if not match:
         return None
     size = (match.group(1) or match.group(2)).lower()
-    return "yolo11{}.pt".format('l' if size == 'b' else size)
+    suffix = "-seg" if "-seg" in base.lower() else ""
+    return "yolo11{}{}.pt".format('l' if size == 'b' else size, suffix)
 
 
 def pu_unavailable_tooltip(model, reason, source):
@@ -386,8 +427,13 @@ def pu_unavailable_tooltip(model, reason, source):
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class PUDetectionLoss(v8DetectionLoss):
-    """v8DetectionLoss that drops uncertain teacher regions from the BCE term.
+class _PUIgnoreBand:
+    """The ignore band itself, as a mixin over an anchor-based v8 loss.
+
+    Mixed in front of ``v8DetectionLoss`` or ``v8SegmentationLoss``. Both reach
+    their classification term through ``get_assigned_targets_and_loss``, which
+    is the single method this overrides, so the feature is the same code on both
+    tasks rather than two copies that have to be kept in step.
 
     The trainer owns ``teacher`` (an ``nn.Module``, eval mode, no grad) and the
     schedule flag ``pu_enabled``. With either unset this is the stock loss --
@@ -395,14 +441,20 @@ class PUDetectionLoss(v8DetectionLoss):
     safe to leave switched off.
 
     Note what this does *not* do: it never writes to ``batch``. The student's
-    positives are exactly the boxes the user drew, before and after.
+    positives are exactly the boxes and polygons the user drew, before and
+    after. On a segmentation model the mask term is untouched for the same
+    reason: ``v8SegmentationLoss`` builds it from the ``fg_mask`` this method
+    hands back, and an anchor the assigner matched to a human annotation is
+    never in the band.
     """
 
     is_pu_criterion = True  # read by the trainer's callbacks
 
-    def __init__(self, model, ignore_conf=IGNORE_CONF, dedup_iou=DEDUP_IOU,
-                 max_teacher_det=MAX_TEACHER_DET):
-        super().__init__(model)
+    def __init__(self, model, *args, ignore_conf=IGNORE_CONF, dedup_iou=DEDUP_IOU,
+                 max_teacher_det=MAX_TEACHER_DET, **kwargs):
+        # *args/**kwargs pass tal_topk and tal_topk2 through to whichever loss
+        # this is mixed into, so neither subclass has to restate that signature.
+        super().__init__(model, *args, **kwargs)
         self.teacher = None
         self.pu_enabled = False
         self.ignore_conf = ignore_conf
@@ -413,6 +465,14 @@ class PUDetectionLoss(v8DetectionLoss):
         # reported figure always describes one whole epoch.
         self.epoch_ignore_count = 0
         self.last_ignore_count = 0
+        # The names belonging to *this* method's three-element loss tensor,
+        # which is not always self.loss_names: v8SegmentationLoss rewrites that
+        # to five entries (box, seg, cls, dfl, sem), and zipping five names
+        # against three values would label the cls term "seg_loss". The trainer
+        # takes its progress-bar headings from the criterion's dict on the first
+        # batch, so a wrong key here is a wrong column for the whole run.
+        self._pu_loss_names = ("box_loss", "cls_loss",
+                               "dfl_loss" if self.use_dfl else "l1_loss")
 
     @torch.no_grad()
     def _teacher_boxes(self, imgs):
@@ -420,12 +480,25 @@ class PUDetectionLoss(v8DetectionLoss):
         was_training = self.teacher.training
         self.teacher.eval()
         preds = self.teacher(imgs)
-        preds = preds[0] if isinstance(preds, (list, tuple)) else preds
+        # Detect's eval forward returns (inference, raw); Segment's returns
+        # ((inference, proto), raw), so one unwrap is not enough. NMS takes [0]
+        # of a sequence itself, which is the only reason a single unwrap ever
+        # worked -- go down to the tensor here rather than relying on that.
+        while isinstance(preds, (list, tuple)):
+            preds = preds[0]
         dets = non_max_suppression(
             preds,
             conf_thres=max(self.ignore_conf, 1e-3),
             iou_thres=0.5,
             max_det=self.max_teacher_det,
+            # Load-bearing on a segmentation model. Left at its default, NMS
+            # infers nc = channels - 4, and a Segment head's channels are
+            # 4 + nc + 32 -- so the 32 mask coefficients get read as class
+            # logits. They are not scores and are not bounded, so a box would
+            # take its confidence from the largest coefficient and the band
+            # would land wherever that fell. Detection is exactly 4 + nc, which
+            # is why the default was fine there.
+            nc=self.nc,
         )
         if was_training:
             self.teacher.train()
@@ -510,11 +583,23 @@ class PUDetectionLoss(v8DetectionLoss):
     def get_assigned_targets_and_loss(self, preds, batch):
         """The stock body with one masked term.
 
-        Mirrors ``v8DetectionLoss.get_assigned_targets_and_loss`` line for line
-        (ultralytics 8.4.153) because the ignore band has to be applied to
-        ``bce_loss`` *before* it is reduced, and the stock method reduces on the
-        way out. When PU is off this delegates instead, so nothing here can
-        affect a non-PU run.
+        Mirrors ``v8DetectionLoss.get_assigned_targets_and_loss`` (checked
+        against ultralytics 8.4.153 and 8.4.171, the ends of the supported
+        range) because the ignore band has to be applied to ``bce_loss``
+        *before* it is reduced, and the stock method reduces on the way out.
+        When PU is off this delegates instead, so nothing here can affect a
+        non-PU run.
+
+        Two deliberate divergences from the newest stock body, both kept for the
+        8.4.153 floor and neither of them changing the result: ``max(..., 1)``
+        rather than ``.clamp_(min=1)``, and the ``if fg_mask.sum()`` guard
+        around ``bbox_loss`` that stock dropped once ``BboxLoss`` learned to
+        return zero on an empty foreground by itself.
+
+        ``v8SegmentationLoss`` calls this too and takes its assigned targets
+        from the first return value, so the mask term it then computes is built
+        on the same ``fg_mask`` -- the user's own annotations -- and never sees
+        the band.
         """
         if not (self.pu_enabled and self.teacher is not None):
             return super().get_assigned_targets_and_loss(preds, batch)
@@ -584,11 +669,26 @@ class PUDetectionLoss(v8DetectionLoss):
         # A dict, not the bare tensor: the trainer averages the epoch's losses
         # with loss_items.items(), so a tensor here ran warmup fine and then
         # crashed on the first batch the ignore band was switched on for.
+        # _pu_loss_names rather than self.loss_names -- see __init__.
         return (
             (fg_mask, target_gt_idx, target_bboxes, anchor_points, stride_tensor),
             loss,
-            dict(zip(self.loss_names, loss.detach())),
+            dict(zip(self._pu_loss_names, loss.detach())),
         )  # loss(box, cls, dfl)
+
+
+class PUDetectionLoss(_PUIgnoreBand, v8DetectionLoss):
+    """The ignore band over the stock detection loss."""
+
+
+class PUSegmentationLoss(_PUIgnoreBand, v8SegmentationLoss):
+    """The ignore band over the stock instance segmentation loss.
+
+    Nothing to add. ``v8SegmentationLoss.loss`` gets its box, cls and dfl terms
+    by calling ``get_assigned_targets_and_loss``, which the mixin has already
+    replaced, and then adds its mask term from the assigned targets it gets
+    back. The band reaches the classification loss and stops there.
+    """
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -675,8 +775,16 @@ class _PUEarlyStopping:
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class PUDetectionTrainer(DetectionTrainer):
-    """DetectionTrainer that keeps an EMA teacher and runs the PU schedule.
+class _PUTrainer:
+    """The EMA teacher and the PU schedule, as a mixin over a stock trainer.
+
+    Mixed in front of ``DetectionTrainer`` or ``SegmentationTrainer``. Which of
+    those it is decides the model class, the validator and the dataset, and none
+    of that is PU's business -- so this subclasses neither, and names only its
+    loss, through ``pu_loss_cls``. Pairing those wrong is silent rather than
+    loud: a segmentation run put through ``DetectionTrainer`` builds a
+    ``DetectionModel``, trains happily, and never trains a mask. Call
+    :func:`pu_trainer_for` rather than picking a class by hand.
 
     Passed to ``model.train(trainer=...)``, which is Ultralytics' own hook for
     this, so everything else about the run -- dataset class, callbacks, saving,
@@ -690,6 +798,8 @@ class PUDetectionTrainer(DetectionTrainer):
     toolbox reads.
     """
 
+    pu_loss_cls = None  # set by the concrete trainers below
+
     def _setup_train(self):
         super()._setup_train()
 
@@ -702,7 +812,7 @@ class PUDetectionTrainer(DetectionTrainer):
         self.teacher = self.teacher.to(self.device)
         self._teacher_updates = 0
 
-        criterion = PUDetectionLoss(student)
+        criterion = self.pu_loss_cls(student)
         criterion.teacher = self.teacher
         # Ultralytics builds the criterion lazily on the first loss call and
         # caches it here, so assigning it now is what swaps the loss.
@@ -872,3 +982,41 @@ class PUDetectionTrainer(DetectionTrainer):
             return
         crit.last_ignore_count = crit.epoch_ignore_count
         self._pu_log_diagnostics(self.epoch, crit)
+
+
+class PUDetectionTrainer(_PUTrainer, DetectionTrainer):
+    """DetectionTrainer that keeps an EMA teacher and runs the PU schedule."""
+
+    pu_loss_cls = PUDetectionLoss
+
+
+class PUSegmentationTrainer(_PUTrainer, SegmentationTrainer):
+    """SegmentationTrainer that keeps an EMA teacher and runs the PU schedule.
+
+    ``SegmentationTrainer`` rather than ``DetectionTrainer`` is the whole
+    difference, and it is the part that matters: it is what builds a
+    ``SegmentationModel``, validates with mask metrics, and makes
+    ``metrics/recall(M)`` -- the figure :meth:`_PUTrainer.epoch_recall` already
+    prefers -- exist at all.
+    """
+
+    pu_loss_cls = PUSegmentationLoss
+
+
+# The tasks PU can train, and the trainer each one needs. The dialogs read this
+# rather than naming a class, so adding a task is one entry here instead of a
+# condition in every caller -- and so no caller can pair a task with the wrong
+# trainer, which trains without error and without masks.
+PU_TRAINERS = {
+    'detect': PUDetectionTrainer,
+    'segment': PUSegmentationTrainer,
+}
+
+
+def pu_trainer_for(task):
+    """The PU trainer for a task, or None when that task has no PU path.
+
+    None is the answer for classify and semantic, and it is the same answer the
+    dialogs use to decide whether to offer the control at all.
+    """
+    return PU_TRAINERS.get(str(task or "").strip().lower())
