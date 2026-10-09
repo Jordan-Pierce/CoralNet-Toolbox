@@ -50,6 +50,10 @@ class Base(QDialog):
         # Dataset directory to hand off to the Train Model dialog, set on user request
         self.pending_train_dataset = None
 
+        # True while the destination dataset name is still the suggestion this
+        # dialog filled in; a name the user typed is never overwritten.
+        self._dst_name_is_auto = True
+
         self.setWindowIcon(get_window_icon("tile.svg"))
         self.setWindowTitle("Tile Dataset")
         self.resize(600, 550)
@@ -128,6 +132,7 @@ class Base(QDialog):
         self.src_edit = QLineEdit()
         self.src_button = QPushButton("Browse...")
         self.src_button.clicked.connect(self.browse_src_dir)
+        self.src_edit.editingFinished.connect(self._autofill_dst_name)
         self.src_edit.setToolTip("Path to the YOLO dataset to tile.\nMust contain a 'train' subdirectory with images and labels.")
         self.src_button.setToolTip("Browse for a source dataset directory.")
         src_layout = QHBoxLayout()
@@ -146,6 +151,7 @@ class Base(QDialog):
         self.dst_edit = QLineEdit()
         self.dst_button = QPushButton("Browse...")
         self.dst_button.clicked.connect(self.browse_dst_dir)
+        self.dst_edit.editingFinished.connect(self._autofill_dst_name)
         self.dst_edit.setToolTip("Directory where the tiled dataset will be saved.\nA new subdirectory will be created with the dataset name.")
         self.dst_button.setToolTip("Browse for a destination directory.")
         dst_layout = QHBoxLayout()
@@ -156,6 +162,7 @@ class Base(QDialog):
         # Name of Destination Dataset
         self.dst_name_edit = QLineEdit()
         self.dst_name_edit.setToolTip("Name for the new tiled dataset directory.\nFinal location: Destination / Dataset Name /")
+        self.dst_name_edit.textEdited.connect(self._on_dst_name_edited)
         layout.addRow("Destination Dataset Name:", self.dst_name_edit)
 
         self.output_dataset_group.setLayout(layout)
@@ -281,6 +288,7 @@ class Base(QDialog):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Source Directory")
         if dir_path:
             self.src_edit.setText(dir_path)
+            self._autofill_dst_name()
 
     def browse_dst_dir(self):
         """
@@ -289,6 +297,36 @@ class Base(QDialog):
         dir_path = QFileDialog.getExistingDirectory(self, "Select Destination Directory")
         if dir_path:
             self.dst_edit.setText(dir_path)
+            self._autofill_dst_name()
+
+    def _on_dst_name_edited(self, text):
+        """A name the user types is theirs to keep; clearing it hands it back.
+
+        textEdited, not textChanged: textChanged also fires for the setText in
+        _autofill_dst_name, which would mark the suggestion as hand-written the
+        moment it was made.
+        """
+        self._dst_name_is_auto = not text.strip()
+
+    def _autofill_dst_name(self):
+        """Suggest "<source folder>_tiled" as the output dataset name.
+
+        Run whenever either directory is set, by Browse or by a typed path, so
+        the field is filled whichever order the two are chosen in. It only
+        writes while the field still holds a suggestion, and it does not care
+        whether that directory already exists.
+        """
+        if not self._dst_name_is_auto:
+            return
+
+        # basename of the source folder, whichever separator the path came
+        # in with. Only the name is taken; no path is rebuilt from it.
+        source = self.src_edit.text().strip()
+        name = os.path.basename(os.path.normpath(source)) if source else ''
+        if not name or name.endswith(':'):
+            return  # no source chosen yet, or a bare drive root
+
+        self.dst_name_edit.setText(f"{name}_tiled")
 
     def validate_source_directory(self, src):
         """
@@ -397,6 +435,31 @@ class Base(QDialog):
             return False
         return True
 
+    def confirm_merge_into_existing(self, dst):
+        """Ask before tiling into a dataset folder that is already there.
+
+        Tiling writes its split folders into the target without clearing it
+        first, so an existing dataset is merged with rather than replaced.
+        The destination name is filled in from the source name (see
+        _autofill_dst_name), which makes tiling the same dataset twice land on
+        the same folder by default, so this is a normal thing to be doing
+        rather than a mistake to refuse.
+
+        :param dst: Full output directory (destination / dataset name)
+        :return: True to go ahead, False if the user backed out
+        """
+        if not os.path.exists(dst):
+            return True
+
+        reply = QMessageBox.question(self,
+                                     "Directory Exists",
+                                     f"This dataset folder already exists:\n{dst}\n\n"
+                                     "Proceeding will merge the new tiles into it. "
+                                     "Do you want to continue?",
+                                     QMessageBox.Yes | QMessageBox.No,
+                                     QMessageBox.No)
+        return reply == QMessageBox.Yes
+
     def copy_class_mapping(self):
         """Copy the source dataset's class_mapping.json next to the tiled one, if there is one.
 
@@ -484,6 +547,12 @@ class Base(QDialog):
         for is_valid, error_msg in validation_checks:
             if not is_valid:
                 return False
+
+        # Asked after the checks and before the busy cursor goes up: not for
+        # settings that are about to be rejected anyway, and not from under an
+        # hourglass or the modal progress bar.
+        if not self.confirm_merge_into_existing(dst):
+            return False
 
         def progress_callback(progress: TileProgress):
             title = f"Processing {progress.current_set_name.capitalize()} Set"
