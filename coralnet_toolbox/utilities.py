@@ -16,7 +16,7 @@ from rasterio.windows import Window
 
 from shapely.geometry import Polygon
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage
 from PyQt5.QtWidgets import QMessageBox, QApplication, QPushButton
 
@@ -1573,11 +1573,22 @@ def except_hook(cls, exception, traceback_obj, main_window=None):
     handler fires on every event) gets a dialog the first time only. Repeats,
     and anything raised while the dialog is open, go to the console and the
     status bar, so the dialog cannot reopen in a loop.
+
+    The dialog is posted to the event loop rather than opened here; see
+    _show_exception_dialog for why. Nothing in this hook may raise: an
+    excepthook that raises costs the report, and the console with it.
     """
     global _exception_dialog_open
 
-    # Full traceback, chained causes included, to the console
-    sys.__excepthook__(cls, exception, traceback_obj)
+    # Full traceback, chained causes included, to the console. Guarded because
+    # sys.stderr is not always writable: during a training run it is a RunLog
+    # proxy whose sink goes away when the run ends, and a hook that raises here
+    # loses the report entirely ("Error in sys.excepthook", then "lost
+    # sys.stderr", and the exception it was reporting is never shown).
+    try:
+        sys.__excepthook__(cls, exception, traceback_obj)
+    except Exception:
+        pass
 
     app = QApplication.instance()
     if app is None:
@@ -1597,52 +1608,90 @@ def except_hook(cls, exception, traceback_obj, main_window=None):
     if _exception_dialog_open or key in _reported_exceptions:
         status_bar = getattr(main_window, 'status_bar', None)
         if status_bar is not None:
-            status_bar.showMessage(f"Error repeated: {cls.__name__}: {exception} (details in the console)", 10000)
+            try:
+                status_bar.showMessage(f"Error repeated: {cls.__name__}: {exception} (details in the console)", 10000)
+            except RuntimeError:
+                pass  # already destroyed, which is normal during shutdown
         return
     _reported_exceptions.add(key)
 
     error_msg = f"{cls.__name__}: {exception}\n\n"
     error_msg += ''.join(traceback.format_tb(traceback_obj))
 
-    msg_box = QMessageBox()
-    msg_box.setWindowTitle("CoralNet-Toolbox Error")
-    msg_box.setIcon(QMessageBox.Critical)
-    msg_box.setText(
-        "An unexpected error occurred. The toolbox is still running, but the action that failed "
-        "may have been left incomplete.\n\n"
-        "Save your project (to a new file if you are unsure of its state), and please create a "
-        "ticket with the error below so we can solve this problem:\n"
-        "https://github.com/Jordan-Pierce/CoralNet-Toolbox/issues"
-    )
-    msg_box.setDetailedText(error_msg)
-
-    # Add Save Project option if main_window exists
-    save_button = None
-    if main_window is not None and hasattr(main_window, 'open_save_project_dialog'):
-        save_button = QPushButton("Save Project")
-        msg_box.addButton(save_button, QMessageBox.AcceptRole)
-
-    quit_button = msg_box.addButton("Quit", QMessageBox.DestructiveRole)
-    continue_button = msg_box.addButton("Continue", QMessageBox.RejectRole)
-    msg_box.setDefaultButton(continue_button)
-
+    # Claim the dialog slot before posting rather than when the dialog opens:
+    # control returns to the handler that raised, and whatever it raises in the
+    # meantime has to take the console/status-bar path above instead of queuing
+    # a second dialog.
     _exception_dialog_open = True
+    QTimer.singleShot(0, lambda: _show_exception_dialog(error_msg, main_window))
+
+
+def _show_exception_dialog(error_msg, main_window):
+    """Open the uncaught-exception dialog from the event loop.
+
+    Posted by except_hook instead of being opened on the stack that raised,
+    because that stack may be a paint handler. A modal exec_() there pumps the
+    event loop from inside paintEvent: the widget repaints ("QWidget::repaint:
+    Recursive repaint detected"), the same exception fires again, and exec_()
+    returns with Python's error indicator still set, which CPython reports as a
+    SystemError raised *inside* sys.excepthook. The original report is lost and
+    stderr with it. One event-loop turn later the handler that failed is off
+    the stack and a modal dialog is safe again.
+
+    Nothing here may raise either: this runs as a timer callback, so an
+    exception would go straight back into except_hook.
+    """
+    global _exception_dialog_open
     try:
-        msg_box.exec_()
-    finally:
-        _exception_dialog_open = False
+        app = QApplication.instance()
+        if app is None:
+            _exception_dialog_open = False
+            return
 
-    clicked = msg_box.clickedButton()
-    if save_button is not None and clicked is save_button:
+        msg_box = QMessageBox()
+        msg_box.setWindowTitle("CoralNet-Toolbox Error")
+        msg_box.setIcon(QMessageBox.Critical)
+        msg_box.setText(
+            "An unexpected error occurred. The toolbox is still running, but the action that failed "
+            "may have been left incomplete.\n\n"
+            "Save your project (to a new file if you are unsure of its state), and please create a "
+            "ticket with the error below so we can solve this problem:\n"
+            "https://github.com/Jordan-Pierce/CoralNet-Toolbox/issues"
+        )
+        msg_box.setDetailedText(error_msg)
+
+        # Add Save Project option if main_window exists
+        save_button = None
+        if main_window is not None and hasattr(main_window, 'open_save_project_dialog'):
+            save_button = QPushButton("Save Project")
+            msg_box.addButton(save_button, QMessageBox.AcceptRole)
+
+        quit_button = msg_box.addButton("Quit", QMessageBox.DestructiveRole)
+        continue_button = msg_box.addButton("Continue", QMessageBox.RejectRole)
+        msg_box.setDefaultButton(continue_button)
+
         try:
-            main_window.open_save_project_dialog()
-        except Exception as save_error:
-            QMessageBox.warning(None,
-                                "Save Error",
-                                f"Could not save project: {save_error}")
-    elif clicked is quit_button:
-        app.quit()
+            msg_box.exec_()
+        finally:
+            _exception_dialog_open = False
 
+        clicked = msg_box.clickedButton()
+        if save_button is not None and clicked is save_button:
+            try:
+                main_window.open_save_project_dialog()
+            except Exception as save_error:
+                QMessageBox.warning(None,
+                                    "Save Error",
+                                    f"Could not save project: {save_error}")
+        elif clicked is quit_button:
+            app.quit()
+    except Exception:
+        # A failure in the reporter must not re-enter the reporter.
+        _exception_dialog_open = False
+        try:
+            sys.__excepthook__(*sys.exc_info())
+        except Exception:
+            pass
 
 def convert_to_ultralytics(ultralytics_model, weights, output_path="converted_model.pt"):
     """Convert a PyTorch model to Ultralytics format"""

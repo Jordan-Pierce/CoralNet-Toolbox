@@ -233,11 +233,21 @@ class Classify(Base):
         self.process_annotations(self.val_annotations, val_dir, "Validation")
         self.process_annotations(self.test_annotations, test_dir, "Test")
 
-        # Output the annotations as CoralNet CSV file
+        # Output the annotations as CoralNet CSV file. Its Label columns carry
+        # the names the crops were filed under, so the csv agrees with the
+        # folders rather than with the project's own labels.
+        long_codes = {label.short_label_code: label.long_label_code
+                      for label in self.main_window.label_window.labels}
+
         df = []
 
         for annotation in self.selected_annotations:
-            df.append(annotation.to_coralnet())
+            row = annotation.to_coralnet()
+            target = self._remap_target(row['Label'])
+            if target != row['Label']:
+                row['Label'] = target
+                row['Long Label'] = long_codes.get(target, target)
+            df.append(row)
 
         pd.DataFrame(df).to_csv(f"{output_dir_path}/dataset.csv", index=False)
         
@@ -249,19 +259,21 @@ class Classify(Base):
         Ultralytics requires there to be files in each of the train/valid/test dataset folders,
         even if they are not used.
         """
-        # Get labels that have annotations in this split
-        labels_with_annotations = set()
+        # Get the classes that have annotations in this split, under the names
+        # they export as: the folders below are named after those, so a label
+        # merged into a covered class must not be counted empty here.
+        classes_with_annotations = set()
         for annotation in annotations:
-            labels_with_annotations.add(annotation.label.short_label_code)
+            classes_with_annotations.add(self._remap_target(annotation.label.short_label_code))
         
-        # Loop through each of the selected labels
-        for label in self.selected_labels:
+        # Loop through each of the exported classes
+        for label in self.export_class_names():
             # Create the category folder within the dataset folder
             label_folder = f"{dataset_dir}/{label}"
             os.makedirs(label_folder, exist_ok=True)
             
             # Only create dummy data if there are no annotations for this label in this split
-            if label not in labels_with_annotations:
+            if label not in classes_with_annotations:
                 # Create blank RGB image array (224x224x3)
                 blank_img = np.zeros((224, 224, 3), dtype=np.uint8)
                 # Save as jpg using numpy
@@ -358,7 +370,7 @@ class Classify(Base):
                             print(f"Skipping annotation {annotation.id} because it has no cropped image")
                             continue
 
-                        label_code = annotation.label.short_label_code
+                        label_code = self._remap_target(annotation.label.short_label_code)
                         output_path = os.path.join(split_dir, label_code)
                         # Create a split / label directory if it does not exist
                         os.makedirs(output_path, exist_ok=True)

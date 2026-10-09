@@ -76,8 +76,8 @@ class Detect(Base):
         train_dir = os.path.join(output_dir_path, 'train')
         val_dir = os.path.join(output_dir_path, 'valid')
         test_dir = os.path.join(output_dir_path, 'test')
-        names = self.selected_labels
-        num_classes = len(self.selected_labels)
+        names = self.export_class_names()
+        num_classes = len(names)
 
         # Create dictionary of class names with numeric keys
         names_dict = {i: name for i, name in enumerate(names)}
@@ -144,7 +144,7 @@ class Detect(Base):
                 annotations_by_image = {}
                 for a in annotations:
                     annotations_by_image.setdefault(a.image_path, []).append(a)
-                label_to_index = {label: i for i, label in enumerate(self.selected_labels)}
+                label_to_index = self.export_label_index()
 
                 for image_path in image_paths:
                     yolo_annotations = []

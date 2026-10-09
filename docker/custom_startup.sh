@@ -22,7 +22,16 @@ export QT_X11_NO_MITSHM=1
 # Belt and braces alongside the opencv-python removal in the Dockerfile: pin
 # the plugin path to PyQt5's own, so no dependency that bundles a stray
 # libqxcb.so can win the search order.
-export QT_QPA_PLATFORM_PLUGIN_PATH=/opt/venv/lib/python3.10/site-packages/PyQt5/Qt5/plugins/platforms
+#
+# Globbed rather than hardcoded: the path used to name python3.10 and silently
+# stopped matching when the base image moved to 3.12. An unmatched glob stays
+# literal, so check the directory exists before trusting it.
+_qt_plugins=$(echo /opt/venv/lib/python3.*/site-packages/PyQt5/Qt5/plugins/platforms)
+if [ -d "$_qt_plugins" ]; then
+    export QT_QPA_PLATFORM_PLUGIN_PATH="$_qt_plugins"
+else
+    echo "[custom_startup] WARNING: PyQt5 platform plugins not found at $_qt_plugins"
+fi
 
 export XDG_RUNTIME_DIR="/tmp/runtime-$(id -un)"
 mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"

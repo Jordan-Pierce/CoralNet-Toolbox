@@ -30,8 +30,8 @@ from coralnet_toolbox.MachineLearning.EvaluateModel.QtBase import EvaluateModelW
 from coralnet_toolbox.MachineLearning.RunLog import capture_run_log
 from coralnet_toolbox.paths import resolve_weights
 from coralnet_toolbox.MachineLearning.PUDetection import (
-    PU_MODELS_NOTE, PUDetectionTrainer, pu_close_mosaic, pu_supported_model,
-    pu_unavailable_tooltip, supports_pu)
+    PU_MODELS_NOTE, PU_TRAINERS, pu_close_mosaic, pu_supported_model,
+    pu_trainer_for, pu_unavailable_tooltip, supports_pu)
 
 from coralnet_toolbox.Icons import get_window_icon
 
@@ -219,10 +219,15 @@ class TrainModelWorker(QThread):
         self.model = None
         self.model_path = None
         self.weighted = False
-        # The dataset is positive-unlabeled: train with PUDetectionTrainer.
-        # Ours, not Ultralytics' -- popped in pre_run like `weighted`, because
-        # model.train() rejects keys it does not know.
+        # The dataset is positive-unlabeled: train with the PU trainer for this
+        # task. Ours, not Ultralytics' -- popped in pre_run like `weighted`,
+        # because model.train() rejects keys it does not know.
         self.pu_dataset = False
+        # Which PU trainer, resolved from the task in setup_pu_training. Held
+        # rather than looked up at the call site so the task check and the
+        # choice of trainer cannot disagree: a segmentation run put through the
+        # detection trainer builds a DetectionModel and never trains a mask.
+        self.pu_trainer = None
         self.temp_data_yaml = None
         # Set when training reads straight from the project instead of a
         # dataset on disk; owns the patched dataset class and its scaffolding.
@@ -384,12 +389,17 @@ class TrainModelWorker(QThread):
         return temp_path
 
     def setup_pu_training(self):
-        """Check the model can run PU, and clear mosaic out of the PU epochs.
+        """Pick the PU trainer, check the model can run PU, and clear mosaic.
 
         Raising rather than quietly training without PU: the flag says the
         dataset is only partly labeled, and a run that silently trained it as
         fully labeled is worse than one that says why it will not start. Both
         dialogs already surface a setup error.
+
+        The task has to be one PU has a trainer for -- detection or instance
+        segmentation. ``supports_pu`` below answers a different question, about
+        the head, and a Segment head passes it, so the task check is not
+        redundant with it.
 
         `close_mosaic` is forced because it is not a preference here -- the EMA
         teacher scores 4-image collages badly, and its regions are exactly what
@@ -399,9 +409,11 @@ class TrainModelWorker(QThread):
         if not self.pu_dataset:
             return
 
-        if self.params.get('task') != 'detect':
-            raise ValueError("PU Dataset training is detection-only "
-                             f"(task is '{self.params.get('task')}').")
+        task = self.params.get('task')
+        self.pu_trainer = pu_trainer_for(task)
+        if self.pu_trainer is None:
+            raise ValueError("PU Dataset training covers detection and instance "
+                             f"segmentation only (task is '{task}').")
 
         supported, reason = supports_pu(self.model)
         if not supported:
@@ -480,7 +492,7 @@ class TrainModelWorker(QThread):
             # trainer, so a PU run differs from a normal one by this argument and
             # nothing else -- same dataset class, callbacks, saving and validation.
             self.model.train(**self.params, device=self.device,
-                             trainer=PUDetectionTrainer if self.pu_dataset else None)
+                             trainer=self.pu_trainer if self.pu_dataset else None)
 
             # Post-run cleanup
             self.post_run()
@@ -898,26 +910,28 @@ class Base(QDialog):
         self.weighted_combo.setToolTip("If True, use weighted sampling to balance imbalanced datasets.\nGives more weight to underrepresented classes during training.\nRecommended: True if your dataset has class imbalance.")
         form_layout.addRow("Weighted Sampling:", self.weighted_combo)
 
-        # PU Dataset. Detection only -- the ignore band masks anchors of the v8
-        # detection loss, which is not what the other tasks train through.
-        # Absent rather than disabled elsewhere: a row that can never be used is
-        # a question the user has to answer and then discover did not matter.
+        # PU Dataset. Detection and instance segmentation only -- the ignore
+        # band masks anchors of the v8 detection loss, and the segmentation loss
+        # is built on that same loss, which the other tasks are not. Absent
+        # rather than disabled elsewhere: a row that can never be used is a
+        # question the user has to answer and then discover did not matter.
         self.pu_dataset_combo = None
-        if self.task == 'detect':
+        if self.task in PU_TRAINERS:
             self.pu_dataset_combo = create_bool_combo()
             # Off unless asked for: it is a statement about the data, and only
             # the user knows whether their images are fully annotated.
             self.pu_dataset_combo.setCurrentText("False")
             # Kept on the dialog so update_pu_availability can put it back
             # after a disabled model has replaced it with its reason.
+            drew = "boxed" if self.task == 'detect' else "drew a polygon around"
             self.pu_dataset_tooltip = (
-                "Set True if this dataset is positive-unlabeled: you boxed what you came\n"
-                "for and left other real objects in the same images unlabeled.\n\n"
-                "Normal training treats every unboxed region as background, so it learns\n"
-                "to stop finding the objects nobody got to. With this on, a second copy of\n"
-                "the model, averaged slowly over training, marks regions it is fairly sure\n"
-                "about; where you drew nothing, those are dropped from the loss instead.\n"
-                "Nothing is ever added to your labels.\n\n"
+                f"Set True if this dataset is positive-unlabeled: you {drew} what you\n"
+                "came for and left other real objects in the same images unlabeled.\n\n"
+                "Normal training treats every unlabeled region as background, so it\n"
+                "learns to stop finding the objects nobody got to. With this on, a second\n"
+                "copy of the model, averaged slowly over training, marks regions it is\n"
+                "fairly sure about; where you drew nothing, those are dropped from the\n"
+                "loss instead. Nothing is ever added to your labels.\n\n"
                 "Costs a forward pass per batch and a second copy of the model in memory,\n"
                 "and turns mosaic off for the epochs it is active.\n\n"
                 "Measured to help on medium and larger models at large image sizes; at\n"
@@ -925,6 +939,11 @@ class Base(QDialog):
                 "usually lowers mAP while raising recall, because a find nobody labeled\n"
                 "scores as a false positive. The epoch with the best recall is kept as\n"
                 "weights/recall_best.pt beside best.pt.\n\n"
+                + ("Measured on detection only. The mechanism is identical on\n"
+                   "segmentation -- it masks the same classification loss, and leaves\n"
+                   "the mask loss on your polygons alone -- but the size of the\n"
+                   "mAP-for-recall trade there has not been measured.\n\n"
+                   if self.task != 'detect' else "")
                 + PU_MODELS_NOTE)
             self.pu_dataset_combo.setToolTip(self.pu_dataset_tooltip)
             self.pu_dataset_label = QLabel("PU Dataset:")
@@ -1425,8 +1444,8 @@ class Base(QDialog):
             if self.pu_dataset_combo is not None:
                 param_mapping['pu_dataset'] = self.pu_dataset_combo
             else:
-                # Detection only. As a custom parameter it would reach the
-                # worker and fail a run that never offered the choice.
+                # No PU control on this task. As a custom parameter it would
+                # reach the worker and fail a run that never offered the choice.
                 excluded_keys.add('pu_dataset')
 
             # Update UI controls with imported values

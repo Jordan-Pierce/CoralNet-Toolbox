@@ -67,11 +67,6 @@ def closing_progress_bar(progress_bar):
 # Refresh timing
 # ---------------------------------------------------------------------------------------------------
 
-# Past this, the status bar line names whichever phase took the longest. Below
-# it the refresh was quick enough that the breakdown would only be noise.
-REFRESH_SLOW_MS = 1000.0
-
-
 def format_refresh_duration(total_ms):
     """A duration that reads well at both ends of the range."""
     if total_ms < 10.0:
@@ -86,8 +81,8 @@ class RefreshTimings:
 
     Phases are recorded with mark(), which closes the phase that started at the
     previous mark. That keeps the instrumentation to one line per boundary
-    rather than a block indent around each phase, and it is what lets the status
-    bar say which phase a slow refresh spent itself on.
+    rather than a block indent around each phase. The status bar reports only
+    the total; the per-phase record is kept for working on the dialog itself.
     """
 
     def __init__(self, dialog, trigger):
@@ -106,10 +101,6 @@ class RefreshTimings:
     @property
     def total_ms(self):
         return (time.perf_counter() - self._start) * 1000.0
-
-    def slowest(self):
-        """(name, ms) of the most expensive phase, or None when nothing ran."""
-        return max(self.phases, key=lambda phase: phase[1]) if self.phases else None
 
 
 def parse_frame_path(path: str) -> Tuple[str, Optional[int]]:

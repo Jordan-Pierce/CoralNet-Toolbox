@@ -34,6 +34,10 @@ conda activate coralnet12
 pip install uv
 ```
 
+> **Python version**: **3.12 is recommended**, and **3.11** is fully supported. Python 3.10 still installs but is deprecated: it reaches end-of-life in October 2026, and newer releases of several dependencies already require 3.11 or 3.12. Python 3.13 and later are not supported yet.
+>
+> Already on an older environment (for example `coralnet10`)? Python cannot be upgraded in place — see [Moving an Existing Environment to Python 3.12](https://jordan-pierce.github.io/CoralNet-Toolbox/installation/#moving-an-existing-environment-to-python-312) for the steps.
+
 **2. (Optional) GPU Acceleration**
 If you have an NVIDIA GPU with `CUDA`, install `PyTorch` with `CUDA` support for full acceleration.
 
@@ -80,8 +84,6 @@ uv pip install --upgrade coralnet-toolbox
 ```
 
 > **Note**: Using `-U` or `--upgrade-all` upgrades **all packages**, which may trigger a regression to the CPU version of `torch`. To avoid this, use the command above to upgrade only coralnet-toolbox. If you do experience a regression, use `pip` to uninstall `torch` and `torchvision`, then re-install the `CUDA` version.
-
-> **Python version**: Python 3.12 is recommended. An existing Python 3.10 environment (`coralnet10`) keeps working for now, but Python 3.10 reaches end-of-life in October 2026 and newer releases of several dependencies already require 3.11 or 3.12. Python cannot be upgraded inside an environment, so move to 3.12 by creating a new one (see **Starting Fresh** below).
 
 #### **Removing Packages**
 

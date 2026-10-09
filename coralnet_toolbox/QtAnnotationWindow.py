@@ -107,6 +107,7 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
     annotationSplit = pyqtSignal(str, object)  # original_annotation_id, [new_annotations]
     annotationGeometryEdited = pyqtSignal(str, object)  # annotation_id, {'old_geom':..., 'new_geom':...}
     annotationSelectionChanged = pyqtSignal(object)
+    
     unitScaleChanged = pyqtSignal(str)  # display unit for derived measurements  # list of annotation IDs when selection changes
 
     def __init__(self, main_window, parent=None):
@@ -131,6 +132,15 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
         self.tool_before_select = None
         self._syncing_selection = False  # Flag to prevent selection sync loops
         self._skip_phantom_refresh = False  # Flag to coalesce phantom rebuilds
+        # Phantom-layer rebuild coalescing. Unlike the transparency debounce
+        # there is no interval: the flush is posted for the end of the current
+        # event-loop turn, so it still runs before the next paint and no
+        # user-visible latency is introduced. Set here rather than alongside the
+        # toolbar widgets because paintEvent reads them, and Qt can deliver a
+        # paint at any point once the QGraphicsView underneath exists.
+        self._phantom_pending_full = False
+        self._phantom_pending_annotations = []
+        self._phantom_flush_scheduled = False
         # Streaming inference mode: when True, new annotations are saved to the
         # data model but heavy Qt graphics are skipped to keep playback smooth.
         self.is_streaming_inference = False
@@ -206,7 +216,7 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
         self.annotationsDeleted.connect(self._on_annotation_change_for_video)  # bulk delete
         
         # Initialize toolbar and status bar widgets
-        self._init_toolbar_widgets()  # Likely causes an error
+        self._init_toolbar_widgets()
 
     # --- Property aliases delegating data to central AnnotationManager ---
 
@@ -262,14 +272,6 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
         self._transparency_debounce.setSingleShot(True)
         self._transparency_debounce.setInterval(75)
         self._transparency_debounce.timeout.connect(self._apply_pending_transparency)
-
-        # Phantom-layer rebuild coalescing. Unlike the transparency debounce
-        # there is no interval: the flush is posted for the end of the current
-        # event-loop turn, so it still runs before the next paint and no
-        # user-visible latency is introduced.
-        self._phantom_pending_full = False
-        self._phantom_pending_annotations = []
-        self._phantom_flush_scheduled = False
 
         # Lazily-selected annotations gain their Qt items when panning or
         # zooming brings them into view.
@@ -4103,7 +4105,11 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
         one rebuild, it just happens a moment earlier than the timer would have
         fired. The queued timer then finds nothing pending and does nothing.
         """
-        if self._phantom_flush_scheduled:
+        # getattr, not attribute access: Qt decides when this runs, including
+        # on a window whose construction has not finished, and an exception
+        # raised here is both unfixable from the call site and expensive to
+        # report (see utilities._show_exception_dialog).
+        if getattr(self, '_phantom_flush_scheduled', False):
             self._flush_phantom_refresh()
         super().paintEvent(event)
 

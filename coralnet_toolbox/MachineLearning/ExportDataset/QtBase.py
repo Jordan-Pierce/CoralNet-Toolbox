@@ -4,7 +4,7 @@ import ujson as json
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QBrush, QColor
-from PyQt5.QtWidgets import (QFileDialog, QMessageBox, QCheckBox,
+from PyQt5.QtWidgets import (QFileDialog, QMessageBox, QCheckBox, QComboBox,
                              QVBoxLayout, QLabel, QLineEdit, QDialog, QHBoxLayout,
                              QPushButton, QFormLayout, QDialogButtonBox, QDoubleSpinBox,
                              QGroupBox, QTableWidget, QTableWidgetItem, QButtonGroup, QRadioButton,
@@ -19,7 +19,6 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Icons import get_icon, get_window_icon
 from coralnet_toolbox.MachineLearning.ExportDataset.export_dataset_utils import (
-    REFRESH_SLOW_MS,
     RefreshTimings,
     format_refresh_duration,
     build_export_sample_paths,
@@ -52,6 +51,51 @@ DEFAULT_REFRESH_TRIGGER = "label checkbox"
 # ----------------------------------------------------------------------------------------------------------------------
 
 
+class RemapComboBox(QComboBox):
+    """A target dropdown that fills its list the first time it is opened.
+
+    One row per label, each holding every label as a target, makes opening the
+    dialog cost the square of the label count: measured at 3 ms to build 100
+    rows without the dropdowns and 19 ms with them, 21 ms against 378 ms at 500
+    rows. Nearly all of that is spent on lists nobody looks at, so a row starts
+    holding only the code it has to display and fills in on first use, which
+    puts the open back to growing with the label count.
+    """
+
+    def __init__(self, codes, current, parent=None):
+        super().__init__(parent)
+        self._codes = list(codes)
+        if current not in self._codes:
+            self._codes.insert(0, current)
+        self._filled = False
+        # Just enough for the closed row to read correctly
+        self.addItem(current)
+
+    def ensure_filled(self):
+        """Put every target in the list, keeping the current one selected.
+
+        Signals are blocked for the swap: clearing the list moves the current
+        text, and that would otherwise register as the user picking a target.
+        """
+        if self._filled:
+            return
+        self._filled = True
+
+        current = self.currentText()
+        blocked = self.blockSignals(True)
+        try:
+            self.clear()
+            self.addItems(self._codes)
+            self.setCurrentText(current)
+        finally:
+            self.blockSignals(blocked)
+
+    def showPopup(self):
+        """Fill the list before showing it."""
+        self.ensure_filled()
+        super().showPopup()
+
+
 class Base(QDialog):
     supports_unlabeled_video_frames = False
     # Task the exported dataset trains; set by the subclasses
@@ -59,6 +103,12 @@ class Base(QDialog):
     # Every dialog here is on the index now. A subclass that cannot be set
     # this False and keeps the per-annotation rescan in its own override.
     uses_annotation_index = True
+
+    # The label table's columns. Export As is last on purpose: the update loop
+    # addresses columns 2 through 6 by number, so inserting ahead of them would
+    # have shifted every one of those.
+    TABLE_HEADERS = ["Include", "Label", "Annotations", "Train", "Val", "Test", "Images", "Export As"]
+    COL_EXPORT_AS = 7
 
     def __init__(self, main_window, parent=None):
         """
@@ -101,6 +151,11 @@ class Base(QDialog):
         self._applied_labels = set()
         # (row, label, checkbox) per table row, so the hot loop skips findChild
         self._label_rows = []
+        # label -> the class name it is written to disk as. Identity entries are
+        # never stored, so an untouched table leaves this empty and every
+        # exporter sees exactly the class list it saw before. Deliberately not
+        # cleared by populate_class_filter_list, so remaps survive a reopen.
+        self._label_remap = {}
         self._split_dirty = True
         self._split_label_counts = ({}, {}, {})
         self._split_totals = (0, 0, 0)
@@ -188,6 +243,12 @@ class Base(QDialog):
             event: The show event.
         """
         super().showEvent(event)
+        # Said before the gathering starts, not after it: the work below can
+        # hold the GUI thread for a while, and a busy cursor on its own does
+        # not say what is being waited on. No timeout, because _report_timings
+        # replaces this line when the summary is ready.
+        self.show_status_message(f"{self.windowTitle()}: gathering the annotation summary...")
+
         # Opening a dialog does its heaviest work in populate_class_filter_list,
         # which runs before update_summary_statistics and used to sit outside
         # the timing record - so the readout claimed a fraction of the real
@@ -199,6 +260,10 @@ class Base(QDialog):
         # every setChecked() here rebuilds the index for nothing.
         self.updating_summary_statistics = True
         try:
+            # Paint that line before the gathering blocks the thread. Pumped
+            # inside the guard on purpose: anything this delivers that would
+            # have refreshed the summary returns at the top instead.
+            QApplication.processEvents()
             self.update_annotation_type_checkboxes()
             self.update_video_options()
             self.update_extracted_note()
@@ -523,14 +588,8 @@ class Base(QDialog):
         layout = QVBoxLayout()
 
         # Label Counts Table
-        self.label_counts_table = QTableWidget(0, 7)
-        self.label_counts_table.setHorizontalHeaderLabels(["Include",
-                                                           "Label",
-                                                           "Annotations",
-                                                           "Train",
-                                                           "Val",
-                                                           "Test",
-                                                           "Images"])
+        self.label_counts_table = QTableWidget(0, len(self.TABLE_HEADERS))
+        self.label_counts_table.setHorizontalHeaderLabels(self.TABLE_HEADERS)
         header = self.label_counts_table.horizontalHeader()
         header.setDefaultAlignment(Qt.AlignCenter)
         # The table widget always widened with the dialog, but its columns kept
@@ -632,17 +691,33 @@ class Base(QDialog):
 
     def get_class_mapping(self):
         """
-        Get the class mapping for the selected labels.
+        Get the class mapping for the classes this export writes.
+
+        Keyed on the exported class names, so the file lines up with the
+        data.yaml beside it rather than with the project's own labels. A target
+        is always an existing label, so its entry is a real Label dict; the
+        labels folded into it are listed under 'merged_from', which keeps the
+        merge recoverable. Without a remap the keys are the selected labels,
+        exactly as before.
 
         Returns:
             dict: Dictionary containing class mappings.
         """
-        # Get the label objects for the selected labels
-        class_mapping = {}
+        labels_by_code = {label.short_label_code: label
+                          for label in self.main_window.label_window.labels}
 
-        for label in self.main_window.label_window.labels:
-            if label.short_label_code in self.selected_labels:
-                class_mapping[label.short_label_code] = label.to_dict()
+        class_mapping = {}
+        for target in self.export_class_names():
+            label = labels_by_code.get(target)
+            if label is None:
+                continue
+
+            entry = label.to_dict()
+            merged_from = [source for source in self.selected_labels
+                           if source != target and self._remap_target(source) == target]
+            if merged_from:
+                entry['merged_from'] = merged_from
+            class_mapping[target] = entry
 
         return class_mapping
 
@@ -769,6 +844,158 @@ class Base(QDialog):
         layout.addStretch()
         return container
 
+    def remap_target_codes(self):
+        """Return the class names a label row may be exported as.
+
+        Every label in the Label Window except Review, which an export drops
+        anyway - offering it as a target would only promise a class that never
+        reaches disk.
+
+        Returns:
+            list: Sorted short label codes, excluding Review.
+        """
+        return sorted(label.short_label_code
+                      for label in self.main_window.label_window.labels
+                      if label.short_label_code != 'Review')
+
+    def _prune_label_remap(self, target_codes):
+        """Drop remaps whose target no longer exists in the Label Window.
+
+        The remap outlives the table, so a label deleted between two openings
+        would otherwise leave a target no dropdown can display.
+        """
+        valid = set(target_codes)
+        self._label_remap = {source: target for source, target in self._label_remap.items()
+                             if target in valid}
+
+    def create_remap_combo_cell(self, label_code, target_codes):
+        """Build the "Export As" dropdown for one label row.
+
+        The row's own code is the default, so an untouched table exports the
+        same class list it always did. Pointing two rows at one name merges
+        them on disk, under that name's label.
+
+        Args:
+            label_code (str): Short label code for this row.
+            target_codes (list): Codes offered as targets.
+
+        Returns:
+            QComboBox: The dropdown for this row.
+        """
+        codes = list(target_codes)
+        if label_code not in codes:
+            codes.insert(0, label_code)
+
+        # Starts holding only the target it displays, and fills the rest in when
+        # the user opens it - see RemapComboBox.
+        combo = RemapComboBox(codes, self._remap_target(label_code))
+        combo.setToolTip("Class name this label is written to disk as.\n"
+                         "Point two labels at the same name to merge them in the export.")
+        # Connected after the value is in place, the way the Include checkbox
+        # is: otherwise building the rows fires a remap change for every one.
+        combo.currentTextChanged.connect(
+            lambda target, source=label_code: self.set_label_remap(source, target))
+        return combo
+
+    def set_label_remap(self, source_code, target_code):
+        """Record the class name a label exports as, then redraw the table.
+
+        The index is keyed on the source labels, so a remap never invalidates
+        it: the same annotations are counted, only written under another name.
+        That is why neither dirty flag is set here - the refresh this triggers
+        re-sums the split columns and nothing else.
+        """
+        if target_code == source_code:
+            self._label_remap.pop(source_code, None)
+        else:
+            self._label_remap[source_code] = target_code
+
+        self._refresh_trigger = "label remap"
+        self.update_summary_statistics()
+
+    def _remap_target(self, label_code):
+        """Return the class name this label is written to disk as."""
+        return self._label_remap.get(label_code, label_code)
+
+    def export_class_names(self):
+        """The class names an export writes, in class-index order.
+
+        Deduplicated, so two labels pointed at one name share a single class.
+        With no remap set this is self.selected_labels unchanged, which is the
+        list every exporter used to build its class order from directly.
+
+        Returns:
+            list: Target class names, ordered by first appearance.
+        """
+        ordered = []
+        seen = set()
+        for label in self.selected_labels:
+            target = self._remap_target(label)
+            if target not in seen:
+                seen.add(target)
+                ordered.append(target)
+        return ordered
+
+    def export_label_index(self):
+        """Map every selected label to the class index it is written as.
+
+        Replaces the enumerate(self.selected_labels) each exporter built for
+        itself, so a merged pair of labels resolves to one index.
+
+        Returns:
+            dict: {short label code: class index}.
+        """
+        name_to_index = {name: index for index, name in enumerate(self.export_class_names())}
+        return {label: name_to_index[self._remap_target(label)] for label in self.selected_labels}
+
+    def _fold_counts_to_targets(self, counts):
+        """Sum per-label counts onto the class names they export as.
+
+        Args:
+            counts (dict): {short label code: count}.
+
+        Returns:
+            dict: {target class name: summed count}.
+        """
+        folded = {}
+        for label, count in counts.items():
+            target = self._remap_target(label)
+            folded[target] = folded.get(target, 0) + count
+        return folded
+
+    def add_label_row(self, row, label, count, image_count, hidden_codes, target_codes):
+        """Insert one label's row and return its (row, label, checkbox) entry.
+
+        Shared with the Semantic dialog, which gathers its counts from mask
+        pixel statistics but builds the same row out of them.
+
+        Args:
+            row (int): Row index to insert at.
+            label (str): Short label code for this row.
+            count (int): Annotation count shown for the label.
+            image_count (int): Image count shown for the label.
+            hidden_codes (set): Label codes hidden in the Label Window.
+            target_codes (list): Codes the Export As dropdown offers.
+
+        Returns:
+            tuple: (row, label, checkbox) for self._label_rows.
+        """
+        container = self.create_include_checkbox_cell(label, hidden_codes)
+
+        self.label_counts_table.insertRow(row)
+        self.label_counts_table.setCellWidget(row, 0, container)
+        self.label_counts_table.setItem(row, 1, self.create_centered_item(label))
+        self.label_counts_table.setItem(row, 2, self.create_centered_item(count))
+        self.label_counts_table.setItem(row, 3, self.create_centered_item("0"))
+        self.label_counts_table.setItem(row, 4, self.create_centered_item("0"))
+        self.label_counts_table.setItem(row, 5, self.create_centered_item("0"))
+        self.label_counts_table.setItem(row, 6, self.create_centered_item(image_count))
+        self.label_counts_table.setCellWidget(row,
+                                              self.COL_EXPORT_AS,
+                                              self.create_remap_combo_cell(label, target_codes))
+
+        return (row, label, container.findChild(QCheckBox))
+
     def populate_class_filter_list(self):
         """
         Populate the class filter list with labels and their counts.
@@ -807,45 +1034,24 @@ class Base(QDialog):
                 sorted_label_counts = sorted(label_counts.items(), key=lambda item: item[1], reverse=True)
 
                 # Populate the label counts table with labels and their counts
-                self.label_counts_table.setColumnCount(7)
-                self.label_counts_table.setHorizontalHeaderLabels(["Include",
-                                                                   "Label",
-                                                                   "Annotations",
-                                                                   "Train",
-                                                                   "Val",
-                                                                   "Test",
-                                                                   "Images"])
+                self.label_counts_table.setColumnCount(len(self.TABLE_HEADERS))
+                self.label_counts_table.setHorizontalHeaderLabels(self.TABLE_HEADERS)
 
-                # Populate the label counts table with labels and their counts
                 # Labels hidden in the Label Window start unchecked, the same way
                 # the Image Source defaults to the filtered table.
                 hidden_codes = self.get_hidden_label_codes()
+                target_codes = self.remap_target_codes()
+                self._prune_label_remap(target_codes)
 
                 label_rows = []
                 self.label_counts_table.setUpdatesEnabled(False)
-                row = 0
-                for label, count in sorted_label_counts:
-                    container = self.create_include_checkbox_cell(label, hidden_codes)
-
-                    # Create centered table items using helper function
-                    label_item = self.create_centered_item(label)
-                    anno_count = self.create_centered_item(count)
-                    train_item = self.create_centered_item("0")
-                    val_item = self.create_centered_item("0")
-                    test_item = self.create_centered_item("0")
-                    images_item = self.create_centered_item(len(label_image_counts[label]))
-
-                    self.label_counts_table.insertRow(row)
-                    self.label_counts_table.setCellWidget(row, 0, container)
-                    self.label_counts_table.setItem(row, 1, label_item)
-                    self.label_counts_table.setItem(row, 2, anno_count)
-                    self.label_counts_table.setItem(row, 3, train_item)
-                    self.label_counts_table.setItem(row, 4, val_item)
-                    self.label_counts_table.setItem(row, 5, test_item)
-                    self.label_counts_table.setItem(row, 6, images_item)
-
-                    label_rows.append((row, label, container.findChild(QCheckBox)))
-                    row += 1
+                for row, (label, count) in enumerate(sorted_label_counts):
+                    label_rows.append(self.add_label_row(row,
+                                                         label,
+                                                         count,
+                                                         len(label_image_counts[label]),
+                                                         hidden_codes,
+                                                         target_codes))
                 self.label_counts_table.setUpdatesEnabled(True)
                 progress_bar.finish_progress()
 
@@ -986,11 +1192,15 @@ class Base(QDialog):
     
         # These come from the index, already summed for the table. The old
         # Counters here were a second pass over the same three split lists.
-        train_label_counts, val_label_counts, test_label_counts = self._split_label_counts
+        # Folded onto the export class names first: pointing a sparse label at
+        # a well covered one is the reason the remap exists, so the question is
+        # whether the class that reaches disk is covered, not the source label.
+        train_label_counts, val_label_counts, test_label_counts = [
+            self._fold_counts_to_targets(counts) for counts in self._split_label_counts]
         train_total, val_total, test_total = self._split_totals
 
         # Check the conditions for each split
-        for label in self.selected_labels:
+        for label in self.export_class_names():
             if train_ratio > 0 and train_label_counts.get(label, 0) == 0:
                 return False
             if val_ratio > 0 and val_label_counts.get(label, 0) == 0:
@@ -1035,29 +1245,37 @@ class Base(QDialog):
         """Summarise the refresh in the status bar.
 
         A refresh that takes a noticeable moment should say what it covered and
-        how long it took, rather than leaving the dialog looking stuck. Past
-        REFRESH_SLOW_MS it also names the phase that accounted for most of it,
-        which is the first thing worth knowing when one is slow.
+        how long it took, rather than leaving the dialog looking stuck. It also
+        replaces the line showEvent put up on the way in, which carries no
+        timeout of its own.
         """
+        duration = format_refresh_duration(timings.total_ms)
         try:
             labels, images, annotations = self._refresh_scope()
+            message = (f"Export summary: {labels:,} labels, {images:,} images, "
+                       f"{annotations:,} annotations ({duration})")
         except Exception:
-            # A readout must never be the reason a refresh fails
-            return
+            # A readout must never be the reason a refresh fails, but it still
+            # has to clear the line it is replacing, so report the total alone.
+            message = f"Export summary ({duration})"
 
-        duration = format_refresh_duration(timings.total_ms)
-        if timings.total_ms >= REFRESH_SLOW_MS:
-            slowest = timings.slowest()
-            if slowest:
-                duration += f", most of it {slowest[0]}"
+        self.show_status_message(message, REFRESH_STATUS_TIMEOUT_MS)
 
-        message = (f"Export summary: {labels:,} labels, {images:,} images, "
-                   f"{annotations:,} annotations ({duration})")
+    def show_status_message(self, message, timeout=0):
+        """Put a message in the main window's status bar.
 
+        A timeout of 0 leaves it up until something replaces it, which is what
+        the "working" line needs: the work it describes outlasts any timeout
+        that would be short enough to be useful.
+
+        Args:
+            message (str): Text to show.
+            timeout (int): Milliseconds to show it for, or 0 to leave it up.
+        """
         try:
             status_bar = getattr(self.main_window, 'status_bar', None)
             if status_bar is not None:
-                status_bar.showMessage(message, REFRESH_STATUS_TIMEOUT_MS)
+                status_bar.showMessage(message, timeout)
         except Exception:
             pass
 
@@ -1424,6 +1642,12 @@ class Base(QDialog):
                 self.compute_split_label_counts()
                 timings.mark("split counts")
                 train_counts, val_counts, test_counts = self._split_label_counts
+                # A row's numbers stay its own label's contribution; the colours
+                # ask whether the class it exports as is covered, which is what
+                # training actually needs. A remapped row can therefore read
+                # zero in a split and still be green.
+                train_folded, val_folded, test_folded = [
+                    self._fold_counts_to_targets(counts) for counts in self._split_label_counts]
 
                 unlabeled_video_export = self.allows_unlabeled_video_export() and self.include_negatives_radio.isChecked()
 
@@ -1439,6 +1663,7 @@ class Base(QDialog):
                 self.label_counts_table.setUpdatesEnabled(False)
                 for row, label, include_checkbox in self._label_rows:
                     checked = include_checkbox.isChecked()
+                    target = self._remap_target(label)
                     # An unchecked label reads zero, the same as when its
                     # annotations were filtered out of the old selection pass
                     anno_count = self._label_totals.get(label, 0) if checked else 0
@@ -1459,9 +1684,12 @@ class Base(QDialog):
                             self.set_cell_color(row, 4, red if val_empty else green)
                             self.set_cell_color(row, 5, red if test_empty else green)
                         else:
-                            self.set_cell_color(row, 3, red if train_count == 0 and self.train_ratio > 0 else green)
-                            self.set_cell_color(row, 4, red if val_count == 0 and self.val_ratio > 0 else green)
-                            self.set_cell_color(row, 5, red if test_count == 0 and self.test_ratio > 0 else green)
+                            train_covered = train_folded.get(target, 0) > 0
+                            val_covered = val_folded.get(target, 0) > 0
+                            test_covered = test_folded.get(target, 0) > 0
+                            self.set_cell_color(row, 3, green if train_covered or self.train_ratio == 0 else red)
+                            self.set_cell_color(row, 4, green if val_covered or self.val_ratio == 0 else red)
+                            self.set_cell_color(row, 5, green if test_covered or self.test_ratio == 0 else red)
                     else:
                         self.set_cell_color(row, 3, green)
                         self.set_cell_color(row, 4, green)

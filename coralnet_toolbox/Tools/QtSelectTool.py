@@ -723,13 +723,30 @@ class SelectTool(Tool):
             return annotation
 
     def update_with_top_machine_confidence(self):
-        """Update the selected annotation(s) with their top machine confidence predictions."""
-        if not self.selected_annotations:
+        """Update the selected annotation(s) with their top machine confidence predictions.
+
+        update_user_confidence rebuilds each annotation's graphics item and
+        emits two signals, so verifying a boxful of unverified annotations is
+        long enough to look like the window has stopped responding. The wait
+        cursor is the only feedback available: this loop holds the GUI thread,
+        so a status-bar message would not be painted until the work it was
+        describing had already finished.
+
+        The list is snapshotted first because those signals run handlers that
+        are free to change the selection underneath the loop.
+        """
+        pending = [annotation for annotation in self.selected_annotations
+                   if annotation.machine_confidence]
+        if not pending:
             return
-        for annotation in self.selected_annotations:
-            if annotation.machine_confidence:
-                top_label = next(iter(annotation.machine_confidence))
-                annotation.update_user_confidence(top_label)
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            for annotation in pending:
+                annotation.update_user_confidence(next(iter(annotation.machine_confidence)))
+        finally:
+            QApplication.restoreOverrideCursor()
+
         if len(self.selected_annotations) == 1:
             self.annotation_window.main_window.confidence_window.refresh_display()
             
