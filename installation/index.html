@@ -431,6 +431,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#moving-an-existing-environment-to-python-312" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🐍 Moving an Existing Environment to Python 3.12
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -799,6 +810,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#moving-an-existing-environment-to-python-312" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        🐍 Moving an Existing Environment to Python 3.12
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -990,7 +1012,7 @@ conda<span class="w"> </span>activate<span class="w"> </span>coralnet12
 pip<span class="w"> </span>install<span class="w"> </span>uv
 </code></pre></div></td></tr></table></div></p>
 <blockquote>
-<p><strong>Python version</strong>: Python 3.12 is recommended. 3.10 and 3.11 are still supported, but Python 3.10 reaches end-of-life in October 2026 and newer releases of several dependencies already require 3.11 or 3.12. 3.13 and later are not supported yet. Python cannot be upgraded inside an existing environment: to move an old <code>coralnet10</code> (Python 3.10) environment to 3.12, create a new environment as above.</p>
+<p><strong>Python version</strong>: <strong>3.12 is recommended, and 3.11 is fully supported.</strong> 3.10 still installs, but it reaches end-of-life in October 2026 and newer releases of several dependencies already require 3.11 or 3.12, so treat it as deprecated. 3.13 and later are not supported yet. Already on an older environment? See <a href="#moving-an-existing-environment-to-python-312">Moving an Existing Environment to Python 3.12</a>.</p>
 </blockquote>
 <h3 id="gpu-acceleration-optional">⚡ GPU Acceleration (Optional)<a class="headerlink" href="#gpu-acceleration-optional" title="Permanent link">&para;</a></h3>
 <p>If you have an <strong>NVIDIA GPU</strong>, install <code>PyTorch</code> built for <code>CUDA</code> <em>before</em> installing the <code>toolbox</code>. The <code>PyTorch</code> wheels bundle their own <code>CUDA</code> runtime, so no separate <code>CUDA</code> toolkit is needed: only an NVIDIA driver recent enough for that <code>CUDA</code> version (12.8 or newer for RTX 50-series / Blackwell cards).</p>
@@ -1037,6 +1059,58 @@ uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </s
 <p><strong>Fallback</strong>: If <code>uv</code> fails, use <code>pip</code> instead: <code>pip install --upgrade coralnet-toolbox</code></p>
 <p><strong>Note</strong>: Using <code>-U</code> or <code>--upgrade-all</code> upgrades <strong>all packages</strong>, which may trigger a regression to the CPU version of <code>torch</code>. To avoid this, use the commands above to upgrade only coralnet-toolbox. If you do experience a regression, uninstall <code>torch</code> and <code>torchvision</code>, and reinstall the CUDA versions.</p>
 </blockquote>
+<h3 id="moving-an-existing-environment-to-python-312">🐍 Moving an Existing Environment to Python 3.12<a class="headerlink" href="#moving-an-existing-environment-to-python-312" title="Permanent link">&para;</a></h3>
+<p>The <code>toolbox</code> accepts Python 3.10, 3.11 and 3.12, with <strong>3.12 recommended</strong>. If you installed
+earlier, your environment is probably named <code>coralnet10</code> and running Python 3.10. Check with:</p>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span>
+<span class="normal">2</span></pre></div></td><td class="code"><div><pre><span></span><code>conda<span class="w"> </span>activate<span class="w"> </span>coralnet10
+python<span class="w"> </span>--version
+</code></pre></div></td></tr></table></div>
+<p><strong>Python is not upgraded in place.</strong> <code>conda install python=3.12</code> inside an existing environment
+makes <code>conda</code> re-solve every <code>conda</code>-installed package at once, and it does not rebuild the
+<code>pip</code>-installed ones -- <code>torch</code>, <code>PyQt5</code>, <code>ultralytics</code> and the rest keep their old
+<code>cp310</code> wheels, which the new interpreter cannot import. Create a new environment instead:</p>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
+<span class="normal"> 2</span>
+<span class="normal"> 3</span>
+<span class="normal"> 4</span>
+<span class="normal"> 5</span>
+<span class="normal"> 6</span>
+<span class="normal"> 7</span>
+<span class="normal"> 8</span>
+<span class="normal"> 9</span>
+<span class="normal">10</span>
+<span class="normal">11</span>
+<span class="normal">12</span>
+<span class="normal">13</span>
+<span class="normal">14</span>
+<span class="normal">15</span>
+<span class="normal">16</span>
+<span class="normal">17</span>
+<span class="normal">18</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="c1"># Leave the old environment</span>
+conda<span class="w"> </span>deactivate
+
+<span class="c1"># Create and activate a Python 3.12 environment alongside it</span>
+conda<span class="w"> </span>create<span class="w"> </span>--name<span class="w"> </span>coralnet12<span class="w"> </span><span class="nv">python</span><span class="o">=</span><span class="m">3</span>.12<span class="w"> </span>-y
+conda<span class="w"> </span>activate<span class="w"> </span>coralnet12
+
+<span class="c1"># Install uv</span>
+pip<span class="w"> </span>install<span class="w"> </span>uv
+
+<span class="c1"># Re-install PyTorch with CUDA support first, if you use a GPU</span>
+uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>torch<span class="w"> </span>torchvision<span class="w"> </span>--index-url<span class="w"> </span>https://download.pytorch.org/whl/cu128
+
+<span class="c1"># Then the toolbox</span>
+uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>coralnet-toolbox
+
+<span class="c1"># Confirm</span>
+coralnet-toolbox
+</code></pre></div></td></tr></table></div>
+<p>Nothing of yours lives inside the environment -- your images, annotation files and model weights
+are ordinary files on disk, so the new environment opens them unchanged.</p>
+<p>Once the new environment works, delete the old one to reclaim the disk space:</p>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1</span></pre></div></td><td class="code"><div><pre><span></span><code>conda<span class="w"> </span>env<span class="w"> </span>remove<span class="w"> </span>--name<span class="w"> </span>coralnet10
+</code></pre></div></td></tr></table></div>
 <h2 id="install-from-source-github-repository">🐍 Install from Source (GitHub Repository)<a class="headerlink" href="#install-from-source-github-repository" title="Permanent link">&para;</a></h2>
 <p>If you prefer to clone the repository and run the <code>toolbox</code> from the source code:</p>
 <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 1</span>
@@ -1356,7 +1430,7 @@ application's own file dialogs. That is what level 3 is for.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 2, 2026 19:13:44 UTC"><span class="timeago" datetime="2026-10-02T19:13:44+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 2, 2026 19:13:44 UTC">2026-10-02</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 8, 2026 18:02:20 UTC"><span class="timeago" datetime="2026-10-08T18:02:20+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 8, 2026 18:02:20 UTC">2026-10-08</span>
   </span>
 
     
