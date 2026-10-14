@@ -34,10 +34,17 @@ jobs:
                   uv pip install twine
               env:
                   UV_SYSTEM_PYTHON: 1
-            - name: Build and publish
+            - name: Build
+              run: uv build
+            # 1.1.0 published with no icons: setuptools_scm supplies the file
+            # finder that collects the Icons/*.svg and Community/cfg/**/*.yaml,
+            # and dropping it from pyproject's build requires was silent -- the
+            # app renders blank icons rather than failing. Gate the upload on
+            # the wheel actually carrying them.
+            - name: Assert wheel carries package data
+              run: python scripts/check_wheel_data.py dist/*.whl
+            - name: Publish
               env:
                   TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
                   TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
-              run: |
-                  uv build
-                  twine upload dist/*
+              run: twine upload dist/*
