@@ -42,7 +42,14 @@ jobs:
             # app renders blank icons rather than failing. Gate the upload on
             # the wheel actually carrying them.
             - name: Assert wheel carries package data
-              run: python scripts/check_wheel_data.py dist/*.whl
+              run: |
+                  want=$(git ls-files coralnet_toolbox | grep -cE '\.(svg|yaml|json)$')
+                  got=$(unzip -l dist/*.whl | grep -cE '\.(svg|yaml|json)$')
+                  echo "tracked: $want, in wheel: $got"
+                  if [ "$want" -eq 0 ] || [ "$got" -ne "$want" ]; then
+                      echo "::error::wheel carries $got of $want data files; check setuptools_scm in [build-system] requires"
+                      exit 1
+                  fi
             - name: Publish
               env:
                   TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
