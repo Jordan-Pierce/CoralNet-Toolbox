@@ -25,6 +25,7 @@ numpy<3
 pandas<3
 scipy
 scikit-learn
+scikit-image
 umap-learn
 faiss-cpu
 matplotlib

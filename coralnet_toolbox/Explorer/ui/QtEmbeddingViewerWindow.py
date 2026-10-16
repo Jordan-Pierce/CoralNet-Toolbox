@@ -42,6 +42,13 @@ from coralnet_toolbox.Common.QtCollapsibleSection import CollapsibleSection
 
 from coralnet_toolbox.Explorer.core.QtDataItem import ScatterPlotItem, POINT_SIZE, SPRITE_SIZE
 from coralnet_toolbox.Explorer.core.QtDataItem import AnnotationDataItem
+from coralnet_toolbox.Explorer.core.feature_binning import (
+    FeatureHierarchy, HierarchyCache, color_tint_from_features, ids_digest,
+)
+from coralnet_toolbox.Explorer.core.feature_vectors import (
+    color_features, color_texture_features, fill_background, mean_of_groups,
+    pool_backbone_output, prefix_token_count, rotations,
+)
 from coralnet_toolbox.Explorer.managers.CacheManager import CacheManager
 from coralnet_toolbox.Explorer.workers import EmbeddingPipelineWorker
 from coralnet_toolbox.Features.ModelRegistry import YOLO_MODELS, is_yolo_model, is_live_yolo_model
@@ -61,16 +68,18 @@ from coralnet_toolbox.paths import resolve_weights
 REVIEW_LABEL = 'Review'
 POINT_WIDTH = 3
 
-# Color feature extraction constants (HSV-based)
-# A coarse 8x8 Hue-Saturation histogram (64 bins) is far less sparse than a
-# fine 16x16 grid, so similar-but-not-identical patches no longer collapse onto
-# the same bin. The histogram is paired with full H/S/V mean+std moments below.
-COLOR_HS_HUE_BINS = 8
-COLOR_HS_SAT_BINS = 8
-# Weight applied to the 6 H/S/V mean+std moments so that block is comparable in
-# magnitude to the L2-normalized (unit-norm) histogram block. Tune upward to let
-# overall brightness/saturation drive the layout more than fine hue structure.
-COLOR_MOMENT_WEIGHT = 2.0
+# Hand-made feature "models" (Color Features category). Their vectors are
+# scaled per block, so they skip the global StandardScaler and use a euclidean
+# metric; deep embeddings are compared by cosine. "Color Features" keeps its
+# old name so its existing caches stay valid.
+COLOR_MODEL = "Color Features"
+COLOR_TEXTURE_MODEL = "Color + Texture"
+HANDCRAFTED_MODELS = (COLOR_MODEL, COLOR_TEXTURE_MODEL)
+
+# Cache-key suffixes for extraction options that change the vectors.
+MEAN_POOL_KEY_SUFFIX = "__meanpool"      # HF transformers: mean of patch tokens
+MASKED_KEY_SUFFIX = "__masked"           # polygon background filled before a deep model
+ROTATIONS_KEY_SUFFIX = "__rot4"          # deep features averaged over 4 rotations
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -143,6 +152,18 @@ class EmbeddingViewerWindow(QWidget):
         self.current_data_items = []  # Currently embedded data items
         self.current_features = None  # Features for current embedding
         self.current_feature_model_key = None  # Model key used for features
+        self.current_feature_metric = 'cosine'  # 'euclidean' for hand-made features
+        self.current_feature_model_name = None
+        # Extraction options snapshot taken on the GUI thread for the worker:
+        # {'mask_background': bool, 'rotations': 1 or 4}.
+        self._extraction_options = {'mask_background': False, 'rotations': 1}
+        self._pipeline_feature_metric = 'cosine'
+        self._pipeline_model_name = None
+        # Ward trees over the current features, shared by the cluster overlay and
+        # the gallery's Feature Bins sort so both cut the same tree.
+        self._hierarchy_cache = HierarchyCache()
+        # Last feature-cache lookup for ids outside the embedding: (key, {id: vector}).
+        self._cached_vectors_memo = (None, {})
         
         # Model caching
         self._cached_yolo_model = None
@@ -168,6 +189,8 @@ class EmbeddingViewerWindow(QWidget):
         self.embedding_settings_section = None
         self.perform_pca_before_combo = None
         self.pca_components_spin = None
+        self.mask_background_combo = None
+        self.rotation_average_combo = None
         self.technique_settings_stack = None
         self.umap_n_neighbors_row = None
         self.umap_n_neighbors_slider = None
@@ -253,6 +276,9 @@ class EmbeddingViewerWindow(QWidget):
         self._cluster_overlay_items: list = []   # QGraphicsPathItem boundaries
         self._cluster_centroid_items: list = []  # QGraphicsPathItem centroid markers
         self._cluster_colors_rgba: np.ndarray = np.empty((0, 4), dtype=np.uint8)
+        # Each point's distance to its cluster centre in the space it was
+        # clustered in, so the gallery orders a cluster most-typical first.
+        self._cluster_distances: np.ndarray = np.empty((0,), dtype=np.float32)
 
         # Similarity neighbour expansion (Ctrl+Shift+Wheel)
         self._knn_anchor_mask = None   # selection frozen at gesture start
@@ -322,7 +348,7 @@ class EmbeddingViewerWindow(QWidget):
         self.category_combo.addItems(["Color Features", "YOLO", "Transformer", "TIMM", "OpenCLIP", "Live Models"])
         self.category_combo.currentTextChanged.connect(self._on_category_changed)
         self.category_combo.setMinimumWidth(120)
-        self.category_combo.setToolTip("Select feature extraction model category:\nColor Features, YOLO (detection), Transformer, TIMM, OpenCLIP, or Live Models")
+        self.category_combo.setToolTip("Select feature extraction model category:\nColor Features (colour, or colour + texture), YOLO (detection), Transformer, TIMM, OpenCLIP, or Live Models")
         toolbar.addWidget(self.category_combo)
 
         # Model Selection (dynamically populated)
@@ -396,21 +422,26 @@ class EmbeddingViewerWindow(QWidget):
         cluster_layout.setContentsMargins(0, 0, 0, 0)
         cluster_layout.setSpacing(6)
 
-        # K spinbox
+        # K spinbox; its floor reads "Auto" (a single cluster is never wanted)
         self.cluster_k_spin = QSpinBox()
-        self.cluster_k_spin.setRange(2, 50)
-        self.cluster_k_spin.setValue(3)
+        self.cluster_k_spin.setRange(1, 50)
+        self.cluster_k_spin.setSpecialValueText("Auto")
+        self.cluster_k_spin.setValue(1)
         self.cluster_k_spin.setMinimumWidth(64)
-        self.cluster_k_spin.setToolTip("Number of clusters for K-Means")
+        self.cluster_k_spin.setToolTip(
+            "Number of clusters. Auto cuts the Ward tree where its merge heights\n"
+            "jump the most, between sqrt(N)/4 and sqrt(N) clusters."
+        )
         self.cluster_k_spin.setEnabled(False)
         cluster_layout.addRow("K:", self.cluster_k_spin)
 
         # Cluster space combo
         self.cluster_space_combo = QComboBox()
-        self.cluster_space_combo.addItems(["Position (2D)", "Feature Vector"])
+        self.cluster_space_combo.addItems(["Feature Vector", "Position (2D)"])
         self.cluster_space_combo.setToolTip(
-            "Position (2D): cluster on the projected scatter-plot coordinates.\n"
-            "Feature Vector: cluster on the full high-dimensional embeddings."
+            "Feature Vector: cluster on the full embeddings (recommended; the 2D\n"
+            "projection distorts distances).\n"
+            "Position (2D): cluster on the projected scatter-plot coordinates."
         )
         self.cluster_space_combo.setEnabled(False)
         cluster_layout.addRow("Space:", self.cluster_space_combo)
@@ -423,7 +454,7 @@ class EmbeddingViewerWindow(QWidget):
 
         self.cluster_run_button = QPushButton("Cluster")
         self.cluster_run_button.setToolTip(
-            "Run K-Means on the current embedding and draw cluster boundaries"
+            "Cluster the current embedding (Ward hierarchy) and draw cluster boundaries"
         )
         self.cluster_run_button.clicked.connect(self._run_clustering)
         self.cluster_run_button.setEnabled(False)
@@ -533,8 +564,13 @@ class EmbeddingViewerWindow(QWidget):
             self.model_combo.clear()
 
             if category == "Color Features":
-                self.model_combo.setEnabled(False)
-                self.model_combo.addItem("N/A", "Color Features")
+                self.model_combo.setEnabled(True)
+                self.model_combo.addItem("Color", COLOR_MODEL)
+                self.model_combo.addItem("Color + Texture", COLOR_TEXTURE_MODEL)
+                self.model_combo.setItemData(
+                    1, "Colour plus rotation-invariant texture (LBP and gradient statistics).\n"
+                       "Separates surfaces of one colour, e.g. sand from rubble.",
+                    Qt.ToolTipRole)
             elif category == "YOLO":
                 self.model_combo.setEnabled(True)
                 for display_name, model_name in YOLO_MODELS.items():
@@ -631,6 +667,26 @@ class EmbeddingViewerWindow(QWidget):
             "Lower values can speed up reduction on high-dimensional features."
         )
         general_form.addRow("PCA components:", self.pca_components_spin)
+
+        self.mask_background_combo = QComboBox()
+        self.mask_background_combo.addItems(["True", "False"])
+        self.mask_background_combo.setCurrentText("False")
+        self.mask_background_combo.setToolTip(
+            "Deep models only: fill a polygon's crop outside the polygon with its mean colour,\n"
+            "so a thin or diagonal polygon is not embedded as its neighbours.\n"
+            "Color features always use the polygon's own pixels."
+        )
+        general_form.addRow("Mask background:", self.mask_background_combo)
+
+        self.rotation_average_combo = QComboBox()
+        self.rotation_average_combo.addItems(["True", "False"])
+        self.rotation_average_combo.setCurrentText("False")
+        self.rotation_average_combo.setToolTip(
+            "Deep models only: average the features of the crop rotated by 0, 90, 180 and 270 degrees,\n"
+            "so the same surface at another angle (e.g. texture atlas charts) lands in the same place.\n"
+            "Four times slower. Color features are already rotation-invariant."
+        )
+        general_form.addRow("Rotation-invariant:", self.rotation_average_combo)
 
         advanced_layout.addWidget(general_group)
 
@@ -1230,9 +1286,15 @@ class EmbeddingViewerWindow(QWidget):
         # moments), so they want a euclidean metric and should skip the global
         # StandardScaler that otherwise re-amplifies sparse histogram bins into
         # noise. Deep-model embeddings keep the default cosine + scaling.
-        if model_name == "Color Features":
+        if model_name in HANDCRAFTED_MODELS:
             embedding_params['metric'] = 'euclidean'
             embedding_params['skip_scaling'] = True
+
+        # Snapshot the extraction options here: the extractors run on the
+        # worker thread and must not read widgets.
+        self._extraction_options = self._get_extraction_options(model_name)
+        self._pipeline_feature_metric = 'euclidean' if model_name in HANDCRAFTED_MODELS else 'cosine'
+        self._pipeline_model_name = model_name
 
         # LDA is supervised. Snapshot the labels here on the GUI thread, aligned
         # with data_items, because the reduction runs on the worker thread and
@@ -1378,8 +1440,13 @@ class EmbeddingViewerWindow(QWidget):
             self.current_data_items = final_data_items
             self.current_features = features
             self.current_feature_model_key = model_key
-            # New features invalidate the cached normalization and any frozen anchor.
+            self.current_feature_metric = self._pipeline_feature_metric
+            self.current_feature_model_name = self._pipeline_model_name
+            # New features invalidate the cached normalization, the Ward trees
+            # built on the old ones, and any frozen anchor.
             self._features_unit = None
+            self._hierarchy_cache.clear()
+            self._cached_vectors_memo = (None, {})
             self._knn_reset()
             self._clear_similarity_ranking()
 
@@ -1398,7 +1465,8 @@ class EmbeddingViewerWindow(QWidget):
             self._reset_view()
 
             self.embedding_complete.emit()
-            
+            self._notify_annotation_viewer_feature_state()
+
             # Update status bar
             self.main_window.status_bar.showMessage("Embedding complete", 3000)
                 
@@ -1477,8 +1545,27 @@ class EmbeddingViewerWindow(QWidget):
 
         return None
 
-    def _get_model_cache_key(self, model_name):
-        """Build a stable cache key for the selected model source."""
+    def _get_extraction_options(self, model_name):
+        """Read the extraction options that apply to this model from the Advanced popup.
+
+        Masking and rotation averaging only apply to deep models: the hand-made
+        features already mask polygons and are rotation-invariant.
+        """
+        deep = model_name not in HANDCRAFTED_MODELS
+        mask = (deep and self.mask_background_combo is not None
+                and self.mask_background_combo.currentText() == "True")
+        rotate = (deep and self.rotation_average_combo is not None
+                  and self.rotation_average_combo.currentText() == "True")
+        return {'mask_background': bool(mask), 'rotations': 4 if rotate else 1}
+
+    def _get_model_cache_key(self, model_name, options=None):
+        """Build a stable cache key for the selected model source.
+
+        Options that change the vectors (masking, rotation averaging) and the
+        transformer pooling each add a suffix, so a vector is only ever reused
+        for the extraction that made it.
+        """
+        options = self._extraction_options if options is None else options
         live_source = self._decode_live_yolo_source(model_name)
         if live_source:
             cache_token = (
@@ -1486,15 +1573,26 @@ class EmbeddingViewerWindow(QWidget):
                 f"{live_source['normalized_model_path']}"
             )
             digest = hashlib.sha1(cache_token.encode('utf-8')).hexdigest()[:16]
-            return f"live_{live_source['dialog_key']}_{digest}"
-
-        if os.path.sep in model_name or '/' in model_name:
-            sanitized_model_name = os.path.basename(model_name)
+            key = f"live_{live_source['dialog_key']}_{digest}"
         else:
-            sanitized_model_name = model_name
+            if os.path.sep in model_name or '/' in model_name:
+                sanitized_model_name = os.path.basename(model_name)
+            else:
+                sanitized_model_name = model_name
+            key = sanitized_model_name.replace(' ', '_').replace('/', '_')
 
-        sanitized_model_name = sanitized_model_name.replace(' ', '_').replace('/', '_')
-        return sanitized_model_name
+        if model_name in HANDCRAFTED_MODELS:
+            return key
+        # The HF pipeline path used to flatten every token (257 x 384 for
+        # DINOv2-small); vectors cached under the bare key are that layout.
+        if (not live_source and not is_openclip_model(model_name) and not is_timm_model(model_name)
+                and not is_yolo_model(model_name) and is_transformer_model(model_name)):
+            key += MEAN_POOL_KEY_SUFFIX
+        if options.get('mask_background'):
+            key += MASKED_KEY_SUFFIX
+        if int(options.get('rotations', 1)) > 1:
+            key += ROTATIONS_KEY_SUFFIX
+        return key
     
     def _get_embedding_parameters(self):
         """Get current embedding parameters from UI."""
@@ -1547,8 +1645,11 @@ class EmbeddingViewerWindow(QWidget):
             status_callback: Optional callback fn() for per-item status updates.
             cancel_check: Optional callable () -> bool to abort extraction early.
         """
-        if model_name == "Color Features":
+        if model_name == COLOR_MODEL:
             return self._extract_color_features(data_items, progress_bar, status_callback=status_callback, on_batch=on_batch, cancel_check=cancel_check)
+        elif model_name == COLOR_TEXTURE_MODEL:
+            return self._extract_color_features(data_items, progress_bar, status_callback=status_callback, on_batch=on_batch, cancel_check=cancel_check,
+                                                feature_fn=color_texture_features)
         elif is_openclip_model(model_name):
             return self._extract_openclip_features(data_items, model_name, progress_bar, on_batch=on_batch, status_callback=status_callback, cancel_check=cancel_check)
         elif is_timm_model(model_name):
@@ -1596,11 +1697,14 @@ class EmbeddingViewerWindow(QWidget):
         except Exception:
             return None
 
-    def _extract_color_features(self, data_items, progress_bar=None, status_callback=None, on_batch=None, cancel_check=None):
-        """Extract HSV-based color features with illumination robustness.
+    def _extract_color_features(self, data_items, progress_bar=None, status_callback=None, on_batch=None, cancel_check=None,
+                                feature_fn=color_features):
+        """Extract hand-made appearance features, one vector per annotation.
 
-        Features: 2D Hue-Saturation histogram (16x16=256 dims) + brightness/saturation moments (4 dims).
-        Total: 260 dims. Uses annotation geometry to mask out background.
+        `feature_fn(img_rgb, mask)` is color_features (70 dims: an 8x8
+        Hue-Saturation histogram, Hellinger + L2, and 6 H/S/V mean+std moments)
+        or color_texture_features (those 70 + 23 rotation-invariant texture
+        dims). Both use the annotation geometry to mask out the background.
 
         Args:
             status_callback: Optional callback fn() for per-item status updates.
@@ -1635,59 +1739,10 @@ class EmbeddingViewerWindow(QWidget):
                         progress_bar.update_progress()
                     continue
 
-                # Convert RGB to HSV (note: pixmap_to_numpy returns RGB, not BGR)
-                hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
-
-                # Build mask for the annotation (None = use all pixels)
+                # Build mask for the annotation (None = use all pixels).
+                # pixmap_to_numpy returns RGB, which is what the features expect.
                 mask = self._build_annotation_mask(ann, img.shape[0], img.shape[1])
-
-                # 2D Hue-Saturation histogram (8x8 = 64 bins)
-                # Hue range: 0-180, Saturation range: 0-256
-                hist = cv2.calcHist(
-                    [hsv], [0, 1], mask,
-                    [COLOR_HS_HUE_BINS, COLOR_HS_SAT_BINS],
-                    [0, 180, 0, 256]
-                )
-                hist = hist.flatten().astype(np.float32)
-                hist /= (hist.sum() + 1e-7)
-
-                # Hellinger (square-root) transform: de-spikes the dominant bin
-                # so sub-dominant colors carry weight. After the sqrt the vector
-                # is L2-normalized, which makes the histogram block contribute a
-                # fixed amount of "energy" regardless of how peaky it is. This is
-                # the standard treatment for histogram features and keeps similar
-                # patches from collapsing onto a single point.
-                hist = np.sqrt(hist)
-                hist /= (np.linalg.norm(hist) + 1e-7)
-
-                # Full H/S/V mean+std moments. These continuous statistics give
-                # the layout something to spread on even when patches share a
-                # dominant histogram bin.
-                if mask is not None:
-                    masked_pixels = mask > 0
-                else:
-                    masked_pixels = np.ones(hsv.shape[:2], dtype=bool)
-
-                h_channel = hsv[..., 0].astype(np.float32) / 180.0
-                s_channel = hsv[..., 1].astype(np.float32) / 255.0
-                v_channel = hsv[..., 2].astype(np.float32) / 255.0
-
-                moments = np.array([
-                    np.mean(h_channel[masked_pixels]), np.std(h_channel[masked_pixels]),
-                    np.mean(s_channel[masked_pixels]), np.std(s_channel[masked_pixels]),
-                    np.mean(v_channel[masked_pixels]), np.std(v_channel[masked_pixels]),
-                ], dtype=np.float32)
-
-                # Scale the moment block so it is comparable in magnitude to the
-                # L2-normalized histogram block (~unit norm). Without this the 6
-                # moments would be drowned out by the 64 histogram bins under a
-                # single global scaler / cosine metric. moments already live in
-                # [0, 1], so multiplying by COLOR_MOMENT_WEIGHT gives the block a
-                # tunable, comparable contribution.
-                moments *= COLOR_MOMENT_WEIGHT
-
-                # Concatenate histogram + moments (64 + 6 = 70 dims)
-                feature_vector = np.concatenate([hist, moments]).astype(np.float32)
+                feature_vector = feature_fn(img, mask)
 
                 features.append(feature_vector)
                 valid_items.append(item)
@@ -1752,17 +1807,17 @@ class EmbeddingViewerWindow(QWidget):
                 if cancel_check is not None and cancel_check():
                     return np.array(features_list), valid_items
 
-                chunk_images = [img for img, _ in chunk]
+                chunk_images = self._expand_rotations([img for img, _ in chunk])
                 chunk_items = [item for _, item in chunk]
 
-                results_generator = model.embed(chunk_images, **kwargs)
+                results = [
+                    (result[0] if isinstance(result, list) else result).cpu().numpy().flatten()
+                    for result in model.embed(chunk_images, **kwargs)
+                ]
+                vectors = mean_of_groups(results, self._rotation_count())
 
-                for result, item in zip(results_generator, chunk_items):
+                for feature_vector, item in zip(vectors, chunk_items):
                     try:
-                        if isinstance(result, list):
-                            feature_vector = result[0].cpu().numpy().flatten()
-                        else:
-                            feature_vector = result.cpu().numpy().flatten()
                         features_list.append(feature_vector)
                         valid_items.append(item)
                         batch_buffer_items.append(item)
@@ -1796,7 +1851,13 @@ class EmbeddingViewerWindow(QWidget):
                 torch.cuda.empty_cache()
     
     def _extract_transformer_features(self, data_items, model_name, progress_bar=None, on_batch=None, status_callback=None, cancel_check=None):
-        """Extract features using transformer model.
+        """Extract features using a HuggingFace backbone, one pooled vector per crop.
+
+        The "image-feature-extraction" pipeline returns the backbone's last
+        hidden state: every token (257 x 384 for DINOv2-small) or a (C, H, W)
+        map for the CNNs. Flattening that made 98,688-d vectors that cluster no
+        better than their mean and take 250x longer; pool_backbone_output
+        takes the mean of the patch tokens, skipping [CLS] and any registers.
 
         Args:
             on_batch: Optional callback fn(items, vectors) to flush per-batch to cache.
@@ -1814,11 +1875,30 @@ class EmbeddingViewerWindow(QWidget):
             if progress_bar:
                 progress_bar.set_title("Extracting features...")
 
+            config = getattr(getattr(feature_extractor, 'model', None), 'config', None)
+            n_rot = self._rotation_count()
+
+            def pooled(result):
+                tokens = result[0] if isinstance(result, list) else result
+                shape = getattr(tokens, 'shape', None) or np.shape(tokens)
+                n_tokens = shape[-2] if len(shape) >= 2 else 1
+                return pool_backbone_output(tokens, prefix_token_count(config, n_tokens))
+
             features_list = []
             valid_results = []
             batch_buffer_items = []
             batch_buffer_features = []
             flush_interval = 4
+
+            def keep(vector, item):
+                features_list.append(vector)
+                valid_results.append(item)
+                batch_buffer_items.append(item)
+                batch_buffer_features.append(vector)
+                if status_callback:
+                    status_callback()
+                if progress_bar:
+                    progress_bar.update_progress()
 
             batch_count = 0
             # Process images in chunks to batch on GPU while bounding memory
@@ -1827,54 +1907,25 @@ class EmbeddingViewerWindow(QWidget):
                 if cancel_check is not None and cancel_check():
                     return np.array(features_list), valid_results
 
-                chunk_images = [img for img, _ in chunk]
+                chunk_images = self._expand_rotations([img for img, _ in chunk])
                 chunk_items = [item for _, item in chunk]
 
                 try:
                     # Batch call to pipeline
-                    batch_results = feature_extractor(chunk_images, batch_size=self.batch_size)
-
-                    for result, item in zip(batch_results, chunk_items):
-                        try:
-                            feature_tensor = result[0] if isinstance(result, list) else result
-
-                            if hasattr(feature_tensor, 'cpu'):
-                                feature_vector = feature_tensor.cpu().numpy().flatten()
-                            else:
-                                feature_vector = np.array(feature_tensor).flatten()
-
-                            features_list.append(feature_vector)
-                            valid_results.append(item)
-                            batch_buffer_items.append(item)
-                            batch_buffer_features.append(feature_vector)
-                            if status_callback:
-                                status_callback()
-                        except Exception:
-                            pass
-                        finally:
-                            if progress_bar:
-                                progress_bar.update_progress()
+                    batch_results = feature_extractor(chunk_images, batch_size=self.batch_size,
+                                                      return_tensors=True)
+                    vectors = mean_of_groups([pooled(r) for r in batch_results], n_rot)
+                    for vector, item in zip(vectors, chunk_items):
+                        keep(vector, item)
                 except Exception:
                     # Fallback: process chunk per-image if batch fails
                     for image, item in chunk:
                         try:
-                            result = feature_extractor(image)
-                            feature_tensor = result[0] if isinstance(result, list) else result
-
-                            if hasattr(feature_tensor, 'cpu'):
-                                feature_vector = feature_tensor.cpu().numpy().flatten()
-                            else:
-                                feature_vector = np.array(feature_tensor).flatten()
-
-                            features_list.append(feature_vector)
-                            valid_results.append(item)
-                            batch_buffer_items.append(item)
-                            batch_buffer_features.append(feature_vector)
-                            if status_callback:
-                                status_callback()
+                            variants = self._expand_rotations([image])
+                            vector = mean_of_groups(
+                                [pooled(feature_extractor(v, return_tensors=True)) for v in variants], n_rot)[0]
+                            keep(vector, item)
                         except Exception:
-                            pass
-                        finally:
                             if progress_bar:
                                 progress_bar.update_progress()
 
@@ -1882,7 +1933,7 @@ class EmbeddingViewerWindow(QWidget):
                 batch_count += 1
                 if on_batch and batch_count % flush_interval == 0 and batch_buffer_items:
                     on_batch(batch_buffer_items, np.array(batch_buffer_features))
-                    batch_buffer_items = []
+                    batch_buffer_items = []      # keep() binds late, so it sees these
                     batch_buffer_features = []
 
             # Flush remaining vectors
@@ -1936,7 +1987,9 @@ class EmbeddingViewerWindow(QWidget):
 
                 for img, item in chunk:
                     try:
-                        feature_vector = extractor.extract_pooled(img).astype(np.float32)
+                        feature_vector = np.mean(
+                            [extractor.extract_pooled(v) for v in self._expand_rotations([img])],
+                            axis=0).astype(np.float32)
                         features_list.append(feature_vector)
                         valid_results.append(item)
                         batch_buffer_items.append(item)
@@ -2016,14 +2069,16 @@ class EmbeddingViewerWindow(QWidget):
 
                 for pil_img, item in chunk:
                     try:
-                        preprocessed = preprocess(pil_img).unsqueeze(0)
+                        preprocessed = torch.stack(
+                            [preprocess(v) for v in self._expand_rotations([pil_img])])
                         if self.device == 'cuda':
                             preprocessed = preprocessed.cuda()
 
                         with torch.inference_mode():
                             feat = model.encode_image(preprocessed)
 
-                        feature_vector = feat[0].float().cpu().numpy().flatten()
+                        # One row per rotation (one row when averaging is off).
+                        feature_vector = feat.float().mean(dim=0).cpu().numpy().flatten()
                         features_list.append(feature_vector)
                         valid_results.append(item)
                         batch_buffer_items.append(item)
@@ -2061,12 +2116,21 @@ class EmbeddingViewerWindow(QWidget):
         `extract_pooled` takes `image_rgb`. Passing one array to both is wrong
         for one of them, so the caller states which it needs.
         """
+        mask_background = bool(self._extraction_options.get('mask_background'))
         for item in data_items:
             try:
                 ann = item.annotation
                 if not getattr(ann, 'cropped_image', None):
                     continue
-                if format_type == 'numpy':
+                if mask_background:
+                    img = self._masked_crop_rgb(ann)
+                    if img is not None:
+                        if format_type == 'numpy':
+                            img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR) if bgr else img
+                        else:
+                            from PIL import Image
+                            img = Image.fromarray(img)
+                elif format_type == 'numpy':
                     img = (pixmap_to_numpy_bgr(ann.cropped_image) if bgr
                            else pixmap_to_numpy(ann.cropped_image))
                 else:  # pil
@@ -2075,6 +2139,29 @@ class EmbeddingViewerWindow(QWidget):
                     yield img, item
             except Exception:
                 continue
+
+    def _masked_crop_rgb(self, ann):
+        """The annotation's crop (RGB) with everything outside its polygon filled flat.
+
+        Rectangles and patches cover their whole crop and come back unchanged.
+        """
+        img = pixmap_to_numpy(ann.cropped_image)
+        if img is None or img.size == 0:
+            return None
+        if img.ndim == 3 and img.shape[2] == 4:
+            img = img[..., :3]
+        mask = self._build_annotation_mask(ann, img.shape[0], img.shape[1])
+        return np.ascontiguousarray(fill_background(img, mask))
+
+    def _rotation_count(self):
+        """How many rotations each crop is embedded at (1, or 4 when averaging)."""
+        return max(1, int(self._extraction_options.get('rotations', 1)))
+
+    def _expand_rotations(self, images):
+        """Each image followed by its rotations when rotation averaging is on."""
+        if self._rotation_count() == 1:
+            return list(images)
+        return [variant for img in images for variant in rotations(img)]
 
     @staticmethod
     def _chunked(iterable, size):
@@ -3168,55 +3255,61 @@ class EmbeddingViewerWindow(QWidget):
             colours[i] = [qc.red(), qc.green(), qc.blue(), qc.alpha()]
         return colours
 
+    def _features_aligned(self):
+        """True when current_features has one row per displayed point."""
+        return (self.current_features is not None
+                and len(self.current_features) == self._point_ids.size
+                and self._point_ids.size > 0)
+
+    def _feature_hierarchy(self, features, ids):
+        """The (cached) Ward tree over these feature rows for these ids."""
+        key = (self.current_feature_model_key, self.current_feature_metric, ids_digest(ids))
+        return self._hierarchy_cache.get(
+            key, lambda: FeatureHierarchy(features, metric=self.current_feature_metric))
+
     def _run_clustering(self):
-        """Run K-Means clustering on the current 2-D projection or full feature vectors."""
+        """Cluster the points with a Ward hierarchy, in feature space or on the 2-D projection.
+
+        Feature space is the default: the projection distorts distances, and on
+        the benchmark (Coralscapes, 39 classes) Ward on L2-normalised features
+        matched K-Means on standardised ones and beat it on colour, while being
+        deterministic. K = "Auto" cuts the tree at its largest relative jump.
+        """
         if self._point_coords_2d.size == 0:
             return
 
-        k = self.cluster_k_spin.value()
         use_features = (
             hasattr(self, 'cluster_space_combo')
             and self.cluster_space_combo.currentText() == "Feature Vector"
+            and self._features_aligned()
         )
+        n_points = int(self._point_ids.size)
+        if n_points < 2:
+            QMessageBox.warning(self, "Too few points", "Need at least 2 points to cluster.")
+            return
 
-        # Choose the data matrix to cluster on
-        if use_features and self.current_features is not None:
-            try:
-                feature_matrix = np.asarray(self.current_features)
-                if feature_matrix.ndim == 1:
-                    feature_matrix = feature_matrix.reshape(-1, 1)
-                
-                if len(feature_matrix) != len(self._point_ids):
-                    QMessageBox.warning(
-                        self, "Feature mismatch",
-                        "Feature vector count doesn't match the displayed points. "
-                        "Re-run embeddings and try again."
-                    )
-                    return
-                from sklearn.preprocessing import StandardScaler
-                cluster_data = StandardScaler().fit_transform(feature_matrix)
-            except Exception as e:
-                QMessageBox.warning(self, "Feature error", str(e))
-                return
-        else:
-            cluster_data = self._point_coords_2d
-
-        n_points = len(cluster_data)
-        if n_points < k:
+        requested_k = self.cluster_k_spin.value()
+        auto = requested_k < 2      # the spin's "Auto" floor
+        if not auto and n_points < requested_k:
             QMessageBox.warning(
                 self, "Too few points",
-                f"Need at least {k} points to create {k} clusters (have {n_points})."
+                f"Need at least {requested_k} points to create {requested_k} clusters (have {n_points})."
             )
             return
 
         try:
             QApplication.setOverrideCursor(Qt.WaitCursor)
 
-            # --- 1. Fit K-Means ---
-            from sklearn.cluster import KMeans
-            model = KMeans(n_clusters=k, random_state=42, n_init='auto')
-            model.fit(cluster_data)
-            self._cluster_labels = model.labels_.astype(int)
+            # --- 1. Build (or reuse) the Ward tree and cut it ---
+            if use_features:
+                hierarchy = self._feature_hierarchy(self.current_features, self._point_ids.tolist())
+            else:
+                hierarchy = FeatureHierarchy(self._point_coords_2d, metric='euclidean', max_dims=None)
+            k = hierarchy.auto_k() if auto else requested_k
+            labels = hierarchy.labels(k)
+            k = int(labels.max()) + 1
+            self._cluster_labels = labels.astype(int)
+            self._cluster_distances = hierarchy.centroid_distances(labels)
 
             # --- 2. Compute Centroids ---
             valid_labels = list(range(k))
@@ -3231,6 +3324,10 @@ class EmbeddingViewerWindow(QWidget):
             # --- 4. Draw Convex Hulls + centroid markers ---
             self._draw_cluster_overlay(centroids, valid_labels)
 
+            space = "feature space" if use_features else "the 2-D projection"
+            how = "automatic K" if auto else "K"
+            self.main_window.status_bar.showMessage(f"{k} clusters ({how}) in {space}", 5000)
+
         except Exception as e:
             QMessageBox.critical(self, "Clustering error", str(e))
         finally:
@@ -3238,6 +3335,125 @@ class EmbeddingViewerWindow(QWidget):
 
         self._update_toolbar_state()
         self._notify_annotation_viewer_cluster_state()
+
+    # -------------------------------------------------------------------------
+    # Feature bins (AnnotationViewer "Feature Bins" sort)
+    # -------------------------------------------------------------------------
+
+    def has_feature_vectors(self):
+        """True when an embedding's feature vectors are available for binning."""
+        return self.current_features is not None and len(self.current_features) > 0
+
+    def feature_matrix_for(self, annotation_ids):
+        """Feature rows for these annotations: (matrix, present_ids, missing_ids).
+
+        Rows come from the current embedding where the annotation is a point,
+        else from the feature cache under the same model key. A cached vector
+        is only used when it has the current width: features wider than the
+        store limit are SVD-compacted per run, and a raw cached vector is not
+        in that space.
+        """
+        annotation_ids = list(annotation_ids)
+        if not self.has_feature_vectors():
+            return np.empty((0, 0), dtype=np.float32), [], annotation_ids
+
+        current = np.asarray(self.current_features, dtype=np.float32)
+        if current.ndim == 1:
+            current = current.reshape(-1, 1)
+        width = current.shape[1]
+        rows = {}
+        if len(current) == self._point_ids.size:
+            rows = {ann_id: i for i, ann_id in enumerate(self._point_ids.tolist())}
+
+        vectors = {}
+        uncached = []
+        for ann_id in annotation_ids:
+            row = rows.get(ann_id)
+            if row is not None:
+                vectors[ann_id] = current[row]
+            else:
+                uncached.append(ann_id)
+
+        if uncached:
+            vectors.update(self._cached_feature_vectors(uncached, width))
+
+        present = [ann_id for ann_id in annotation_ids if ann_id in vectors]
+        missing = [ann_id for ann_id in annotation_ids if ann_id not in vectors]
+        if not present:
+            return np.empty((0, width), dtype=np.float32), [], missing
+        return np.stack([vectors[ann_id] for ann_id in present]), present, missing
+
+    def _cached_feature_vectors(self, annotation_ids, width):
+        """{id: vector} from the feature cache under the current model key, `width` wide only."""
+        if not self.current_feature_model_key:
+            return {}
+        memo_key = (self.current_feature_model_key, width, ids_digest(annotation_ids))
+        if self._cached_vectors_memo[0] == memo_key:
+            return self._cached_vectors_memo[1]
+        items = []
+        annotations = getattr(self.annotation_window, 'annotations_dict', {})
+        for ann_id in annotation_ids:
+            item = self.data_item_cache.get(ann_id)
+            if item is None and ann_id in annotations:
+                item = AnnotationDataItem(annotations[ann_id])
+            if item is not None:
+                items.append(item)
+        if not items:
+            return {}
+        try:
+            found, _missing = self.cache_manager.get_features(items, self.current_feature_model_key)
+        except Exception as e:
+            print(f"Feature cache lookup failed: {type(e).__name__}: {e}")
+            return {}
+        vectors = {}
+        for ann_id, vector in (found or {}).items():
+            vector = np.asarray(vector, dtype=np.float32).ravel()
+            if vector.size == width:
+                vectors[ann_id] = vector
+        self._cached_vectors_memo = (memo_key, vectors)
+        return vectors
+
+    def get_feature_bins(self, annotation_ids, k=None):
+        """Bin annotations by their features for the gallery.
+
+        Args:
+            annotation_ids: the annotations to bin (the gallery's current set).
+            k: number of bins, or None to choose it automatically.
+
+        Returns a dict:
+            bins: list of id lists; bins in dendrogram order (neighbouring bins
+                are similar), each most-typical first.
+            tints: per bin an (r, g, b) mean colour for colour features, else None.
+            k: the number of bins made; auto: whether k was chosen automatically.
+            missing: ids with no feature vector ("Not embedded").
+        """
+        result = {'bins': [], 'tints': [], 'k': 0, 'auto': k is None, 'missing': list(annotation_ids)}
+        matrix, present, missing = self.feature_matrix_for(annotation_ids)
+        result['missing'] = missing
+        if len(present) == 0:
+            return result
+        if len(present) == 1:
+            result.update(bins=[present], tints=[None], k=1)
+            return result
+
+        hierarchy = self._feature_hierarchy(matrix, present)
+        n_bins = hierarchy.auto_k() if k is None else int(k)
+        bins = hierarchy.ordered_bins(max(1, n_bins))
+        colour = self.current_feature_model_name in HANDCRAFTED_MODELS
+        result['bins'] = [[present[i] for i in members] for members in bins]
+        result['tints'] = [color_tint_from_features(matrix[members]) if colour else None
+                           for members in bins]
+        result['k'] = len(bins)
+        return result
+
+    def _notify_annotation_viewer_feature_state(self):
+        """Enable or disable the AnnotationViewer's "Feature Bins" sort option."""
+        try:
+            viewer = getattr(self.main_window, 'annotation_viewer_window', None)
+            if viewer is not None and hasattr(viewer, 'update_feature_bins_state'):
+                viewer.update_feature_bins_state(self.has_feature_vectors())
+        except Exception:
+            pass
 
     def _draw_cluster_overlay(self, centroids: np.ndarray, valid_labels: list):
         """Compute Convex Hulls for each cluster and add them to the scene.
@@ -3350,6 +3566,7 @@ class EmbeddingViewerWindow(QWidget):
         """Remove cluster overlay items from the scene."""
         self._remove_cluster_overlay_items()
         self._cluster_labels = np.empty((0,), dtype=int)
+        self._cluster_distances = np.empty((0,), dtype=np.float32)
         self._cluster_colors_rgba = np.empty((0, 4), dtype=np.uint8)
         self._update_toolbar_state()
         # Notify AnnotationViewer that cluster data changed.
@@ -3900,6 +4117,10 @@ class EmbeddingViewerWindow(QWidget):
             self.current_data_items = []
             self.current_features = None
             self.current_feature_model_key = None
+            self.current_feature_model_name = None
+            self._hierarchy_cache.clear()
+            self._cached_vectors_memo = (None, {})
+            self._notify_annotation_viewer_feature_state()
             self.data_item_cache.clear()
             self.working_set_ids = []
             try:
