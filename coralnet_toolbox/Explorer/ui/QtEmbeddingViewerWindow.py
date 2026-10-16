@@ -34,7 +34,7 @@ from PyQt5.QtGui import QColor, QPen, QPainter, QBrush, QMouseEvent
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QToolBar, QComboBox,
     QLabel, QPushButton, QSpinBox, QSlider, QStackedWidget, QGraphicsView, QGraphicsScene,
-    QGraphicsRectItem, QGraphicsPathItem, QSizePolicy, QMessageBox, QApplication
+    QGraphicsRectItem, QSizePolicy, QMessageBox, QApplication
 )
 
 from coralnet_toolbox import theme as app_theme
@@ -159,8 +159,8 @@ class EmbeddingViewerWindow(QWidget):
         self._extraction_options = {'mask_background': False, 'rotations': 1}
         self._pipeline_feature_metric = 'cosine'
         self._pipeline_model_name = None
-        # Ward trees over the current features, shared by the cluster overlay and
-        # the gallery's Feature Bins sort so both cut the same tree.
+        # Ward trees over the current features, cached so the gallery's Feature
+        # Bins sort re-cuts the same tree for free.
         self._hierarchy_cache = HierarchyCache()
         # Last feature-cache lookup for ids outside the embedding: (key, {id: vector}).
         self._cached_vectors_memo = (None, {})
@@ -270,15 +270,6 @@ class EmbeddingViewerWindow(QWidget):
         self.locate_timer = QTimer(self)
         self.locate_timer.setSingleShot(True)
         self.locate_timer.timeout.connect(self._clear_location_indicator)
-
-        # K-Means cluster overlay
-        self._cluster_labels: np.ndarray = np.empty((0,), dtype=int)
-        self._cluster_overlay_items: list = []   # QGraphicsPathItem boundaries
-        self._cluster_centroid_items: list = []  # QGraphicsPathItem centroid markers
-        self._cluster_colors_rgba: np.ndarray = np.empty((0, 4), dtype=np.uint8)
-        # Each point's distance to its cluster centre in the space it was
-        # clustered in, so the gallery orders a cluster most-typical first.
-        self._cluster_distances: np.ndarray = np.empty((0,), dtype=np.float32)
 
         # Similarity neighbour expansion (Ctrl+Shift+Wheel)
         self._knn_anchor_mask = None   # selection frozen at gesture start
@@ -395,81 +386,12 @@ class EmbeddingViewerWindow(QWidget):
         self._setup_embedding_settings_section()
         toolbar.addWidget(self.embedding_settings_section)
 
-        # Spacer — pushes Cluster section to the far right
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        toolbar.addWidget(spacer)
-
-        # K-Means cluster controls — far right of the top toolbar
-        self.cluster_settings_section = CollapsibleSection(
-            "Cluster",
-            "cluster.svg",
-            position='bottomleft'
-        )
-        self._setup_cluster_settings_section()
-        toolbar.addWidget(self.cluster_settings_section)
-
         # Initialize model combo and technique-dependent controls
         self._on_category_changed(self.category_combo.currentText())
         self._on_technique_changed(self.technique_combo.currentText())
 
         return toolbar
 
-    def _setup_cluster_settings_section(self):
-        """Build the cluster controls popup."""
-        cluster_widget = QWidget()
-        cluster_layout = QFormLayout(cluster_widget)
-        cluster_layout.setContentsMargins(0, 0, 0, 0)
-        cluster_layout.setSpacing(6)
-
-        # K spinbox; its floor reads "Auto" (a single cluster is never wanted)
-        self.cluster_k_spin = QSpinBox()
-        self.cluster_k_spin.setRange(1, 50)
-        self.cluster_k_spin.setSpecialValueText("Auto")
-        self.cluster_k_spin.setValue(1)
-        self.cluster_k_spin.setMinimumWidth(64)
-        self.cluster_k_spin.setToolTip(
-            "Number of clusters. Auto cuts the Ward tree where its merge heights\n"
-            "jump the most, between sqrt(N)/4 and sqrt(N) clusters."
-        )
-        self.cluster_k_spin.setEnabled(False)
-        cluster_layout.addRow("K:", self.cluster_k_spin)
-
-        # Cluster space combo
-        self.cluster_space_combo = QComboBox()
-        self.cluster_space_combo.addItems(["Feature Vector", "Position (2D)"])
-        self.cluster_space_combo.setToolTip(
-            "Feature Vector: cluster on the full embeddings (recommended; the 2D\n"
-            "projection distorts distances).\n"
-            "Position (2D): cluster on the projected scatter-plot coordinates."
-        )
-        self.cluster_space_combo.setEnabled(False)
-        cluster_layout.addRow("Space:", self.cluster_space_combo)
-
-        # Buttons row
-        btn_widget = QWidget()
-        btn_layout = QHBoxLayout(btn_widget)
-        btn_layout.setContentsMargins(0, 0, 0, 0)
-        btn_layout.setSpacing(4)
-
-        self.cluster_run_button = QPushButton("Cluster")
-        self.cluster_run_button.setToolTip(
-            "Cluster the current embedding (Ward hierarchy) and draw cluster boundaries"
-        )
-        self.cluster_run_button.clicked.connect(self._run_clustering)
-        self.cluster_run_button.setEnabled(False)
-        btn_layout.addWidget(self.cluster_run_button)
-
-        self.cluster_clear_button = QPushButton("Clear")
-        self.cluster_clear_button.setToolTip("Remove cluster boundaries")
-        self.cluster_clear_button.clicked.connect(self._clear_clustering)
-        self.cluster_clear_button.setEnabled(False)
-        btn_layout.addWidget(self.cluster_clear_button)
-
-        cluster_layout.addRow(btn_widget)
-
-        self.cluster_settings_section.add_widget(cluster_widget, "Cluster Options")
-    
     def create_bottom_toolbar(self) -> QToolBar:
         """Create the bottom toolbar with pipeline actions and view controls."""
         toolbar = QToolBar()
@@ -1229,11 +1151,6 @@ class EmbeddingViewerWindow(QWidget):
         if self._pipeline_running and self._pipeline_worker:
             self._pipeline_worker.cancel()
             self._pipeline_worker.wait()
-
-        # Clear stale cluster overlay — the old clusters don't apply to the
-        # new embedding that's about to be computed.
-        if self._cluster_labels.size > 0:
-            self._clear_clustering()
 
         # Get working set from gallery if available
         if hasattr(self.main_window, 'annotation_viewer_window'):
@@ -2499,7 +2416,6 @@ class EmbeddingViewerWindow(QWidget):
                 pass
             self.rubber_band = None
         self._clear_location_indicator()
-        self._clear_clustering()
         self._point_coords_3d = np.empty((0, 3), dtype=np.float32)
         self._point_coords_2d = np.empty((0, 2), dtype=np.float32)
         self._point_colors = np.empty((0, 4), dtype=np.uint8)
@@ -2546,14 +2462,6 @@ class EmbeddingViewerWindow(QWidget):
             self.center_button.setEnabled(False)
         if hasattr(self, 'isolate_button'):
             self.isolate_button.setEnabled(False)
-        if hasattr(self, 'cluster_k_spin'):
-            self.cluster_k_spin.setEnabled(False)
-        if hasattr(self, 'cluster_space_combo'):
-            self.cluster_space_combo.setEnabled(False)
-        if hasattr(self, 'cluster_run_button'):
-            self.cluster_run_button.setEnabled(False)
-        if hasattr(self, 'cluster_clear_button'):
-            self.cluster_clear_button.setEnabled(False)
     
     def _update_toolbar_state(self):
         """Update toolbar button states based on current state."""
@@ -2562,7 +2470,6 @@ class EmbeddingViewerWindow(QWidget):
 
         selection_exists = bool(self._point_selected.size and np.any(self._point_selected))
         points_exist = bool(self._point_ids.size)
-        clusters_exist = self._cluster_labels.size > 0
 
         if hasattr(self, 'locate_button'):
             self.locate_button.setEnabled(points_exist and selection_exists)
@@ -2578,21 +2485,6 @@ class EmbeddingViewerWindow(QWidget):
             if not can_auto_rotate:
                 self._stop_auto_rotate()
 
-        # Cluster controls
-        if hasattr(self, 'cluster_k_spin'):
-            self.cluster_k_spin.setEnabled(points_exist)
-        if hasattr(self, 'cluster_space_combo'):
-            has_features = (self.current_features is not None
-                            and len(self.current_features) == self._point_ids.size)
-            self.cluster_space_combo.setEnabled(points_exist)
-            feat_item = self.cluster_space_combo.model().item(
-                self.cluster_space_combo.findText("Feature Vector"))
-            if feat_item is not None:
-                feat_item.setEnabled(has_features)
-        if hasattr(self, 'cluster_run_button'):
-            self.cluster_run_button.setEnabled(points_exist)
-        if hasattr(self, 'cluster_clear_button'):
-            self.cluster_clear_button.setEnabled(clusters_exist)
     
     def _should_modify_cache(self):
         """Return True when this viewer should perform persistent cache mutations.
@@ -2775,10 +2667,6 @@ class EmbeddingViewerWindow(QWidget):
         indices = self._indices_for_annotation_ids(annotation_ids)
         if indices.size == 0:
             return
-
-        # Cluster labels are tied to the current point ordering, so any point
-        # removal invalidates the overlay and must clear it before the arrays shrink.
-        self._clear_clustering()
 
         remove_mask = np.zeros(self._point_ids.size, dtype=bool)
         remove_mask[indices] = True
@@ -3237,107 +3125,14 @@ class EmbeddingViewerWindow(QWidget):
             self.graphics_scene.addItem(line_item)
             self.locate_lines.append(line_item)
     
-    # -------------------------------------------------------------------------
-    # K-Means Cluster Overlay
-    # -------------------------------------------------------------------------
-
-    @staticmethod
-    def _cluster_palette(k: int) -> np.ndarray:
-        """Return (k, 4) uint8 RGBA array of visually distinct colours.
-
-        Colours are evenly spaced on the HSV wheel at fixed saturation and
-        value so they remain distinguishable against the dark background.
-        """
-        colours = np.empty((k, 4), dtype=np.uint8)
-        for i in range(k):
-            hue = int(360 * i / k)
-            qc = QColor.fromHsv(hue, 200, 230, 255)
-            colours[i] = [qc.red(), qc.green(), qc.blue(), qc.alpha()]
-        return colours
-
-    def _features_aligned(self):
-        """True when current_features has one row per displayed point."""
-        return (self.current_features is not None
-                and len(self.current_features) == self._point_ids.size
-                and self._point_ids.size > 0)
-
     def _feature_hierarchy(self, features, ids):
         """The (cached) Ward tree over these feature rows for these ids."""
         key = (self.current_feature_model_key, self.current_feature_metric, ids_digest(ids))
         return self._hierarchy_cache.get(
             key, lambda: FeatureHierarchy(features, metric=self.current_feature_metric))
 
-    def _run_clustering(self):
-        """Cluster the points with a Ward hierarchy, in feature space or on the 2-D projection.
-
-        Feature space is the default: the projection distorts distances, and on
-        the benchmark (Coralscapes, 39 classes) Ward on L2-normalised features
-        matched K-Means on standardised ones and beat it on colour, while being
-        deterministic. K = "Auto" cuts the tree at its largest relative jump.
-        """
-        if self._point_coords_2d.size == 0:
-            return
-
-        use_features = (
-            hasattr(self, 'cluster_space_combo')
-            and self.cluster_space_combo.currentText() == "Feature Vector"
-            and self._features_aligned()
-        )
-        n_points = int(self._point_ids.size)
-        if n_points < 2:
-            QMessageBox.warning(self, "Too few points", "Need at least 2 points to cluster.")
-            return
-
-        requested_k = self.cluster_k_spin.value()
-        auto = requested_k < 2      # the spin's "Auto" floor
-        if not auto and n_points < requested_k:
-            QMessageBox.warning(
-                self, "Too few points",
-                f"Need at least {requested_k} points to create {requested_k} clusters (have {n_points})."
-            )
-            return
-
-        try:
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-
-            # --- 1. Build (or reuse) the Ward tree and cut it ---
-            if use_features:
-                hierarchy = self._feature_hierarchy(self.current_features, self._point_ids.tolist())
-            else:
-                hierarchy = FeatureHierarchy(self._point_coords_2d, metric='euclidean', max_dims=None)
-            k = hierarchy.auto_k() if auto else requested_k
-            labels = hierarchy.labels(k)
-            k = int(labels.max()) + 1
-            self._cluster_labels = labels.astype(int)
-            self._cluster_distances = hierarchy.centroid_distances(labels)
-
-            # --- 2. Compute Centroids ---
-            valid_labels = list(range(k))
-            centroids = np.array([
-                self._point_coords_2d[self._cluster_labels == c].mean(axis=0)
-                for c in valid_labels
-            ])
-
-            # --- 3. Build per-cluster colour palette ---
-            self._cluster_colors_rgba = self._cluster_palette(k)
-
-            # --- 4. Draw Convex Hulls + centroid markers ---
-            self._draw_cluster_overlay(centroids, valid_labels)
-
-            space = "feature space" if use_features else "the 2-D projection"
-            how = "automatic K" if auto else "K"
-            self.main_window.status_bar.showMessage(f"{k} clusters ({how}) in {space}", 5000)
-
-        except Exception as e:
-            QMessageBox.critical(self, "Clustering error", str(e))
-        finally:
-            QApplication.restoreOverrideCursor()
-
-        self._update_toolbar_state()
-        self._notify_annotation_viewer_cluster_state()
-
     # -------------------------------------------------------------------------
-    # Feature bins (AnnotationViewer "Feature Bins" sort)
+    # Feature bins (AnnotationViewer "Features" sort)
     # -------------------------------------------------------------------------
 
     def has_feature_vectors(self):
@@ -3447,145 +3242,13 @@ class EmbeddingViewerWindow(QWidget):
         return result
 
     def _notify_annotation_viewer_feature_state(self):
-        """Enable or disable the AnnotationViewer's "Feature Bins" sort option."""
+        """Enable or disable the AnnotationViewer's "Features" sort option."""
         try:
             viewer = getattr(self.main_window, 'annotation_viewer_window', None)
             if viewer is not None and hasattr(viewer, 'update_feature_bins_state'):
                 viewer.update_feature_bins_state(self.has_feature_vectors())
         except Exception:
             pass
-
-    def _draw_cluster_overlay(self, centroids: np.ndarray, valid_labels: list):
-        """Compute Convex Hulls for each cluster and add them to the scene.
-        Centroid cross-hair markers are also drawn.
-        """
-        self._remove_cluster_overlay_items()
-
-        if len(centroids) == 0:
-            return
-
-        from PyQt5.QtGui import QPainterPath, QColor, QPen, QBrush
-        from PyQt5.QtWidgets import QGraphicsPathItem
-        from PyQt5.QtCore import Qt, QPointF
-        from scipy.spatial import ConvexHull
-
-        # --- Convex Hulls ---
-        for i, c in enumerate(valid_labels):
-            # Get 2D points for this cluster
-            points_2d = self._point_coords_2d[self._cluster_labels == c]
-            
-            if len(points_2d) >= 3:
-                try:
-                    hull = ConvexHull(points_2d)
-                    hull_path = QPainterPath()
-                    
-                    # Move to first vertex
-                    first_idx = hull.vertices[0]
-                    hull_path.moveTo(float(points_2d[first_idx, 0]), float(points_2d[first_idx, 1]))
-                    
-                    # Line to remaining vertices
-                    for v_idx in hull.vertices[1:]:
-                        hull_path.lineTo(float(points_2d[v_idx, 0]), float(points_2d[v_idx, 1]))
-                        
-                    # Close the polygon
-                    hull_path.closeSubpath()
-
-                    # Create graphics item
-                    hull_item = QGraphicsPathItem(hull_path)
-                    
-                    qc = self._cluster_colors_rgba[i]
-                    border_color = QColor(int(qc[0]), int(qc[1]), int(qc[2]), 200)
-                    fill_color = QColor(int(qc[0]), int(qc[1]), int(qc[2]), 40) # Semi-transparent
-                    
-                    pen = QPen(border_color, 2)
-                    pen.setCosmetic(True)
-                    hull_item.setPen(pen)
-                    hull_item.setBrush(QBrush(fill_color))
-                    hull_item.setZValue(10) # Draw under points
-                    
-                    self.graphics_scene.addItem(hull_item)
-                    self._cluster_overlay_items.append(hull_item)
-                except Exception:
-                    pass # Ignore degenerate hulls (e.g., collinear points)
-
-        # --- Centroid markers (small filled circles) ---
-        coords = self._point_coords_2d
-        xmin, ymin = coords.min(axis=0) - 1e-6
-        xmax, ymax = coords.max(axis=0) + 1e-6
-        marker_r = max((xmax - xmin), (ymax - ymin)) * 0.012
-
-        for i, (cx_i, cy_i) in enumerate(centroids):
-            qc = self._cluster_colors_rgba[i]
-            colour = QColor(int(qc[0]), int(qc[1]), int(qc[2]), 230)
-
-            marker_path = QPainterPath()
-            marker_path.addEllipse(
-                QPointF(float(cx_i), float(cy_i)),
-                marker_r, marker_r
-            )
-            marker_item = QGraphicsPathItem(marker_path)
-            marker_pen = QPen(QColor(255, 255, 255, 200), 0)
-            marker_pen.setCosmetic(True)
-            marker_item.setPen(marker_pen)
-            marker_item.setBrush(QBrush(colour))
-            marker_item.setZValue(51) # Over everything
-            self.graphics_scene.addItem(marker_item)
-            self._cluster_centroid_items.append(marker_item)
-
-    def _notify_annotation_viewer_cluster_state(self):
-        """Tell the AnnotationViewer whether cluster data currently exists.
-
-        This lets the viewer enable or disable its "Cluster" sort option in
-        real time without polling.
-        """
-        try:
-            viewer = getattr(self.main_window, 'annotation_viewer_window', None)
-            if viewer is not None and hasattr(viewer, 'update_cluster_sort_state'):
-                has_clusters = bool(self._cluster_labels.size > 0)
-                viewer.update_cluster_sort_state(has_clusters)
-        except Exception:
-            pass
-
-    def _remove_cluster_overlay_items(self):
-        """Remove all cluster boundary and centroid items from the scene."""
-        for item in self._cluster_overlay_items:
-            try:
-                self.graphics_scene.removeItem(item)
-            except Exception:
-                pass
-        self._cluster_overlay_items.clear()
-
-        for item in self._cluster_centroid_items:
-            try:
-                self.graphics_scene.removeItem(item)
-            except Exception:
-                pass
-        self._cluster_centroid_items.clear()
-
-    def _clear_clustering(self):
-        """Remove cluster overlay items from the scene."""
-        self._remove_cluster_overlay_items()
-        self._cluster_labels = np.empty((0,), dtype=int)
-        self._cluster_distances = np.empty((0,), dtype=np.float32)
-        self._cluster_colors_rgba = np.empty((0, 4), dtype=np.uint8)
-        self._update_toolbar_state()
-        # Notify AnnotationViewer that cluster data changed.
-        self._notify_annotation_viewer_cluster_state()
-
-    def _refresh_cluster_overlay(self):
-        """Recompute Convex Hulls on the current 2-D projection after rotation."""
-        if self._cluster_labels.size == 0 or self._point_coords_2d.size == 0:
-            return
-
-        k = int(self._cluster_labels.max()) + 1
-        valid_labels = list(range(k))
-
-        # Recompute centroids from current 2-D positions
-        centroids = np.array([
-            self._point_coords_2d[self._cluster_labels == c].mean(axis=0)
-            for c in valid_labels
-        ])
-        self._draw_cluster_overlay(centroids, valid_labels)
 
     def _clear_location_indicator(self):
         """Clear location indicator lines."""
@@ -3656,10 +3319,6 @@ class EmbeddingViewerWindow(QWidget):
         if self.mega_item is not None:
             self.mega_item.update()
         self._update_kdtree()
-
-        # Refresh cluster overlay so Voronoi lines track the new 2-D projection
-        if self._cluster_labels.size > 0:
-            self._refresh_cluster_overlay()
 
         self._update_toolbar_state()
 
