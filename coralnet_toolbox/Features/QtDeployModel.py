@@ -120,7 +120,9 @@ class FeaturesDeployModelDialog(QDialog):
         self.resolution_combo = QComboBox()
         for px in (256, 384, 512, 768, 1024, 1536, 2560):
             self.resolution_combo.addItem(str(px), px)
-        default_res_idx = self.resolution_combo.findText("768")
+        # 1024 by default: for the 3D bake it measured +0.01-0.05 mIoU over 768
+        # against per-face ground truth (Shoe, DINOv3-S/16) for +0.06 s/image.
+        default_res_idx = self.resolution_combo.findText("1024")
         self.resolution_combo.setCurrentIndex(default_res_idx if default_res_idx >= 0 else 0)
         self.resolution_combo.setToolTip(
             "Input size in pixels, as the edge of a square with the same area. DINOv2/v3 "

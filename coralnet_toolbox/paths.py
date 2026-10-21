@@ -90,24 +90,39 @@ def weights_dir():
     return app_dir("weights")
 
 
-def feature_cache_path(image_path):
+def feature_cache_path(image_path, variant=None):
     """Where an image's dense feature map is cached.
 
     The file name keeps the image's base name, so the folder stays readable,
     and adds a hash of its full path: images from different folders often
     share a name (frame_0001, IMG_0001), and would otherwise overwrite each
-    other's features in this one shared folder.
+    other's features in this one shared folder. The image's size and
+    modification time are hashed in too, so an edited image misses the cache
+    instead of reusing stale features.
+
+    ``variant`` names the extraction settings (FeatureMapCodec.feature_variant:
+    model, input size, upsampler, normalization). Each setting gets its own
+    file, so extracting with another model or resolution neither overwrites
+    nor is mistaken for an existing map — which is what lets extraction reuse
+    a cached map instead of recomputing it.
 
     Args:
         image_path (str): The image's path.
+        variant (str, optional): The extraction settings.
 
     Returns:
         str: Path to the .npy file, which need not exist yet.
     """
     key = os.path.normcase(os.path.abspath(image_path)).replace("\\", "/")
+    try:
+        st = os.stat(image_path)
+        key += f"|{st.st_size}|{st.st_mtime_ns}"
+    except OSError:
+        pass
     digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]
     stem = os.path.splitext(os.path.basename(image_path))[0]
-    return (cache_dir("features") / f"{stem}_{digest}_features.npy").as_posix()
+    tag = f"_{hashlib.sha1(variant.encode('utf-8')).hexdigest()[:8]}" if variant else ""
+    return (cache_dir("features") / f"{stem}_{digest}{tag}_features.npy").as_posix()
 
 
 def find_weights(name):

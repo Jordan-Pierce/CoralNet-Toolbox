@@ -615,8 +615,14 @@ The gallery displays annotation crops as a scrollable grid of thumbnail images. 
 - **Image**: Group by image filename
 - **Confidence**: Group by confidence buckets (0-10%, 10-20%, ... 90-100%, plus Verified)
 - **Area**: Sort by annotation area (smallest to largest)
-- **Cluster**: Sort by K-Means clustering results from Embedding Viewer (enabled when clusters available)
-- **Similarity**: Sort by distance to the Embedding Viewer's last similarity anchor (enabled after a neighbour expansion)
+- **Features**: Group annotations into bins of similar appearance, using the features the Embedding Viewer extracted (enabled after **Apply Embeddings**)
+  - Bins come from a hierarchical (Ward) tree over the feature vectors, so neighbouring bins look alike
+  - Within a bin the most typical annotation comes first; annotations with no feature vector go last under "Not embedded"
+  - Each bin header names its majority label (e.g. "Bin 3 · mostly Sand (82%)"); with colour features the header is tinted with the bin's mean colour
+  - **Bins** spinbox (shown while this sort is active): **Auto** picks the count where the tree splits most cleanly (between sqrt(N)/4 and sqrt(N), 3 to 40); set 2-50 to choose your own. Re-cutting is instant
+  - Ctrl+click a bin header to select the whole bin
+  - Bins are built from the annotations in the gallery, so apply a filter first to bin only a label or image
+- **Similarity**: Not in the dropdown; the gallery switches to it automatically when you select annotation(s) and grow the selection by similarity in the Embedding Viewer (<kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Wheel</kbd>). It sorts by distance to the selected anchor(s), and its entry disappears again when the embedding is rebuilt or cleared. Pick any other sort to leave it
   - Anchors are grouped first, then bands of cosine similarity, with unranked annotations last
 
 **Display Controls**
@@ -639,7 +645,7 @@ The gallery displays annotation crops as a scrollable grid of thumbnail images. 
 The embedding viewer displays annotations as points in 2D or 3D space, where proximity indicates semantic similarity. This enables:
 
 **Feature Extraction & Dimensionality Reduction**
-- **Model Category**: Choose Color Features (HSV-based), YOLO, Transformer, TIMM, OpenCLIP, or Live Models (deployed models)
+- **Model Category**: Choose Color Features (Color, or Color + Texture), YOLO, Transformer, TIMM, OpenCLIP, or Live Models (deployed models)
 - **Model Selection**: Pick specific model from selected category
 - **Embedding Technique**: PCA (fast, linear), LDA (class-aware), TSNE (nonlinear, slow), UMAP (fast nonlinear)
 - **Dimensionality**: 2D (faster) or 3D (interactive rotation)
@@ -654,13 +660,14 @@ The embedding viewer displays annotations as points in 2D or 3D space, where pro
 - **TSNE settings**:
   - **Perplexity**: Effective neighborhood size (5-50; default 20)
   - **Exaggeration**: Cluster separation strength (5.0-60.0; default 5.0; higher = more distinct clusters)
+- **Mask background** (deep models only): Fill a polygon's crop outside the polygon with its mean colour, so a thin or diagonal polygon is not embedded as its neighbours
+- **Rotation-invariant** (deep models only): Average the features of the crop at 0, 90, 180 and 270 degrees (four times slower)
+- Color features always use the polygon's own pixels and are already rotation-invariant
 
-**Clustering (K-Means)**
-- **Cluster Button**: Run K-Means on current embedding to partition points into clusters
-- **K value**: Number of clusters (2-50; default 3)
-- **Cluster Space**: Cluster on 2D projected coordinates or full high-dimensional feature vectors
-- **Clear Button**: Remove cluster boundaries and disable Cluster sort option
-- Cluster results are colored and can be sorted via the Annotation Viewer's "Cluster" sort option
+**Feature Bins**
+- The extracted features also drive the Annotation Viewer's **Features** sort, which groups annotations into bins of similar appearance (see Sorting Options above)
+- Bins are built from the feature vectors, not the 2D / 3D projection, and need no extra step beyond **Apply Embeddings**
+- Changing the model, mask-background or rotation options extracts new features and rebuilds the bins
 
 **Display & Navigation**
 - **Display Mode Toggle**: Switch between dots and sprite / thumbnail view
@@ -713,18 +720,20 @@ The Explorer automatically caches extracted features to accelerate re-loading th
 
 **Performance**
 - **Color Features**: 70 dims (8×8 Hue-Saturation histogram + H / S / V moments), instant CPU extraction
+- **Color + Texture**: 93 dims (the 70 colour dims + 23 rotation-invariant texture dims from LBP and gradient statistics); separates surfaces of one colour, e.g. sand from rubble
 - **YOLO / Transformer / TIMM / OpenCLIP**: Model-dependent feature dimensions, GPU-accelerated (if CUDA available)
 - **Batch Processing**: Default batch size 512 annotations; cache flush every 4 batches to balance memory and I/O
 - **Thread-Safety**: Concurrent access via SQLite locks prevents cache corruption during multi-threaded operations
-- **Feature Storage**: Retained feature matrices are reduced to 128 dimensions for ranking and clustering; the cache keeps the full-width vectors
+- **Feature Storage**: Retained feature matrices are reduced to 128 dimensions for ranking and feature bins; the cache keeps the full-width vectors
 
 **Tips**
 - Use dual monitors: place Annotation Viewer and Annotation Window side-by-side to review selected annotations
 - For exploring mislabels: use Embedding Viewer to identify visual outliers (points far from their label cluster), isolate them, and examine in the gallery
 - Larger clusters often indicate common features; smaller / scattered points may be edge cases or mislabels
 - Apply filter in Annotation Viewer before running embeddings to focus on specific images / labels
-- Use Cluster sort in the Annotation Viewer after running K-Means to organize results by cluster membership
-- To gather more of a class: select a known-good annotation, expand by similarity, then switch the Annotation Viewer to Similarity sort and trim the tail where the crops stop matching
+- Use the Features sort in the Annotation Viewer to review look-alike annotations together; a bin that mixes labels is a good place to hunt for mislabels
+- Try Color + Texture when colour alone merges visually different surfaces
+- To gather more of a class: select a known-good annotation, expand by similarity, then scroll the Annotation Viewer (it sorts itself by similarity) and trim the tail where the crops stop matching
 
 ## Tool Bar Tools
 - **Select Tool**: After selecting the tool

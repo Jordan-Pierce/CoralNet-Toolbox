@@ -10,7 +10,7 @@ from PyQt5.QtGui import QKeyEvent, QKeySequence, QStandardItem, QStandardItemMod
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QWidget, QVBoxLayout, QLabel, 
                              QComboBox, QHBoxLayout, QTableView, QHeaderView, QApplication, 
                              QMenu, QPushButton, QStyle, QFormLayout, QFrame, 
-                             QLineEdit, QFileDialog, QToolBar)
+                             QLineEdit, QFileDialog, QToolBar, QCheckBox)
 
 from coralnet_toolbox.Rasters import RasterManager
 from coralnet_toolbox.Rasters import ImageFilter
@@ -25,6 +25,9 @@ from coralnet_toolbox.Icons import get_icon
 from coralnet_toolbox import theme as app_theme
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
+
+# Fewer images than this are deleted too fast for a progress bar to be read
+DELETE_PROGRESS_MIN = 25
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -457,6 +460,7 @@ class ImageWindow(QWidget):
         self.search_timer = QTimer(self)
         self.search_timer.setSingleShot(True)
         self.search_timer.timeout.connect(self.filter_images)
+        # Ask before deleting images; "Don't ask again" clears it for the session
         self.show_confirmation_dialog = True
         
     def setup_ui(self):
@@ -1756,7 +1760,9 @@ class ImageWindow(QWidget):
         context_menu.addSeparator()
 
         # Add delete actions
-        delete_images_action = context_menu.addAction(f"Delete {count} Highlighted Raster{'s' if count > 1 else ''}")
+        delete_images_action = context_menu.addAction(
+            f"Delete {count} Highlighted Raster{'s' if count > 1 else ''}\tDel"
+        )
         delete_images_action.triggered.connect(lambda: self.delete_highlighted_images())
         delete_annotations_action = context_menu.addAction(
             f"Delete Annotations for {count} Highlighted Raster{'s' if count > 1 else ''}"
@@ -2290,44 +2296,104 @@ class ImageWindow(QWidget):
             progress_bar.close()
             QApplication.restoreOverrideCursor()
 
-    def delete_highlighted_images(self):
-        """Delete the highlighted images."""
+    def delete_current_image(self, confirm: bool = True):
+        """Delete the open image and move on to the next one (Alt+Delete)."""
+        if self.selected_image_path:
+            self.confirm_and_delete_images([self.selected_image_path], confirm=confirm)
+
+    def delete_highlighted_images(self, confirm: bool = True):
+        """Delete the highlighted images (Delete in the table, or its context menu)."""
         # Get all highlighted paths, the same way we do in filter_images
         highlighted_paths = self.table_model.get_highlighted_paths()
-        
-        if not highlighted_paths:
-            return
-            
-        # Confirm deletion
-        plural = 's' if len(highlighted_paths) > 1 else ''
-        message = (f"Are you sure you want to delete {len(highlighted_paths)} raster{plural}?\n"
-                   "This will delete all associated annotations.")
+        if highlighted_paths:
+            self.confirm_and_delete_images(highlighted_paths, confirm=confirm)
+
+    def confirm_and_delete_images(self, image_paths, confirm: bool = True) -> bool:
+        """Delete images from the project, asking first unless told not to.
+
+        Files on disk are never touched.
+
+        Args:
+            image_paths (list): Paths to delete
+            confirm (bool): Ask first, unless the user said not to this session
+
+        Returns:
+            bool: True if the images were deleted
+        """
+        image_paths = [path for path in image_paths if self.raster_manager.has_image_path(path)]
+        if not image_paths:
+            return False
+        if confirm and self.show_confirmation_dialog and not self._confirm_image_deletion(image_paths):
+            return False
+
+        # Tools hold items in the open image's scene, which deleting it clears.
+        # Deleting other images leaves the user's tool as it was.
+        if self.selected_image_path in image_paths:
+            self.main_window.untoggle_all_tools()
+        self.delete_images(image_paths)
+        self._show_status(f"Deleted {self._describe_images(image_paths)} from the project.")
+        return True
+
+    def _confirm_image_deletion(self, paths) -> bool:
+        """Ask before deleting images. True to go ahead."""
+        count = len(paths)
+        plural = 's' if count > 1 else ''
+        message = (f"Delete {count} raster{plural} from the project?\n"
+                   "This will delete all associated annotations. Files on disk are not touched.")
 
         # Deleting a raster whose work areas were extracted leaves its images behind, unlinked
-        parents = [path for path in highlighted_paths
+        parents = [path for path in paths
                    if extracted_images.has_active_set(self.raster_manager.get_raster(path))]
         if parents:
             message += (f"\n\n{len(parents)} of these {'has' if len(parents) == 1 else 'have'} extracted "
                         "images in this project. The extracted images stay, as ordinary images.")
 
-        reply = QMessageBox.question(
-            self,
-            "Confirm Multiple Image Deletions",
-            message,
-            QMessageBox.Yes | QMessageBox.No
-        )
-        
-        if reply == QMessageBox.Yes:
-            # Set busy cursor
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            try:
-                # Untoggle tools
-                self.main_window.untoggle_all_tools()
-                # Delete images
-                self.delete_images(highlighted_paths)
-            finally:
-                QApplication.restoreOverrideCursor()
-            
+        msg_box = QMessageBox(self)
+        msg_box.setIcon(QMessageBox.Question)
+        msg_box.setWindowTitle("Confirm Image Deletion")
+        msg_box.setText(message)
+        msg_box.setInformativeText("Hold Shift with Delete or Alt+Delete to skip this question.")
+        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg_box.setDefaultButton(QMessageBox.Yes)
+        checkbox = QCheckBox("Don't ask again this session")
+        msg_box.setCheckBox(checkbox)
+
+        if msg_box.exec_() != QMessageBox.Yes:
+            return False
+        if checkbox.isChecked():
+            self.show_confirmation_dialog = False
+        return True
+
+    def _image_after_deletion(self, doomed):
+        """The image to open in place of the open one, deleted along with ``doomed``.
+
+        The one that moves up into its row, or the one above it when it was
+        last, as a file browser does.
+        """
+        filtered = self.table_model.filtered_paths
+        current_index = self.table_model.get_row_for_path(self.selected_image_path)
+        if current_index < 0:
+            # Current image is filtered out of the table; any survivor will do
+            return next((p for p in filtered if p not in doomed), None)
+        following = next((p for p in filtered[current_index + 1:] if p not in doomed), None)
+        if following is not None:
+            return following
+        return next((p for p in reversed(filtered[:current_index]) if p not in doomed), None)
+
+    @staticmethod
+    def _describe_images(paths) -> str:
+        """One image by name, more by count."""
+        if len(paths) == 1:
+            return os.path.basename(paths[0])
+        return f"{len(paths)} images"
+
+    def _show_status(self, message: str, msecs: int = 3000):
+        """Post to the status bar, tolerating a window that has none yet."""
+        try:
+            self.main_window.status_bar.showMessage(message, msecs)
+        except Exception:
+            pass
+
     def delete_highlighted_images_annotations(self):
         """Delete annotations for the highlighted images."""
         # Get all highlighted paths, the same way we do in filter_images
@@ -2390,8 +2456,10 @@ class ImageWindow(QWidget):
                 
     def delete_images(self, image_paths):
         """
-        Delete multiple images and their annotations.
-        
+        Delete multiple images and their annotations, without asking.
+
+        confirm_and_delete_images() asks first. Files on disk are never touched.
+
         Args:
             image_paths (list): List of paths to delete
         """
@@ -2404,29 +2472,20 @@ class ImageWindow(QWidget):
         # Check if current image is being deleted
         is_current_deleted = self.selected_image_path in image_paths
         
-        # Determine next image to select: the one that moves up into the deleted
-        # image's row, or the one above it when the deleted image was last, as a
-        # file browser does. This used to take the first surviving row at or
-        # above the current one, which was always the top of the list.
+        # Determine next image to select. This used to take the first surviving
+        # row at or above the current one, which was always the top of the list.
         next_image = None
         if is_current_deleted and self.table_model.filtered_paths:
-            doomed = set(image_paths)
-            filtered = self.table_model.filtered_paths
-            current_index = self.table_model.get_row_for_path(self.selected_image_path)
-            if current_index < 0:
-                # Current image is filtered out of the table; any survivor will do
-                next_image = next((p for p in filtered if p not in doomed), None)
-            else:
-                next_image = next((p for p in filtered[current_index + 1:] if p not in doomed), None)
-                if next_image is None:
-                    next_image = next((p for p in reversed(filtered[:current_index])
-                                       if p not in doomed), None)
-                
-        # Show progress
+            next_image = self._image_after_deletion(set(image_paths))
+
+        # Show progress. Not for a few: they go by too fast to read, and a modal
+        # bar flashing up on every Alt+Delete only slows a run of them down.
         with self.busy_cursor():
-            progress_bar = ProgressBar(self, title="Deleting Images")
-            progress_bar.show()
-            progress_bar.start_progress(len(image_paths))
+            progress_bar = None
+            if len(image_paths) >= DELETE_PROGRESS_MIN:
+                progress_bar = ProgressBar(self, title="Deleting Images")
+                progress_bar.show()
+                progress_bar.start_progress(len(image_paths))
             
             # Temporarily disconnect raster manager signals to avoid triggering filters on each removal
             self.raster_manager.rasterAdded.disconnect(self.on_raster_added)
@@ -2442,7 +2501,8 @@ class ImageWindow(QWidget):
                     self.raster_manager.remove_raster(path, collect_garbage=False)
                     
                     # Update progress
-                    progress_bar.update_progress()
+                    if progress_bar is not None:
+                        progress_bar.update_progress()
 
                 # No gc.collect() here: cleanup() already closed the dataset and
                 # dropped the pixel, mask and z buffers, so a full collection only
@@ -2451,7 +2511,9 @@ class ImageWindow(QWidget):
                 # Update UI
                 if next_image:
                     self.load_image_by_path(next_image)
-                elif not self.raster_manager.image_paths:
+                elif is_current_deleted or not self.raster_manager.image_paths:
+                    # Nothing left in the table to open in its place. Left
+                    # set, the path would point at an image that is gone.
                     self.selected_image_path = None
                     self.annotation_window.clear_scene()
 
@@ -2464,10 +2526,11 @@ class ImageWindow(QWidget):
                 # Restore signals
                 self.raster_manager.rasterAdded.connect(self.on_raster_added)
                 self.raster_manager.rasterRemoved.connect(self.on_raster_removed)
-                
+
                 # Close progress bar
-                progress_bar.stop_progress()
-                progress_bar.close()
+                if progress_bar is not None:
+                    progress_bar.stop_progress()
+                    progress_bar.close()
 
 
 class ImagePreviewTooltip(QFrame):

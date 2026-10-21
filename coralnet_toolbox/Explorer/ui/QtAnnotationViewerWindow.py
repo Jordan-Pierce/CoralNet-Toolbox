@@ -14,7 +14,7 @@ from PyQt5.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot, QEvent, QSignalBlocke
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QToolBar, QComboBox,
     QLabel, QPushButton, QApplication, QListView,
-    QHBoxLayout, QMessageBox, QDialog
+    QHBoxLayout, QMessageBox, QDialog, QSpinBox
 )
 
 from coralnet_toolbox import theme as app_theme
@@ -101,6 +101,8 @@ class AnnotationViewerWindow(QWidget):
         # Sorting state
         self.active_ordered_ids = []
         self._group_headers = []
+        # "Features" result for one layout pass (sorting and grouping both read it)
+        self._feature_bins_cache = None
         
         # Display options
         self.current_widget_size = app_theme.scale_int(96)
@@ -184,17 +186,43 @@ class AnnotationViewerWindow(QWidget):
         toolbar.addWidget(sort_label)
         
         self.sort_combo = QComboBox()
-        self.sort_combo.addItems(["None", "Label", "Image", "Confidence", "Area", "Cluster", "Similarity"])
-        self.sort_combo.insertSeparator(self.sort_combo.findText("Cluster"))
+        self.sort_combo.addItems(["None", "Label", "Image", "Confidence", "Area",
+                                  "Features"])
+        self.sort_combo.insertSeparator(self.sort_combo.findText("Features"))
         self.sort_combo.currentTextChanged.connect(self._on_sort_changed)
         self.sort_combo.setMinimumWidth(100)
-        self.sort_combo.setToolTip("Sort annotations by: None (no sort), Label, Image, Confidence score, Area size, Cluster group, or Similarity to the embedding viewer last neighbour anchor")
+        self.sort_combo.setToolTip("Sort annotations by: None (no sort), Label, Image, Confidence score, "
+                                   "Area size, Features (bins of similar-looking annotations, from the "
+                                   "embedding viewer's features). Similarity to the selection is applied "
+                                   "automatically when you grow a selection by similarity in the embedding "
+                                   "viewer (Ctrl+Shift+Wheel)")
         toolbar.addWidget(self.sort_combo)
 
-        # "Cluster" is disabled until cluster data arrives from the EmbeddingViewer.
-        # The separator keeps it visually grouped away from the standard sorts.
-        self._set_cluster_sort_item_enabled(False)
-        self._set_similarity_sort_item_enabled(False)
+        # Bin count for "Features"; shown only while that sort is active.
+        bins_widget = QWidget()
+        bins_layout = QHBoxLayout(bins_widget)
+        bins_layout.setContentsMargins(4, 0, 0, 0)
+        bins_layout.setSpacing(4)
+        bins_layout.addWidget(QLabel("Bins:"))
+        self.bins_spin = QSpinBox()
+        self.bins_spin.setRange(1, 50)
+        self.bins_spin.setSpecialValueText("Auto")
+        self.bins_spin.setValue(1)
+        self.bins_spin.setToolTip(
+            "Number of bins for the Features sort.\n"
+            "Auto: the bin count is chosen where the similarity tree splits most\n"
+            "cleanly, between sqrt(N)/4 and sqrt(N) bins (3 to 40).\n"
+            "Raise it to split bins into finer groups, lower it to merge them;\n"
+            "the tree is cached, so changing it is instant."
+        )
+        self.bins_spin.valueChanged.connect(self._on_bins_changed)
+        bins_layout.addWidget(self.bins_spin)
+        self.bins_spin_action = toolbar.addWidget(bins_widget)
+        self.bins_spin_action.setVisible(False)
+
+        # Features is disabled until the EmbeddingViewer has the data it needs.
+        # The separator keeps it grouped away from the standard sorts.
+        self._set_feature_bins_sort_item_enabled(False)
 
         toolbar.addSeparator()
 
@@ -1114,8 +1142,10 @@ class AnnotationViewerWindow(QWidget):
         current_sort = self.sort_combo.currentText()
         is_sorting_by_label = (current_sort == "Label")
         is_sorting_by_confidence = (current_sort == "Confidence")
+        # Bin headers name each bin's majority label; the bins themselves are cached.
+        is_sorting_by_bins = (current_sort == "Features")
 
-        if active_label_filters or is_sorting_by_label or is_sorting_by_confidence:
+        if active_label_filters or is_sorting_by_label or is_sorting_by_confidence or is_sorting_by_bins:
             # Full refresh required — annotations may need reordering/regrouping
             self.refresh_annotations()
         else:
@@ -1223,8 +1253,9 @@ class AnnotationViewerWindow(QWidget):
         
     def _recalculate_layout(self):
         """Rebuild list model layout by grouping items and updating model/delegate."""
-        # A new layout pass re-reads the ranking; the cache only spans one pass.
+        # A new layout pass re-reads the ranking and bins; the caches only span one pass.
         self._similarity_cache = None
+        self._feature_bins_cache = None
         # If the user has not applied the filter, show placeholder and skip
         if not getattr(self, '_filter_applied', False):
             self._show_placeholder()
@@ -1340,32 +1371,15 @@ class AnnotationViewerWindow(QWidget):
             items.sort(key=self._confidence_sort_key)
         elif sort_type == "Area":
             items.sort(key=self._area_sort_key)
-        elif sort_type == "Cluster":
-            # Build {ann_id -> (cluster_id, dist_from_centroid)} from the EmbeddingViewer
-            cluster_map = {}
-            try:
-                ev = getattr(self.main_window, 'embedding_viewer_window', None)
-                if ev is not None and ev._cluster_labels.size > 0:
-                    import numpy as _np
-                    coords = ev._point_coords_2d
-                    labels = ev._cluster_labels
-                    ids = ev._point_ids
-                    # Compute per-cluster centroids
-                    k = int(labels.max()) + 1
-                    centroids = _np.zeros((k, 2), dtype=_np.float32)
-                    for c in range(k):
-                        mask = labels == c
-                        if mask.any():
-                            centroids[c] = coords[mask].mean(axis=0)
-                    # Compute distance from centroid for each point
-                    dists = _np.linalg.norm(coords - centroids[labels], axis=1)
-                    for ann_id, cluster_id, dist in zip(ids.tolist(), labels.tolist(), dists.tolist()):
-                        cluster_map[ann_id] = (int(cluster_id), float(dist))
-            except Exception:
-                pass
-            _NO_CLUSTER = (2 ** 31, 0.0)
-            items.sort(key=lambda i: cluster_map.get(i.annotation.id, _NO_CLUSTER))
-
+        elif sort_type == "Features":
+            # Bins in dendrogram order, each most-typical first; annotations
+            # without a feature vector go last.
+            bins = self._get_feature_bins()
+            rank = {}
+            for members in bins['bins']:
+                for ann_id in members:
+                    rank[ann_id] = len(rank)
+            items.sort(key=lambda i: rank.get(i.annotation.id, len(rank)))
         elif sort_type == "Similarity":
             # Distances come from the EmbeddingViewer's last neighbour anchor
             # (Ctrl+Shift+Wheel). Anchor annotations sit at 0.0 and rank first;
@@ -1382,23 +1396,8 @@ class AnnotationViewerWindow(QWidget):
         if (not self.active_ordered_ids and sort_type == "None") or self.active_ordered_ids:
             return [("", None, data_items)]
 
-        # Build cluster map once (needed for "Cluster" sort)
-        _cluster_map = {}
-        _cluster_colors = {}
-        if sort_type == "Cluster":
-            try:
-                ev = getattr(self.main_window, 'embedding_viewer_window', None)
-                if ev is not None and ev._cluster_labels.size > 0:
-                    for ann_id, cluster_id in zip(ev._point_ids.tolist(), ev._cluster_labels.tolist()):
-                        _cluster_map[ann_id] = int(cluster_id)
-                        
-                    # Fetch cluster colors from the embedding viewer to style the headers
-                    if hasattr(ev, '_cluster_colors_rgba'):
-                        from PyQt5.QtGui import QColor
-                        for i, qc in enumerate(ev._cluster_colors_rgba):
-                            _cluster_colors[i] = QColor(int(qc[0]), int(qc[1]), int(qc[2]))
-            except Exception:
-                pass
+        if sort_type == "Features":
+            return self._group_by_feature_bins(data_items)
 
         # Group by Label or Image — collect into OrderedDict so identical keys
         # are merged even if items appear out-of-order in the incoming list.
@@ -1415,10 +1414,6 @@ class AnnotationViewerWindow(QWidget):
             elif sort_type == "Confidence":
                 key = self._confidence_group_key(item)
                 color = None
-            elif sort_type == "Cluster":
-                cid = _cluster_map.get(item.annotation.id)
-                key = f"Cluster {cid}" if cid is not None else "No Cluster"
-                color = _cluster_colors.get(cid)  # Apply the centroid color here
             elif sort_type == "Similarity":
                 similarity_map, space, anchor_ids = self._get_similarity_ranking()
                 key = self._similarity_group_key(
@@ -1622,58 +1617,120 @@ class AnnotationViewerWindow(QWidget):
     # Toolbar Event Handlers
     # -------------------------------------------------------------------------
     
-    def _set_cluster_sort_item_enabled(self, enabled: bool):
-        """Enable or disable the 'Cluster' entry in the sort combo."""
+    def _set_feature_bins_sort_item_enabled(self, enabled: bool):
+        """Enable or disable the 'Features' entry in the sort combo."""
         try:
-            model = self.sort_combo.model()
-            # Locate by text so the helper still works if the sort menu order changes.
-            idx = self.sort_combo.findText("Cluster")
+            idx = self.sort_combo.findText("Features")
             if idx < 0:
                 return
-            item = model.item(idx)
+            item = self.sort_combo.model().item(idx)
             if item is None:
                 return
-            from PyQt5.QtCore import Qt as _Qt
             if enabled:
-                item.setFlags(item.flags() | _Qt.ItemIsEnabled | _Qt.ItemIsSelectable)
+                item.setFlags(item.flags() | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             else:
-                item.setFlags(item.flags() & ~(_Qt.ItemIsEnabled | _Qt.ItemIsSelectable))
-                # If "Cluster" is currently selected, fall back to "None"
-                if self.sort_combo.currentText() == "Cluster":
+                item.setFlags(item.flags() & ~(Qt.ItemIsEnabled | Qt.ItemIsSelectable))
+                if self.sort_combo.currentText() == "Features":
                     self.sort_combo.setCurrentText("None")
         except Exception:
             pass
 
-    def update_cluster_sort_state(self, has_clusters: bool):
-        """Called by EmbeddingViewerWindow when cluster data is created or cleared."""
-        self._set_cluster_sort_item_enabled(has_clusters)
+    def update_feature_bins_state(self, has_features: bool):
+        """Called by EmbeddingViewerWindow when feature vectors appear or are dropped."""
+        self._feature_bins_cache = None
+        self._set_feature_bins_sort_item_enabled(has_features)
+        if has_features and self.sort_combo.currentText() == "Features":
+            self._recalculate_layout()
 
-    def _set_similarity_sort_item_enabled(self, enabled: bool):
-        """Enable or disable the 'Similarity' entry in the sort combo."""
+    def _on_bins_changed(self, _value):
+        """Re-cut the bins at the new count (the tree is cached, so this is cheap)."""
+        if self.sort_combo.currentText() == "Features":
+            self._recalculate_layout()
+
+    def _get_feature_bins(self):
+        """The EmbeddingViewer's feature bins for the gallery's annotations.
+
+        Cached for one layout pass. Returns the dict of
+        EmbeddingViewerWindow.get_feature_bins, empty when it is unavailable.
+        """
+        if self._feature_bins_cache is not None:
+            return self._feature_bins_cache
+        ids = [item.annotation.id for item in self.all_data_items]
+        bins = {'bins': [], 'tints': [], 'k': 0, 'auto': True, 'missing': ids}
         try:
-            model = self.sort_combo.model()
-            idx = self.sort_combo.findText("Similarity")
-            if idx < 0:
-                return
-            item = model.item(idx)
-            if item is None:
-                return
-            from PyQt5.QtCore import Qt as _Qt
-            if enabled:
-                item.setFlags(item.flags() | _Qt.ItemIsEnabled | _Qt.ItemIsSelectable)
-            else:
-                item.setFlags(item.flags() & ~(_Qt.ItemIsEnabled | _Qt.ItemIsSelectable))
-                if self.sort_combo.currentText() == "Similarity":
-                    self.sort_combo.setCurrentText("None")
-        except Exception:
-            pass
+            ev = getattr(self.main_window, 'embedding_viewer_window', None)
+            if ev is not None and hasattr(ev, 'get_feature_bins'):
+                k = self.bins_spin.value() if hasattr(self, 'bins_spin') else 1
+                bins = ev.get_feature_bins(ids, k=None if k < 2 else k)
+        except Exception as e:
+            print(f"Feature bins unavailable: {type(e).__name__}: {e}")
+        self._feature_bins_cache = bins
+        return bins
+
+    @staticmethod
+    def _bin_majority_text(items):
+        """'all Sand' or 'mostly Sand (82%)' for a bin's items."""
+        from collections import Counter
+        counts = Counter(item.effective_label.short_label_code for item in items)
+        if not counts:
+            return ""
+        code, count = counts.most_common(1)[0]
+        if count == len(items):
+            return f"all {code}"
+        return f"mostly {code} ({100 * count // len(items)}%)"
+
+    def _group_by_feature_bins(self, data_items):
+        """One group per feature bin, headed 'Bin 3 · mostly Sand (82%)'.
+
+        Headers are tinted with the bin's mean colour for colour features, or
+        a palette colour otherwise. Annotations without a feature vector form a
+        grey 'Not embedded' group at the end.
+        """
+        from PyQt5.QtGui import QColor
+        bins = self._get_feature_bins()
+        bin_of = {}
+        for index, members in enumerate(bins['bins']):
+            for ann_id in members:
+                bin_of[ann_id] = index
+        grouped = [[] for _ in bins['bins']]
+        not_embedded = []
+        for item in data_items:
+            index = bin_of.get(item.annotation.id)
+            (not_embedded if index is None else grouped[index]).append(item)
+
+        n_bins = max(1, len(grouped))
+        groups = []
+        for index, items in enumerate(grouped):
+            if not items:
+                continue
+            tint = bins['tints'][index] if index < len(bins['tints']) else None
+            color = (QColor(*tint) if tint is not None
+                     else QColor.fromHsv(int(360 * index / n_bins), 200, 230))
+            groups.append((f"Bin {index + 1} · {self._bin_majority_text(items)}", color, items))
+        if not_embedded:
+            groups.append(("Not embedded", QColor(128, 128, 128), not_embedded))
+        return groups
 
     def update_similarity_sort_state(self, has_ranking: bool):
-        """Called by EmbeddingViewerWindow when a neighbour ranking appears or is dropped."""
+        """Called by EmbeddingViewerWindow when a neighbour ranking appears or is dropped.
+
+        "Similarity" is not a standing entry in the sort combo: it is added and
+        selected when the Embedding Viewer ranks neighbours (Ctrl+Shift+Wheel),
+        and removed again when that ranking is dropped.
+        """
         self._similarity_cache = None
-        self._set_similarity_sort_item_enabled(has_ranking)
-        if has_ranking and self.sort_combo.currentText() == "Similarity":
-            self._recalculate_layout()
+        idx = self.sort_combo.findText("Similarity")
+        if has_ranking:
+            if idx < 0:
+                self.sort_combo.addItem("Similarity")
+            if self.sort_combo.currentText() != "Similarity":
+                self.sort_combo.setCurrentText("Similarity")   # re-lays out via _on_sort_changed
+            else:
+                self._recalculate_layout()
+        elif idx >= 0:
+            if self.sort_combo.currentText() == "Similarity":
+                self.sort_combo.setCurrentText("None")
+            self.sort_combo.removeItem(self.sort_combo.findText("Similarity"))
 
     def _get_similarity_ranking(self):
         """Return ({annotation_id: distance}, space, anchor_ids) from the EmbeddingViewer.
@@ -1743,6 +1800,8 @@ class AnnotationViewerWindow(QWidget):
     def _on_sort_changed(self, sort_type):
         """Handle sort type change."""
         self.active_ordered_ids = []
+        if hasattr(self, 'bins_spin_action'):
+            self.bins_spin_action.setVisible(sort_type == "Features")
         self._recalculate_layout()
 
     

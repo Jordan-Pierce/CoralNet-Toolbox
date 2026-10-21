@@ -512,19 +512,29 @@ class FeatureSelectTool(Tool):
             raster = self._get_active_raster()
             if raster is None:
                 return
-            from coralnet_toolbox.Features.FeatureMapCodec import save_feature_map
+            from coralnet_toolbox.Features.FeatureMapCodec import extractor_variant, save_feature_map
 
             stride = extractor.patch_stride or 16
             dim = extractor.out_channels
 
-            if raster.has_feature_map() and raster.feature_map_stride:
+            # Paste into the existing map only when it came from this same model
+            # (a crop from another backbone would be a different feature space).
+            # The result is a whole-image map only if the existing one was.
+            existing = (raster.has_feature_map() and raster.feature_map_stride
+                        and raster.feature_map_model_id == extractor.model_id
+                        and raster.feature_map_dim == dim)
+            if existing:
                 full = np.array(raster.feature_map, dtype=np.float16, copy=True)
                 fh, fw = full.shape[0], full.shape[1]
+                complete = bool(getattr(raster, "feature_map_complete", True))
             else:
-                # No full map yet — derive a grid from the stored stride.
+                # No full map yet — derive a grid from the stored stride. Zeros
+                # outside the work area: a PARTIAL map, which batch extraction
+                # never reuses.
                 fh = max(1, round(self.original_height / stride))
                 fw = max(1, round(self.original_width / stride))
                 full = np.zeros((fh, fw, dim), dtype=np.float16)
+                complete = False
 
             gx0 = max(0, int(left / self.original_width * fw))
             gy0 = max(0, int(top / self.original_height * fh))
@@ -541,12 +551,14 @@ class FeatureSelectTool(Tool):
             full[gy0:gy1, gx0:gx1, :] = resampled
 
             # Persist the feature map in the toolbox's feature cache.
-            npy_path = feature_cache_path(raster.image_path)
+            variant = extractor_variant(extractor)
+            npy_path = feature_cache_path(raster.image_path, variant)
             save_feature_map(npy_path, full, model_id=extractor.model_id,
                              stride=stride, dim=dim,
-                             upsampler=getattr(extractor, "upsample_descriptor", None))
+                             upsampler=getattr(extractor, "upsample_descriptor", None),
+                             variant=variant, complete=complete)
             raster.add_feature_map(None, model_id=extractor.model_id, stride=stride,
-                                   dim=dim, path=npy_path)
+                                   dim=dim, path=npy_path, complete=complete)
         except Exception:
             pass  # Persistence is best-effort; never break the live query.
 
@@ -739,7 +751,8 @@ class FeatureSelectTool(Tool):
     # blockier. The ceiling only lets the cap grow past 768 when the loaded
     # model's native grid (feat_h/feat_w, itself input_size + AnyUp dependent)
     # is genuinely denser, so high-res model configs aren't throttled to a
-    # constant tuned for the 768-input default.
+    # constant tuned at 768 input (the default is now 1024; its native grid is
+    # still far below this cap).
     PREVIEW_MAX_EDGE = 768
     PREVIEW_MAX_EDGE_CEILING = 1536
 

@@ -174,6 +174,39 @@ def rasterio_open(image_path):
         raise RuntimeError(error_msg) from e
 
 
+_CV2_RGB_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp")
+
+
+def read_rgb_array(rasterio_src, image_path=None):
+    """Full-resolution RGB uint8 [H, W, 3] of an image, for model input.
+
+    For an 8-bit, three-or-more-band JPEG/PNG/BMP, cv2 decodes the file
+    directly: pixel-identical to the rasterio -> QImage -> QPixmap path (checked
+    on every mir and Shoe JPEG) and ~2.5x faster (0.16-0.23 s vs 0.36-0.56 s on a
+    24 MP JPEG). EXIF orientation is ignored, as rasterio ignores it — the pixels
+    must line up with the annotations. Everything else (single band, colour
+    map, >8-bit, TIFF, a file cv2 cannot read, or a size that disagrees with
+    rasterio) goes through rasterio_to_qimage exactly as before.
+
+    Returns None when the image cannot be read.
+    """
+    path = image_path or getattr(rasterio_src, "name", None)
+    try:
+        if (path and rasterio_src is not None and rasterio_src.count >= 3
+                and str(rasterio_src.dtypes[0]) == "uint8"
+                and os.path.splitext(path)[1].lower() in _CV2_RGB_EXTENSIONS):
+            bgr = cv2.imread(path, cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION)
+            if bgr is not None and bgr.shape[:2] == (rasterio_src.height, rasterio_src.width):
+                return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+    except Exception:
+        pass
+    from PyQt5.QtGui import QPixmap
+    qimage = rasterio_to_qimage(rasterio_src)
+    if qimage is None or qimage.isNull():
+        return None
+    return pixmap_to_numpy(QPixmap.fromImage(qimage))
+
+
 def rasterio_to_qimage(rasterio_src, longest_edge=None):
     """
     Load a scaled version of an image with colormap support

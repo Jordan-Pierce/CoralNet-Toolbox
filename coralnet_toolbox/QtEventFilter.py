@@ -31,6 +31,33 @@ class GlobalEventFilter(QObject):
         self.sam_deploy_generator_dialog = main_window.sam_deploy_generator_dialog
         self.see_anything_deploy_generator_dialog = main_window.see_anything_deploy_generator_dialog
 
+    def _image_table_has_focus(self) -> bool:
+        """True when keyboard focus is in the Image window's table."""
+        try:
+            table = getattr(self.image_window, 'tableView', None)
+            focused = QApplication.focusWidget()
+            if table is None or focused is None:
+                return False
+            return focused is table or table.isAncestorOf(focused)
+        except Exception:
+            return False
+
+    @staticmethod
+    def _is_typing() -> bool:
+        """True when a Delete or Backspace belongs to text editing, not to a hotkey.
+
+        A modal dialog is open (adding a metadata field, editing a label, ...),
+        or an editable widget has focus. Any editable widget counts, not just
+        QLineEdit -- a spin box or a multi-line note must be able to consume a
+        backspace.
+        """
+        if QApplication.activeModalWidget() is not None:
+            return True
+        focus_widget = QApplication.focusWidget()
+        if isinstance(focus_widget, (QLineEdit, QAbstractSpinBox, QPlainTextEdit, QTextEdit)):
+            return True
+        return isinstance(focus_widget, QComboBox) and focus_widget.isEditable()
+
     def _status(self, message: str, msecs: int = 2000):
         """Post to the status bar, tolerating a window that has none yet."""
         try:
@@ -242,30 +269,39 @@ class GlobalEventFilter(QObject):
 
                 # Delete (backspace or delete key) selected annotations when select tool is active
                 if event.key() == Qt.Key_Delete or event.key() == Qt.Key_Backspace:
+                    modifiers = event.modifiers()
+
                     # Allow Ctrl+Shift+Delete/Backspace to reach the work area tool
                     if (
-                        (event.modifiers() & Qt.ControlModifier) and
-                        (event.modifiers() & Qt.ShiftModifier) and
+                        (modifiers & Qt.ControlModifier) and
+                        (modifiers & Qt.ShiftModifier) and
                         self.annotation_window.selected_tool == "work_area"
                     ):
                         # Don't consume; let the active tool handle this shortcut
                         return False
 
-                    # A modal dialog is open (adding a metadata field, editing a
-                    # label, ...). Backspace there is text editing, not a request
-                    # to delete the annotation still selected behind it.
-                    if QApplication.activeModalWidget() is not None:
-                        return False
-
-                    # Check if a text input field has focus first. Any editable
-                    # widget counts, not just QLineEdit -- a spin box or a
-                    # multi-line note must be able to consume a backspace.
-                    focus_widget = QApplication.focusWidget()
-                    if isinstance(focus_widget, (QLineEdit, QAbstractSpinBox,
-                                                 QPlainTextEdit, QTextEdit)):
+                    # Backspace in a dialog or a text field is text editing, not
+                    # a request to delete the annotation still selected behind it.
+                    if self._is_typing():
                         return False  # Pass the event on to the editor
-                    if isinstance(focus_widget, QComboBox) and focus_widget.isEditable():
-                        return False
+
+                    # Image deletion: Alt+Delete for the open image, Delete in the
+                    # table for the highlighted ones; Shift skips the question.
+                    # Never repeated while held: each delete opens the next image,
+                    # which a repeat would then delete too. With nothing highlighted
+                    # (opening an image clears them) the table keeps focus, so
+                    # Delete still goes to the selected annotations below.
+                    deletes_open_image = bool(modifiers & Qt.AltModifier) and not modifiers & Qt.ControlModifier
+                    deletes_highlighted = (self._image_table_has_focus() and
+                                           not modifiers & (Qt.ControlModifier | Qt.AltModifier) and
+                                           bool(self.image_window.table_model.get_highlighted_paths()))
+                    if deletes_open_image or deletes_highlighted:
+                        if event.isAutoRepeat():
+                            return True
+                        confirm = not modifiers & Qt.ShiftModifier
+                        if deletes_open_image:
+                            return self._guarded(self.image_window.delete_current_image, confirm)
+                        return self._guarded(self.image_window.delete_highlighted_images, confirm)
 
                     # First check if the select tool is active
                     if self.main_window.select_tool_action.isChecked():

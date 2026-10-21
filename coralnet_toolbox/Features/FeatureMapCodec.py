@@ -16,6 +16,37 @@ from typing import Optional, Dict, Any
 import numpy as np
 
 
+def feature_variant(model_id: str, input_size=None, upsample_factor=None, normalized: bool = True) -> str:
+    """The extraction settings a cached map depends on, as one string.
+
+    Part of the cache key (paths.feature_cache_path) and stored in the sidecar,
+    so a map extracted with another model, input resolution, upsampler or
+    normalization is never mistaken for — or overwritten by — this one.
+    """
+    return f"{model_id}|in={input_size or 'default'}|up={upsample_factor or 1}|norm={int(bool(normalized))}"
+
+
+def extractor_variant(extractor, normalized: bool = True) -> str:
+    """feature_variant() of a deployed FeatureExtractor."""
+    return feature_variant(getattr(extractor, "model_id", None) or getattr(extractor, "model_name", "unknown"),
+                           getattr(extractor, "input_size", None),
+                           getattr(extractor, "upsample_factor", None), normalized)
+
+
+def read_feature_metadata(npy_path: str) -> Optional[Dict[str, Any]]:
+    """The sidecar metadata of a cached map, or None when the map or its sidecar
+    is missing or unreadable."""
+    npy_path = os.fspath(npy_path)
+    json_path = os.path.splitext(npy_path)[0] + ".json"
+    if not (os.path.exists(npy_path) and os.path.exists(json_path)):
+        return None
+    try:
+        with open(json_path, "r") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
 def save_feature_map(
     npy_path: str,
     feature_map: np.ndarray,
@@ -26,6 +57,8 @@ def save_feature_map(
     normalized: bool = True,
     feature_vector: Optional[np.ndarray] = None,
     upsampler: Optional[str] = None,
+    variant: Optional[str] = None,
+    complete: bool = True,
 ) -> str:
     """
     Save a dense feature map as a .npy file with a .json metadata sidecar.
@@ -40,6 +73,9 @@ def save_feature_map(
         feature_vector: Optional pooled vector [C] (cached for Explorer).
         upsampler: Optional descriptor of an AnyUp densification step applied
             to the native patch grid (e.g. "anyup_multi_backbone (4x)").
+        variant: feature_variant() of the extraction settings (cache reuse check).
+        complete: False for a map that only holds part of the image (the 2D
+            tool's work-area persistence) — never reused as a whole-image map.
 
     Returns:
         Path to the written .npy file.
@@ -62,6 +98,8 @@ def save_feature_map(
         "h": int(feature_map.shape[0]),
         "w": int(feature_map.shape[1]),
         "upsampler": upsampler,
+        "variant": variant,
+        "complete": bool(complete),
     }
     if feature_vector is not None:
         # Store pooled vector as a list for JSON serialization

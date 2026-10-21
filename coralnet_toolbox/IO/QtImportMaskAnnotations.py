@@ -71,7 +71,7 @@ class ImportMaskAnnotations(QDialog):
 
         self.setWindowIcon(get_window_icon("mask.svg"))
         self.setWindowTitle("Import Mask Annotations")
-        self.resize(800, 400)
+        self.resize(1100, 500)
 
         # State variables
         self.valid_mask_pairs = []  # List of (mask_path, raster) tuples
@@ -82,25 +82,28 @@ class ImportMaskAnnotations(QDialog):
         self.auto_mapping_path = ""  # Class mapping found next to the masks, not chosen by hand
         self.scan_status_text = ""  # Scan summary, kept so the mapping summary can follow it
 
-        # Main layout for the dialog
-        self.main_layout = QVBoxLayout(self)
+        # Main layout for the dialog: information on the left, everything else on the right
+        self.main_layout = QHBoxLayout(self)
 
-        # Top section
-        top_section = QVBoxLayout()
-        self.setup_info_layout(parent_layout=top_section)
-        self.setup_input_layout(parent_layout=top_section)
-        self.main_layout.addLayout(top_section)
+        # Left column - information
+        left_column = QVBoxLayout()
+        self.setup_info_layout(parent_layout=left_column)
+        self.main_layout.addLayout(left_column, 2)
 
-        # Middle section - mapping table
-        self.setup_mapping_table_layout(parent_layout=self.main_layout)
+        # Right column - input, mapping table, status, buttons
+        right_column = QVBoxLayout()
+        self.setup_input_layout(parent_layout=right_column)
+        self.setup_mapping_table_layout(parent_layout=right_column)
 
         # Status label for scan results
         self.status_label = QLabel("")
+        self.status_label.setWordWrap(True)
         self.status_label.setStyleSheet("color: #666; font-style: italic; padding: 5px;")
-        self.main_layout.addWidget(self.status_label)
+        right_column.addWidget(self.status_label)
 
         # Bottom buttons
-        self.setup_buttons_layout(parent_layout=self.main_layout)
+        self.setup_buttons_layout(parent_layout=right_column)
+        self.main_layout.addLayout(right_column, 3)
 
         # Initial UI state
         self.import_button.setEnabled(False)
@@ -128,7 +131,9 @@ class ImportMaskAnnotations(QDialog):
         )
         info_label = QLabel(info_text)
         info_label.setWordWrap(True)
+        info_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         layout.addWidget(info_label)
+        layout.addStretch(1)
         group_box.setLayout(layout)
         parent_layout.addWidget(group_box)
 
