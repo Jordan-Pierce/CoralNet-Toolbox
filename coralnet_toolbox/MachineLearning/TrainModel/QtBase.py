@@ -12,6 +12,8 @@ from torch.cuda import empty_cache
 from ultralytics import YOLO
 import ultralytics.data.build as detection_build
 from ultralytics.data.dataset import YOLODataset
+from ultralytics.data.dataset import SemanticDataset
+from ultralytics.data.dataset import PolygonSemanticDataset
 import ultralytics.models.yolo.classify.train as train_build
 from ultralytics.data.dataset import ClassificationDataset
 
@@ -25,7 +27,9 @@ from coralnet_toolbox.MachineLearning.Callbacks import TrainingSignalEmitter
 from coralnet_toolbox.MachineLearning.Callbacks import create_training_callbacks
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedInstanceDataset
+from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedSemanticDataset
 from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedClassificationDataset
+from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedPolygonSemanticDataset
 from coralnet_toolbox.MachineLearning.EvaluateModel.QtBase import EvaluateModelWorker
 from coralnet_toolbox.MachineLearning.RunLog import capture_run_log
 from coralnet_toolbox.paths import resolve_weights
@@ -450,6 +454,16 @@ class TrainModelWorker(QThread):
             train_build.ClassificationDataset = WeightedClassificationDataset
         elif self.params['task'] in ['detect', 'segment']:
             detection_build.YOLODataset = WeightedInstanceDataset
+        elif self.params['task'] == 'semantic':
+            # build_yolo_dataset picks between these two by the yaml's masks_dir and
+            # never reads YOLODataset for this task
+            detection_build.SemanticDataset = WeightedSemanticDataset
+            detection_build.PolygonSemanticDataset = WeightedPolygonSemanticDataset
+        else:
+            return False
+
+        # post_run() restores the original classes only when this is True
+        return True
 
     def run(self):
         """
@@ -540,6 +554,9 @@ class TrainModelWorker(QThread):
             train_build.ClassificationDataset = ClassificationDataset
         elif self.weighted and self.params['task'] in ['detect', 'segment']:
             detection_build.YOLODataset = YOLODataset
+        elif self.weighted and self.params['task'] == 'semantic':
+            detection_build.SemanticDataset = SemanticDataset
+            detection_build.PolygonSemanticDataset = PolygonSemanticDataset
 
     def evaluate_model(self):
         """
@@ -907,7 +924,31 @@ class Base(QDialog):
 
         # Weighted Dataset
         self.weighted_combo = create_bool_combo()
-        self.weighted_combo.setToolTip("If True, use weighted sampling to balance imbalanced datasets.\nGives more weight to underrepresented classes during training.\nRecommended: True if your dataset has class imbalance.")
+        self.weighted_combo.setToolTip(
+            "If True, training images are drawn by how rare their classes are,\n"
+            "instead of each image once per epoch.\n"
+            "\n"
+            "How: each class is weighted by (total count / its count), and an image\n"
+            "by the mean weight of the classes in it. Images are drawn at random in\n"
+            "proportion to that weight, with replacement, for the same number of\n"
+            "draws per epoch: images with rare classes repeat, common ones can be\n"
+            "skipped. Only the train split is resampled; val and test are not.\n"
+            "Counts are annotations (detect, segment), images (classify), or masks\n"
+            "the class covers at least 0.1% of (semantic). Images with no labels\n"
+            "are drawn least often.\n"
+            "\n"
+            "Not the same as cls_pw (an Ultralytics parameter, 0 to 1, set with Add\n"
+            "Parameter). cls_pw leaves which images are seen alone and instead\n"
+            "scales each class's loss: inverse annotation frequency to the power\n"
+            "cls_pw (detect, segment) or inverse log pixel frequency (semantic).\n"
+            "It has no effect on classify.\n"
+            "\n"
+            "Used together, the two stack: a rare class is seen more often AND each\n"
+            "mistake on it costs more, which can tip the model into overpredicting\n"
+            "it. Start with one; if you combine them, keep cls_pw low (0.25 to 0.5).\n"
+            "\n"
+            "Recommended: True if your dataset has class imbalance."
+        )
         form_layout.addRow("Weighted Sampling:", self.weighted_combo)
 
         # PU Dataset. Detection and instance segmentation only -- the ignore

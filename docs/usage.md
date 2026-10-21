@@ -622,7 +622,7 @@ The gallery displays annotation crops as a scrollable grid of thumbnail images. 
   - **Bins** spinbox (shown while this sort is active): **Auto** picks the count where the tree splits most cleanly (between sqrt(N)/4 and sqrt(N), 3 to 40); set 2-50 to choose your own. Re-cutting is instant
   - Ctrl+click a bin header to select the whole bin
   - Bins are built from the annotations in the gallery, so apply a filter first to bin only a label or image
-- **Similarity**: Sort by distance to the Embedding Viewer's last similarity anchor (enabled after a neighbour expansion)
+- **Similarity**: Not in the dropdown; the gallery switches to it automatically when you select annotation(s) and grow the selection by similarity in the Embedding Viewer (<kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Wheel</kbd>). It sorts by distance to the selected anchor(s), and its entry disappears again when the embedding is rebuilt or cleared. Pick any other sort to leave it
   - Anchors are grouped first, then bands of cosine similarity, with unranked annotations last
 
 **Display Controls**
@@ -733,7 +733,7 @@ The Explorer automatically caches extracted features to accelerate re-loading th
 - Apply filter in Annotation Viewer before running embeddings to focus on specific images / labels
 - Use the Features sort in the Annotation Viewer to review look-alike annotations together; a bin that mixes labels is a good place to hunt for mislabels
 - Try Color + Texture when colour alone merges visually different surfaces
-- To gather more of a class: select a known-good annotation, expand by similarity, then switch the Annotation Viewer to Similarity sort and trim the tail where the crops stop matching
+- To gather more of a class: select a known-good annotation, expand by similarity, then scroll the Annotation Viewer (it sorts itself by similarity) and trim the tail where the crops stop matching
 
 ## Tool Bar Tools
 - **Select Tool**: After selecting the tool

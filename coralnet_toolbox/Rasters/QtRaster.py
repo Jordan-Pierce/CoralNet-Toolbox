@@ -199,6 +199,9 @@ class Raster(QObject):
         self.feature_map_dim: Optional[int] = None  # Number of feature channels C
         self.feature_map_normalized: bool = False  # Whether features are L2-normalized
         self.feature_vector: Optional[np.ndarray] = None  # [C] pooled vector (optional, for Explorer)
+        # False when the map holds only part of the image (the 2D tool pastes its
+        # work-area features into an otherwise empty map).
+        self.feature_map_complete: bool = True
 
         # Metadata
         self.metadata = {}  # Can store any additional metadata
@@ -453,6 +456,7 @@ class Raster(QObject):
         path: Optional[str] = None,
         normalized: bool = True,
         feature_vector: Optional[np.ndarray] = None,
+        complete: bool = True,
     ) -> None:
         """
         Add or update a feature map for this raster.
@@ -469,6 +473,8 @@ class Raster(QObject):
             path: Path to the .npy file if saved separately (enables disk-backing).
             normalized: Whether features are L2-normalized.
             feature_vector: Optional pooled vector [C] for Explorer use.
+            complete: False when the map covers only part of the image (the 2D
+                tool's work-area persistence).
         """
         if feature_map is not None:
             if not isinstance(feature_map, np.ndarray):
@@ -486,6 +492,7 @@ class Raster(QObject):
         self.feature_map_dim = dim
         self.feature_map_normalized = normalized
         self.feature_vector = feature_vector
+        self.feature_map_complete = bool(complete)
 
     def clear_feature_map(self) -> None:
         """Remove the feature map from this raster."""
@@ -498,6 +505,7 @@ class Raster(QObject):
         self.feature_map_dim = None
         self.feature_map_normalized = False
         self.feature_vector = None
+        self.feature_map_complete = True
 
     def has_feature_map(self) -> bool:
         """Check if this raster has a feature map."""
@@ -1417,6 +1425,7 @@ class Raster(QObject):
             raster_data['feature_map_stride'] = self.feature_map_stride
             raster_data['feature_map_dim'] = self.feature_map_dim
             raster_data['feature_map_normalized'] = self.feature_map_normalized
+            raster_data['feature_map_complete'] = self.feature_map_complete
 
         # Extract Work Areas links, only when present
         if self.tile_of:
@@ -1494,6 +1503,7 @@ class Raster(QObject):
                 stride = raster_dict.get('feature_map_stride', 16)
                 dim = raster_dict.get('feature_map_dim', 768)
                 normalized = raster_dict.get('feature_map_normalized', True)
+                complete = raster_dict.get('feature_map_complete', True)
 
                 self.add_feature_map(
                     None,  # Lazy load from path
@@ -1502,6 +1512,7 @@ class Raster(QObject):
                     dim=dim,
                     path=feature_map_path,
                     normalized=normalized,
+                    complete=complete,
                 )
             except Exception as e:
                 print(f"Error loading feature map for {self.image_path}: {str(e)}")

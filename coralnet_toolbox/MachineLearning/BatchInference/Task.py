@@ -236,6 +236,14 @@ class SemanticBatchInferenceTask(AsyncYoloBatchInferenceTask):
         kwargs["sam_enabled"] = False
         return kwargs
 
+    def model_call_overrides(self) -> dict[str, Any]:
+        # The deploy dialog's predictor, so the uncertainty threshold applies
+        # here too. Passed rather than inherited from the dialog's warmup:
+        # Ultralytics builds a stock predictor whenever device or quantize
+        # differ from the previous call.
+        from coralnet_toolbox.MachineLearning.DeployModel.QtSemantic import SemanticConfidencePredictor
+        return {"predictor": SemanticConfidencePredictor}
+
     def prepare_before_worker(self, items: list[InferenceItem]) -> None:
         dialog = self.dialog
         try:
@@ -425,14 +433,21 @@ class FeatureBatchInferenceTask(BatchInferenceTask):
 
         try:
             import numpy as np
-            from coralnet_toolbox.Features.FeatureMapCodec import save_feature_map
+            from coralnet_toolbox.Features.FeatureMapCodec import (
+                extractor_variant, read_feature_metadata, save_feature_map,
+            )
             from coralnet_toolbox.paths import feature_cache_path
+            from coralnet_toolbox.utilities import read_rgb_array
 
+            variant = extractor_variant(extractor, normalized)
+            reused = 0
+
+            # Every early `continue` below still advances the progress bar:
+            # the `finally` does it, once per image.
             for image_path in self.image_paths:
                 try:
                     raster = raster_manager.get_raster(image_path)
                     if raster is None:
-                        progress_bar.update_progress()
                         continue
 
                     # A video's rasterio_src is a frame shim holding whichever frame
@@ -442,30 +457,43 @@ class FeatureBatchInferenceTask(BatchInferenceTask):
                         print(f"Feature extraction skipped for video: {image_path}")
                         continue
 
+                    # Reuse a cached map extracted with these exact settings
+                    # (model, input size, upsampler, normalization) from this
+                    # exact image file — the key covers all of them. A partial
+                    # map (2D work-area persistence) or one missing the requested
+                    # pooled vector is not reused.
+                    npy_path = feature_cache_path(image_path, variant)
+                    meta = read_feature_metadata(npy_path)
+                    if (meta is not None and meta.get("variant") == variant
+                            and meta.get("complete", True)
+                            and (not store_pooled or meta.get("feature_vector") is not None)):
+                        vector = meta.get("feature_vector")
+                        raster.add_feature_map(
+                            None,  # Lazy load from path
+                            model_id=meta.get("model_id", extractor.model_id),
+                            stride=meta.get("stride", extractor.patch_stride or 16),
+                            dim=meta.get("dim", extractor.out_channels),
+                            path=npy_path,
+                            normalized=meta.get("normalized", normalized),
+                            feature_vector=None if vector is None else np.asarray(vector, dtype=np.float16),
+                        )
+                        reused += 1
+                        continue
+
                     # Load image as RGB -- extract_dense takes `image_rgb`.
-                    # pixmap_to_numpy used to return BGR here, so every cached
-                    # feature map was baked from channel-swapped pixels.
-                    from coralnet_toolbox.utilities import rasterio_to_qimage, pixmap_to_numpy
+                    # (pixmap_to_numpy used to return BGR here, so every cached
+                    # feature map was baked from channel-swapped pixels.)
                     try:
-                        qimage = rasterio_to_qimage(raster.rasterio_src)
-                        if qimage is None:
-                            progress_bar.update_progress()
-                            continue
-                        from PyQt5.QtGui import QPixmap
-                        pixmap = QPixmap.fromImage(qimage)
-                        img_rgb = pixmap_to_numpy(pixmap)
+                        img_rgb = read_rgb_array(raster.rasterio_src, image_path)
                     except Exception:
-                        progress_bar.update_progress()
                         continue
 
                     if img_rgb is None or img_rgb.size == 0:
-                        progress_bar.update_progress()
                         continue
 
                     # Extract dense features
                     feature_map_dense = extractor.extract_dense(img_rgb)
                     if feature_map_dense is None or feature_map_dense.size == 0:
-                        progress_bar.update_progress()
                         continue
 
                     # Optionally extract pooled vector
@@ -476,9 +504,10 @@ class FeatureBatchInferenceTask(BatchInferenceTask):
                         except Exception:
                             feature_vector = None
 
-                    # Save feature map to the toolbox's feature cache.
-                    npy_path = feature_cache_path(image_path)
-
+                    # Save to the toolbox's feature cache, under a name keyed by
+                    # the image file AND the extraction settings
+                    # (paths.feature_cache_path), so another model or resolution
+                    # gets its own file and a re-run reuses this one.
                     save_feature_map(
                         npy_path,
                         feature_map_dense,
@@ -488,6 +517,7 @@ class FeatureBatchInferenceTask(BatchInferenceTask):
                         normalized=normalized,
                         feature_vector=feature_vector,
                         upsampler=getattr(extractor, "upsample_descriptor", None),
+                        variant=variant,
                     )
 
                     # Update raster with feature map metadata and path
@@ -507,6 +537,9 @@ class FeatureBatchInferenceTask(BatchInferenceTask):
                 finally:
                     progress_bar.update_progress()
 
+            if reused:
+                print(f"Feature extraction: reused {reused} cached feature map(s) "
+                      f"of {len(self.image_paths)} image(s).")
             return True
 
         except Exception as e:

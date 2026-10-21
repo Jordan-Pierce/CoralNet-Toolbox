@@ -1006,23 +1006,27 @@ class MaskAnnotation(Annotation):
             # --- NEW: DIFF FILTER & DIRECT CANVAS INJECTION ---
             # Only update pixels that are unlocked AND actually differ from the subset mask
             pixels_to_change = unlocked_pixels_mask & (target_slice != subset_slice)
-            pixels_updated = np.count_nonzero(pixels_to_change)
-            
+
             # FAST EXIT: If the predicted mask matches what is already there, skip redraw!
-            if pixels_updated == 0:
+            if not pixels_to_change.any():
                 return
 
-            before_values = target_slice[pixels_to_change].copy()
-            local_rows, local_cols = np.where(pixels_to_change)
-            flat_indices = ((y_start + local_rows) * self.mask_data.shape[1] + (x_start + local_cols)).astype(np.int64)
-                
+            # The before values and flat indices exist only for the history
+            # action. Batch inference passes none, and building them anyway
+            # cost ~11 of the ~12 ms each 1024x768 tile took to apply.
+            if history_action is not None:
+                before_values = target_slice[pixels_to_change].copy()
+                local_rows, local_cols = np.where(pixels_to_change)
+                flat_indices = ((y_start + local_rows) * self.mask_data.shape[1] + (x_start + local_cols)).astype(np.int64)
+
             # 1. Apply the subset mask only to pixels that need changing
-            target_slice[pixels_to_change] = subset_slice[pixels_to_change]
-            
+            # (unsafe casting matches the fancy-index assignment this replaced)
+            np.copyto(target_slice, subset_slice, casting='unsafe', where=pixels_to_change)
+
             # 2. Update visual canvas directly
             if self.canvas is not None:
-                target_canvas_slice = self.canvas[y_start:y_end, x_start:x_end]
-                target_canvas_slice[pixels_to_change] = subset_slice[pixels_to_change]
+                np.copyto(self.canvas[y_start:y_end, x_start:x_end], subset_slice,
+                          casting='unsafe', where=pixels_to_change)
             
             # 3. Trigger localized Qt repaint (respect `silent`)
             if self.graphics_item is not None and not silent:
@@ -1031,22 +1035,23 @@ class MaskAnnotation(Annotation):
         else:
             # --- OLD: RAW APPLY & CANVAS SLICE REBUILD ---
             pixels_to_change = unlocked_pixels_mask
-            pixels_updated = np.count_nonzero(pixels_to_change)
-            
-            if pixels_updated == 0:
+
+            if not pixels_to_change.any():
                 return
 
-            before_values = target_slice[pixels_to_change].copy()
-            local_rows, local_cols = np.where(pixels_to_change)
-            flat_indices = ((y_start + local_rows) * self.mask_data.shape[1] + (x_start + local_cols)).astype(np.int64)
-            
-            target_slice[pixels_to_change] = subset_slice[pixels_to_change]
-            
+            if history_action is not None:
+                before_values = target_slice[pixels_to_change].copy()
+                local_rows, local_cols = np.where(pixels_to_change)
+                flat_indices = ((y_start + local_rows) * self.mask_data.shape[1] + (x_start + local_cols)).astype(np.int64)
+
+            np.copyto(target_slice, subset_slice, casting='unsafe', where=pixels_to_change)
+
             update_rect = (x_start, y_start, x_end, y_end)
             if not silent:
                 self.update_graphics_item(update_rect=update_rect)
-        
-        if history_action is not None and pixels_updated > 0:
+
+        # Both branches returned above when no pixel changed.
+        if history_action is not None:
             history_action.add_change(
                 flat_indices,
                 before_values,

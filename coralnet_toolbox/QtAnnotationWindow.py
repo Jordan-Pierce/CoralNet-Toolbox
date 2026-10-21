@@ -4657,11 +4657,13 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
             # signal blocking, and a single consolidated UI refresh.
             self.delete_annotations(labeled_annotations)
 
-    def delete_image_annotations(self, image_path, record_action=True):
+    def delete_image_annotations(self, image_path, record_action=True, respect_label_lock=True):
         """Delete all annotations associated with a specific image path (Bulk Optimized).
 
         record_action=False when the image itself is going: an undo would
         re-add annotations to an image the project no longer has.
+        respect_label_lock=False for the same reason: annotations of the locked
+        label would otherwise stay behind, keyed to an image that is gone.
         """
         raster = self.main_window.image_window.raster_manager.get_raster(image_path)
 
@@ -4671,7 +4673,8 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
             prefix = image_path + '::frame_'
             frame_keys = [k for k in list(self.image_annotations_dict.keys()) if k.startswith(prefix)]
             for frame_key in frame_keys:
-                self.delete_image_annotations(frame_key, record_action=record_action)
+                self.delete_image_annotations(frame_key, record_action=record_action,
+                                              respect_label_lock=respect_label_lock)
             # Per-frame masks are keyed by frame index on the raster, not by a
             # path in image_annotations_dict, so the loop above never reaches
             # them — and for a mask-only video there are no frame keys to loop
@@ -4693,7 +4696,7 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
 
         # 1. Access label lock state once
         label_window = self.main_window.label_window
-        label_locked = label_window.label_locked
+        label_locked = respect_label_lock and label_window.label_locked
         locked_label_id = label_window.locked_label.id if label_locked else None
         
         # 2. Efficiently filter the image-specific list using comprehension
@@ -4728,7 +4731,7 @@ class AnnotationWindow(BaseCanvas, MorphologicalMixin):
     def delete_image(self, image_path):
         """Delete an image and all its associated annotations."""
         # Delete all annotations associated with image path
-        self.delete_image_annotations(image_path, record_action=False)
+        self.delete_image_annotations(image_path, record_action=False, respect_label_lock=False)
         # Delete the image
         if self.current_image_path == image_path:
             self.scene.clear()

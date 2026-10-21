@@ -187,14 +187,15 @@ class AnnotationViewerWindow(QWidget):
         
         self.sort_combo = QComboBox()
         self.sort_combo.addItems(["None", "Label", "Image", "Confidence", "Area",
-                                  "Features", "Similarity"])
+                                  "Features"])
         self.sort_combo.insertSeparator(self.sort_combo.findText("Features"))
         self.sort_combo.currentTextChanged.connect(self._on_sort_changed)
         self.sort_combo.setMinimumWidth(100)
         self.sort_combo.setToolTip("Sort annotations by: None (no sort), Label, Image, Confidence score, "
                                    "Area size, Features (bins of similar-looking annotations, from the "
-                                   "embedding viewer's features), or Similarity to the embedding viewer "
-                                   "last neighbour anchor")
+                                   "embedding viewer's features). Similarity to the selection is applied "
+                                   "automatically when you grow a selection by similarity in the embedding "
+                                   "viewer (Ctrl+Shift+Wheel)")
         toolbar.addWidget(self.sort_combo)
 
         # Bin count for "Features"; shown only while that sort is active.
@@ -219,11 +220,9 @@ class AnnotationViewerWindow(QWidget):
         self.bins_spin_action = toolbar.addWidget(bins_widget)
         self.bins_spin_action.setVisible(False)
 
-        # The embedding sorts are disabled until the EmbeddingViewer has the
-        # data they need. The separator keeps them grouped away from the
-        # standard sorts.
+        # Features is disabled until the EmbeddingViewer has the data it needs.
+        # The separator keeps it grouped away from the standard sorts.
         self._set_feature_bins_sort_item_enabled(False)
-        self._set_similarity_sort_item_enabled(False)
 
         toolbar.addSeparator()
 
@@ -1712,32 +1711,26 @@ class AnnotationViewerWindow(QWidget):
             groups.append(("Not embedded", QColor(128, 128, 128), not_embedded))
         return groups
 
-    def _set_similarity_sort_item_enabled(self, enabled: bool):
-        """Enable or disable the 'Similarity' entry in the sort combo."""
-        try:
-            model = self.sort_combo.model()
-            idx = self.sort_combo.findText("Similarity")
-            if idx < 0:
-                return
-            item = model.item(idx)
-            if item is None:
-                return
-            from PyQt5.QtCore import Qt as _Qt
-            if enabled:
-                item.setFlags(item.flags() | _Qt.ItemIsEnabled | _Qt.ItemIsSelectable)
-            else:
-                item.setFlags(item.flags() & ~(_Qt.ItemIsEnabled | _Qt.ItemIsSelectable))
-                if self.sort_combo.currentText() == "Similarity":
-                    self.sort_combo.setCurrentText("None")
-        except Exception:
-            pass
-
     def update_similarity_sort_state(self, has_ranking: bool):
-        """Called by EmbeddingViewerWindow when a neighbour ranking appears or is dropped."""
+        """Called by EmbeddingViewerWindow when a neighbour ranking appears or is dropped.
+
+        "Similarity" is not a standing entry in the sort combo: it is added and
+        selected when the Embedding Viewer ranks neighbours (Ctrl+Shift+Wheel),
+        and removed again when that ranking is dropped.
+        """
         self._similarity_cache = None
-        self._set_similarity_sort_item_enabled(has_ranking)
-        if has_ranking and self.sort_combo.currentText() == "Similarity":
-            self._recalculate_layout()
+        idx = self.sort_combo.findText("Similarity")
+        if has_ranking:
+            if idx < 0:
+                self.sort_combo.addItem("Similarity")
+            if self.sort_combo.currentText() != "Similarity":
+                self.sort_combo.setCurrentText("Similarity")   # re-lays out via _on_sort_changed
+            else:
+                self._recalculate_layout()
+        elif idx >= 0:
+            if self.sort_combo.currentText() == "Similarity":
+                self.sort_combo.setCurrentText("None")
+            self.sort_combo.removeItem(self.sort_combo.findText("Similarity"))
 
     def _get_similarity_ranking(self):
         """Return ({annotation_id: distance}, space, anchor_ids) from the EmbeddingViewer.

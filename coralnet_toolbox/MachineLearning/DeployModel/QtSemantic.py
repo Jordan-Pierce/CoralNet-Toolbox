@@ -8,9 +8,12 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QApplication, QMessageBox, QGroupBox, QFormLayout, QCheckBox)
 
 import torch
+import torch.nn.functional as F
 from torch.cuda import empty_cache
 
 from ultralytics import YOLO
+from ultralytics.models.yolo.semantic import SemanticSegmentationPredictor
+from ultralytics.utils import ops
 
 from coralnet_toolbox.MachineLearning.DeployModel.QtBase import Base
 
@@ -131,6 +134,62 @@ def _reconstruct_semantic_mask(results, model_class_names, label_window, mask_an
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
+
+
+class SemanticConfidencePredictor(SemanticSegmentationPredictor):
+    """Ultralytics' semantic predictor, plus the confidence of each pixel's class.
+
+    The stock postprocess takes the argmax of the logits and throws them away,
+    so its class map carries no confidence and the ``conf`` predict argument
+    does nothing for this task. This keeps the stock class map and adds
+    ``Results.semantic_conf``: the winning class's probability per pixel
+    (float16, original image size). Pixels below ``conf`` are set to 255, the
+    value Ultralytics' own ``classes`` filter uses for ignored pixels, which
+    _reconstruct_semantic_mask leaves unlabeled.
+
+    Exports that bake the argmax into the graph (ONNX, OpenVINO, MNN,
+    TensorRT >= 10) never emit logits; their results get ``semantic_conf`` None
+    and no threshold.
+
+    Pass it as ``predictor=`` on every predict call, warmup included: before
+    8.4.183 Ultralytics keeps whatever predictor class the first call built.
+    """
+
+    _warned_no_logits = False
+
+    def postprocess(self, preds, img, orig_imgs):
+        """Stock semantic results, with ``semantic_conf`` and the ``conf`` threshold applied."""
+        results = super().postprocess(preds, img, orig_imgs)
+        logits = preds[0] if isinstance(preds, (tuple, list)) else preds
+        conf_thresh = self.args.conf or 0.0
+
+        for result, pred in zip(results, logits, strict=True):
+            result.semantic_conf = None
+            if pred.ndim == 2:  # baked [H, W] class map
+                if not self._warned_no_logits:
+                    print("Warning: this semantic model export outputs class IDs only, "
+                          "so the uncertainty threshold has no effect.")
+                    self._warned_no_logits = True
+                continue
+
+            pred = pred[None].float()
+            if pred.shape[2:] != img.shape[2:]:
+                pred = F.interpolate(pred, img.shape[2:], mode="bilinear", align_corners=False)
+            if pred.shape[1] > 1:
+                conf = pred.softmax(1).amax(1, keepdim=True)
+            else:
+                prob = pred.sigmoid()
+                conf = torch.maximum(prob, 1 - prob)
+            # Scaled to the original size as one channel, not nc: on a large
+            # raster the (nc, H, W) stack is what dominates postprocess memory,
+            # and the stock postprocess has already built one.
+            conf = ops.scale_masks(conf, result.orig_shape)[0, 0].half()
+
+            if conf_thresh > 0:
+                result.semantic_mask.data[conf < conf_thresh] = 255
+            result.semantic_conf = conf
+
+        return results
 
 
 class Semantic(Base):
@@ -327,9 +386,11 @@ class Semantic(Base):
             # use: ultralytics fixes fp16 when the predictor is created and
             # silently rebuilds the whole predictor on the first call whose
             # device= differs, so the warmup must match or later quantize=16
-            # calls run in fp32.
+            # calls run in fp32.  The predictor class too: older Ultralytics
+            # never rebuilds for a different one, so the warmup's sticks.
             self.loaded_model(np.zeros((imgsz, imgsz, 3), dtype=np.uint8),
-                              device=self.main_window.device, quantize=16)
+                              device=self.main_window.device, quantize=16,
+                              predictor=SemanticConfidencePredictor)
 
             if self.loaded_model.task != 'semantic':
                 # Force the task to semantic if the model was loaded with a different task (e.g., due to old YOLO version)
@@ -902,7 +963,8 @@ class Semantic(Base):
         Apply the SemanticModel to the inputs.
         (This method no longer shows its own progress bar)
         """
-        # Get prediction parameters
+        # Get prediction parameters. Pixels whose class is less likely than
+        # this are left unlabeled (see SemanticConfidencePredictor).
         confidence = self.thresholds_widget.get_uncertainty_thresh()
 
         # Run prediction on the batch of inputs using Ultralytics YOLO
@@ -914,6 +976,7 @@ class Semantic(Base):
             retina_masks=True,
             quantize=16,
             stream=True,
+            predictor=SemanticConfidencePredictor,
         )
 
         # Convert stream to list and cleanup

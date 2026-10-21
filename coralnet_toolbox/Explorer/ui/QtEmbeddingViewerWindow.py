@@ -2793,7 +2793,7 @@ class EmbeddingViewerWindow(QWidget):
         self._notify_annotation_viewer_similarity_state()
 
     def _notify_annotation_viewer_similarity_state(self):
-        """Enable or disable the AnnotationViewer's "Similarity" sort option."""
+        """Tell the AnnotationViewer a similarity ranking exists (it switches to the Similarity sort) or is gone."""
         try:
             viewer = getattr(self.main_window, 'annotation_viewer_window', None)
             if viewer is not None and hasattr(viewer, 'update_similarity_sort_state'):

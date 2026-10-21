@@ -38,6 +38,15 @@ except ImportError:
     F = None
 
 
+# GDAL block-cache cap while a batch runs. GDAL defaults to 5% of RAM (6.5 GB
+# on a 128 GB machine) and fills it with decoded scanlines no batch rereads:
+# each raster's tiles are read once. Measured on 8284x5470 JPEGs with 72
+# 1024x768 tiles each: 256 MB and up decode as fast as the default; 32-128 MB
+# are 1.7x slower and 16 MB is 26x slower, because a tile row no longer fits
+# and the JPEG decoder restarts from the top. 512 MB keeps a 2x margin.
+BATCH_GDAL_CACHE_BYTES = 512 << 20
+
+
 # ------------------------------------------------------------------------------
 # Background worker for batch inference (video-focused)
 # ------------------------------------------------------------------------------
@@ -60,7 +69,7 @@ class BatchInferenceWorker(QThread):
                  is_semantic=False, sam_enabled=False, live_preview=True,
                  model_call_overrides=None, collapse_classes=False,
                  result_names=None, supports_tensor_input=True,
-                 positive_class_limit=None, parent=None):
+                 positive_class_limit=None, max_in_flight=None, parent=None):
         super().__init__(parent)
         self.model = model
         self.items = list(items)
@@ -102,6 +111,14 @@ class BatchInferenceWorker(QThread):
         self._rasterio_lock = threading.Lock()
         self._thresholds = InferenceThresholds.from_mapping(initial_thresholds)
         self._timing = BatchInferenceTiming()
+        # Backpressure: results emitted but not yet handled on the main thread.
+        # Each queued result holds its source pixels (and, for semantic, a CUDA
+        # class map) until its slot runs. Without a cap the worker outran the
+        # main thread ~2.5x on tiled semantic, and the queue grew without bound
+        # (2.5k tiles / +17 GB on 60 rasters; ~100 GB projected on 999).
+        self._max_in_flight = max(1, int(max_in_flight or 4 * self._batch_size))
+        self._in_flight = 0
+        self._in_flight_cond = threading.Condition()
 
     def stop(self):
         """Safely signal the worker loop to exit."""
@@ -110,10 +127,32 @@ class BatchInferenceWorker(QThread):
             self._is_running = False
         finally:
             del locker
+        # Wake a worker blocked on backpressure so it sees the stop flag.
+        with self._in_flight_cond:
+            self._in_flight_cond.notify_all()
 
     def release_frame_gate(self):
         """Called by the main thread after painting a video frame."""
         self._waiting_for_ui = False
+
+    def acknowledge_item(self):
+        """Called by the main thread once it has handled one emitted result."""
+        with self._in_flight_cond:
+            self._in_flight = max(0, self._in_flight - 1)
+            self._in_flight_cond.notify_all()
+
+    def _wait_for_capacity(self):
+        """Block until fewer than max_in_flight results await the main thread.
+
+        Returns the seconds spent waiting. Gives up as soon as the worker is
+        stopped, so a cancel never waits on a main thread that has moved on.
+        """
+        start = time.perf_counter()
+        with self._in_flight_cond:
+            while self._in_flight >= self._max_in_flight and self._is_running:
+                self._in_flight_cond.wait(timeout=0.05)
+            self._in_flight += 1
+        return time.perf_counter() - start
 
     def update_thresholds(self, conf=None, iou=None, max_det=None, boundary_tolerance=None):
         """Thread-safe update of inference thresholds."""
@@ -296,6 +335,36 @@ class BatchInferenceWorker(QThread):
 
         return video_input
 
+    @staticmethod
+    def _limit_gdal_block_cache():
+        """Lower GDAL's block-cache cap for the run; return the cap to restore.
+
+        The cap is process-wide and changed live (rasterio passes an integer
+        GDAL_CACHEMAX to GDALSetCacheMax64). It is only ever lowered, so a
+        smaller cap the user configured is kept. Returns None when nothing
+        was changed.
+        """
+        try:
+            from rasterio.env import get_gdal_config, set_gdal_config
+            previous = get_gdal_config("GDAL_CACHEMAX")
+            if not isinstance(previous, int) or previous <= BATCH_GDAL_CACHE_BYTES:
+                return None
+            set_gdal_config("GDAL_CACHEMAX", BATCH_GDAL_CACHE_BYTES)
+            return previous
+        except Exception:
+            return None
+
+    @staticmethod
+    def _restore_gdal_block_cache(previous):
+        """Put back the cap _limit_gdal_block_cache replaced."""
+        if previous is None:
+            return
+        try:
+            from rasterio.env import set_gdal_config
+            set_gdal_config("GDAL_CACHEMAX", previous)
+        except Exception:
+            pass
+
     def _warmup_model(self):
         """Run one tiny inference so fuse/compile/cudnn-autotune cost lands
         before the progress bar starts instead of inside the first batch."""
@@ -310,6 +379,7 @@ class BatchInferenceWorker(QThread):
 
     def run(self):
         """Inference loop executed on the worker thread."""
+        previous_gdal_cache = self._limit_gdal_block_cache()
         try:
             # NOTE: do NOT set torch.backends.cudnn.benchmark here.  Ultralytics
             # predicts with rect=True, so the input tensor shape changes with
@@ -475,6 +545,7 @@ class BatchInferenceWorker(QThread):
 
                 # Post-process each result and emit to the main thread
                 postprocess_start = time.perf_counter()
+                backpressure_seconds = 0.0
                 for j, (item, result) in enumerate(zip(batch, results)):
                     try:
                         result.path = item.image_path
@@ -550,14 +621,16 @@ class BatchInferenceWorker(QThread):
                                     except Exception:
                                         pass
 
-                        self.itemProcessed.emit(InferenceResult(
+                        inference_result = InferenceResult(
                             batch_key=item.batch_key,
                             image_path=item.image_path,
                             yolo_result=result,
                             work_area=item.work_area,
                             is_video=item.is_video,
                             q_image=q_img,
-                        ))
+                        )
+                        backpressure_seconds += self._wait_for_capacity()
+                        self.itemProcessed.emit(inference_result)
 
                         # Gate after video frames to prevent queue buildup
                         if item.is_video and self._live_preview:
@@ -568,14 +641,17 @@ class BatchInferenceWorker(QThread):
 
                     processed += 1
                     self.progressUpdated.emit(processed, total)
-                postprocess_seconds = time.perf_counter() - postprocess_start
+                # Time blocked on backpressure is waiting on the UI, not
+                # post-processing; report it with the video frame gate.
+                postprocess_seconds = (time.perf_counter() - postprocess_start
+                                       - backpressure_seconds)
                 self._timing.add_record(BatchTimingRecord(
                     batch_size=len(batch),
                     is_video=any(item.is_video for item in batch),
                     decode_seconds=decode_seconds,
                     inference_seconds=inference_seconds,
                     postprocess_seconds=postprocess_seconds,
-                    gate_wait_seconds=gate_wait_seconds,
+                    gate_wait_seconds=gate_wait_seconds + backpressure_seconds,
                 ))
 
                 i = batch_end
@@ -589,6 +665,7 @@ class BatchInferenceWorker(QThread):
                 decode_pool.shutdown(wait=False, cancel_futures=True)
             except Exception:
                 pass
+            self._restore_gdal_block_cache(previous_gdal_cache)
             try:
                 self.timingSummary.emit(self._timing.summary())
             except Exception:
@@ -2394,14 +2471,23 @@ class BatchInferenceDialog(QDialog):
         except Exception as e:
             print(f"on_item_processed error: {e}")
         finally:
-            # Release the per-video-frame gate so the worker can proceed
-            try:
-                if (inf_result.is_video
-                        and hasattr(self, '_batch_worker')
-                        and self._batch_worker is not None):
-                    self._batch_worker.release_frame_gate()
-            except Exception:
-                pass
+            # Release the per-video-frame gate so the worker can proceed, and
+            # hand back this result's backpressure slot. Every emitted result
+            # must be acknowledged, early returns included, or the worker
+            # eventually blocks for good.
+            worker = getattr(self, '_batch_worker', None)
+            if worker is not None:
+                try:
+                    if inf_result.is_video:
+                        worker.release_frame_gate()
+                except Exception:
+                    pass
+                try:
+                    acknowledge = getattr(worker, 'acknowledge_item', None)
+                    if acknowledge is not None:
+                        acknowledge()
+                except Exception:
+                    pass
 
     def _apply_sam_to_cache(self):
         """Run SAM over every image in the cache that holds list-style results.
