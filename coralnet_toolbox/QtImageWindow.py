@@ -10,7 +10,7 @@ from PyQt5.QtGui import QKeyEvent, QKeySequence, QStandardItem, QStandardItemMod
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QWidget, QVBoxLayout, QLabel, 
                              QComboBox, QHBoxLayout, QTableView, QHeaderView, QApplication, 
                              QMenu, QPushButton, QStyle, QFormLayout, QFrame, 
-                             QLineEdit, QFileDialog, QToolBar, QCheckBox)
+                             QLineEdit, QFileDialog, QToolBar, QCheckBox, QToolTip)
 
 from coralnet_toolbox.Rasters import RasterManager
 from coralnet_toolbox.Rasters import ImageFilter
@@ -897,6 +897,13 @@ class ImageWindow(QWidget):
             if event.type() == QEvent.Enter:
                 # Mouse entered the table viewport
                 pass
+            elif event.type() == QEvent.ToolTip:
+                # The preview and the row's tooltip are both tooltip windows, and
+                # whichever opened last covers the other: hold the row's back
+                # while Ctrl asks for the preview
+                if (QApplication.keyboardModifiers() & Qt.ControlModifier
+                        or self.preview_tooltip.isVisible()):
+                    return True
             elif event.type() == QEvent.Leave:
                 # Mouse left the table viewport
                 self.hide_image_preview()
@@ -1531,6 +1538,8 @@ class ImageWindow(QWidget):
         pos = self.tableView.viewport().mapToGlobal(
             QPoint(visual_rect.right(), visual_rect.center().y())
         )
+        # A row tooltip already open would cover the preview
+        QToolTip.hideText()
         self.preview_tooltip.show_at(pos)
         
     def hide_image_preview(self):

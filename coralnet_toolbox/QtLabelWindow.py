@@ -1,17 +1,18 @@
 import re
+import html
 import math
 import uuid
 import random
 from contextlib import contextmanager
 
-from PyQt5.QtCore import QMimeData, QTimer, Qt, pyqtSignal, QRectF, pyqtProperty, QEvent
+from PyQt5.QtCore import QMimeData, QTimer, Qt, pyqtSignal, QRectF, pyqtProperty, QEvent, QPoint
 from PyQt5.QtGui import (QColor, QPainter, QPen, QBrush, QFontMetrics, QLinearGradient, QDrag)
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QToolButton, QWidget, QHBoxLayout,
-                             QVBoxLayout, QColorDialog, QLineEdit, QDialog, 
+                             QVBoxLayout, QColorDialog, QLineEdit, QDialog,
                              QPushButton, QApplication, QScrollArea,
                              QGraphicsDropShadowEffect, QToolBar,
                              QListWidget, QListWidgetItem, QComboBox, QLabel,
-                             QMenu, QActionGroup)
+                             QMenu, QActionGroup, QToolTip, QFrame, QGridLayout)
 
 from coralnet_toolbox.Icons import get_icon, get_window_icon
 from coralnet_toolbox import theme as app_theme
@@ -46,6 +47,13 @@ BAR_TRACK = app_theme.SURFACE_COLOR
 # Counts are refreshed this long after the last change, so a burst of changes
 # (an import, a batch delete, dragging an annotation) costs one recount
 COUNT_REFRESH_DEBOUNCE_MS = 150
+
+# Field guide: holding Ctrl over a label shows crops of annotations carrying it
+FIELD_GUIDE_EXAMPLES = 4
+FIELD_GUIDE_COLUMNS = 2
+FIELD_GUIDE_TILE = 128
+# Crops not made yet cost a read from their image, so only try this many
+FIELD_GUIDE_MAX_READS = 8
 
 # The app stylesheet styles QPushButton but leaves QToolButton flat, and a menu
 # button has to be a QToolButton -- so match the neighbouring push buttons here.
@@ -539,7 +547,158 @@ class Label(QWidget):
         """Return a string representation of the Label object."""
         return (f"Label(id={self.id}, "
                 f"short_label_code='{self.short_label_code}')")
-        
+
+
+class LabelFieldGuide(QFrame):
+    """The field guide: example crops of a label, shown beside its row while Ctrl is held over it.
+
+    Built from the Confidence Window's own parts -- its framed, captioned crops
+    and its rounded bars -- so a label looks the same here as it does there.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.ToolTip | Qt.FramelessWindowHint)
+        # Imported here, not at the top: QtConfidenceWindow's imports reach
+        # Annotations, which imports this module
+        from coralnet_toolbox.QtConfidenceWindow import ConfidenceBar, CropPreview
+        self._bar_class = ConfidenceBar
+        self._crop_class = CropPreview
+
+        # The panel is painted in paintEvent; the window around it is transparent,
+        # or the rounded corners would show the window's square ones
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setStyleSheet("QLabel { background: transparent; }")
+
+        margin = app_theme.scale_int(8)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(margin, margin, margin, margin)
+        layout.setSpacing(app_theme.scale_int(6))
+
+        # 1. Header: the label's colour and its names, as the Confidence Window titles an annotation
+        header = QHBoxLayout()
+        header.setSpacing(app_theme.scale_int(6))
+        self.swatch = QLabel()
+        self.swatch.setFixedSize(app_theme.scale_int(SWATCH_SIZE), app_theme.scale_int(SWATCH_SIZE))
+        self.title_label = QLabel()
+        self.title_label.setTextFormat(Qt.RichText)
+        self.title_label.setWordWrap(True)
+        header.addWidget(self.swatch)
+        header.addWidget(self.title_label, 1)
+        layout.addLayout(header)
+
+        # 2. The example crops
+        self.crop_grid = QGridLayout()
+        self.crop_grid.setContentsMargins(0, 0, 0, 0)
+        self.crop_grid.setSpacing(app_theme.scale_int(6))
+        layout.addLayout(self.crop_grid)
+
+        # 3. How many annotations carry the label, and its share of the project, as a confidence bar
+        self.share_row = QHBoxLayout()
+        self.share_row.setSpacing(app_theme.scale_int(8))
+        self.count_label = QLabel()
+        self.count_label.setStyleSheet(f"color: {TEXT_SECONDARY.name()};")
+        self.share_label = QLabel()
+        self.share_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.share_label.setStyleSheet(f"color: {TEXT_PRIMARY.name()};")
+        self.share_label.setToolTip("Share of all annotations in the project")
+        self.share_bar = None
+        self.share_row.addWidget(self.count_label)
+        self.share_row.addWidget(self.share_label)
+        layout.addLayout(self.share_row)
+
+        # 4. Which of the crops nobody has confirmed, in the colour their frames are drawn in
+        self.note_label = QLabel()
+        self.note_label.setStyleSheet(f"color: {app_theme.ATTENTION_COLOR.name()};")
+        layout.addWidget(self.note_label)
+
+        self.hide()
+
+    def paintEvent(self, event):
+        """Paint the panel: a rounded card with the dock outline's colour for an edge."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(QPen(app_theme.DOCK_BORDER_COLOR))
+        painter.setBrush(app_theme.BACKGROUND_ALT_COLOR)
+        radius = app_theme.scale_int(8)
+        painter.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), radius, radius)
+
+    def set_label(self, label, examples, count, share):
+        """Fill the guide for `label`.
+
+        Args:
+            label (Label): The label hovered.
+            examples (list): (annotation, crop graphic) pairs to show.
+            count (int): Annotations in the project carrying the label.
+            share (float): Their percentage of all annotations in the project.
+        """
+        self.swatch.setStyleSheet(
+            app_theme.scale_qss(
+                f"background-color: {label.color.name()}; border-radius: {SWATCH_RADIUS}px; "
+                f"border: 1px solid {BORDER.name()};"
+            )
+        )
+        title = f'<b style="color:{TEXT_PRIMARY.name()}">{html.escape(label.short_label_code)}</b>'
+        if label.long_label_code and label.long_label_code != label.short_label_code:
+            title += f' <span style="color:{TEXT_SECONDARY.name()}">· {html.escape(label.long_label_code)}</span>'
+        self.title_label.setText(title)
+
+        tile = app_theme.scale_int(FIELD_GUIDE_TILE)
+        gap = self.crop_grid.spacing()
+        width = FIELD_GUIDE_COLUMNS * tile + (FIELD_GUIDE_COLUMNS - 1) * gap
+        self._fill_crops(label, examples, tile, width)
+
+        self.count_label.setText(f"{count:,} annotation{'' if count == 1 else 's'}")
+        self.share_label.setText(f"{share:.1f}%")
+        if self.share_bar is not None:
+            self.share_row.removeWidget(self.share_bar)
+            self.share_bar.deleteLater()
+        # A fresh bar each time, so it fills in as the Confidence Window's do
+        self.share_bar = self._bar_class(label, share, emphasized=True)
+        self.share_row.insertWidget(1, self.share_bar, 1)
+
+        unverified = sum(1 for annotation, _ in examples if not annotation.verified)
+        self.note_label.setText(f"{unverified} unverified example{'' if unverified == 1 else 's'}")
+        self.note_label.setVisible(unverified > 0)
+
+        margins = self.layout().contentsMargins()
+        self.setFixedWidth(width + margins.left() + margins.right())
+        self.adjustSize()
+
+    def _fill_crops(self, label, examples, tile, width):
+        """Lay the crops out in the grid: one gets the whole width, more share it in square tiles."""
+        while self.crop_grid.count():
+            widget = self.crop_grid.takeAt(0).widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        if not examples:
+            preview = self._crop_tile(width, tile)
+            preview.set_crop(None, placeholder="No examples yet")
+            self.crop_grid.addWidget(preview, 0, 0)
+            return
+
+        for i, (annotation, graphic) in enumerate(examples):
+            if len(examples) == 1:
+                # As tall as the crop needs at the full width, within a tile and a square
+                height = max(tile, min(width, round(width * graphic.height() / graphic.width())))
+                preview = self._crop_tile(width, height)
+                self.crop_grid.addWidget(preview, 0, 0)
+            else:
+                preview = self._crop_tile(tile, tile)
+                self.crop_grid.addWidget(preview, i // FIELD_GUIDE_COLUMNS, i % FIELD_GUIDE_COLUMNS)
+            # Height x width, as the Confidence Window captions its crop
+            crop = annotation.cropped_image
+            preview.set_crop(graphic, f"{crop.height()} × {crop.width()}", annotation=annotation)
+            # Framed in the label's colour, or in the colour the app marks unverified work with
+            preview.set_accent(label.color if annotation.verified else app_theme.ATTENTION_COLOR)
+
+    def _crop_tile(self, width, height):
+        """A crop preview of a fixed size, there to be looked at, not clicked."""
+        preview = self._crop_class()
+        preview.setFixedSize(width, height)
+        preview.setAttribute(Qt.WA_TransparentForMouseEvents)
+        return preview
+
 
 class LabelWindow(QWidget):
     labelSelected = pyqtSignal(object)
@@ -569,6 +728,13 @@ class LabelWindow(QWidget):
         self._counts_timer.setSingleShot(True)
         self._counts_timer.setInterval(COUNT_REFRESH_DEBOUNCE_MS)
         self._counts_timer.timeout.connect(self._refresh_label_counts)
+
+        # Field guide: Ctrl+hover a label to see crops of annotations carrying it.
+        # Examples are picked once per label and dropped whenever the counts are
+        # refreshed, which is what every annotation change ends in.
+        self.label_preview = LabelFieldGuide(self)
+        self._preview_label = None
+        self._field_guide_cache = {}  # label id -> [(annotation, crop graphic)]
 
         # Setup UI components
         self.setup_ui()
@@ -706,12 +872,145 @@ class LabelWindow(QWidget):
         self.scroll_area.installEventFilter(self)
 
     def eventFilter(self, obj, event):
-        """Pass click focus on the label list through to the canvas."""
+        """Pass click focus on the label list through to the canvas, and show the field guide."""
         if (obj is self.scroll_area and event.type() == QEvent.FocusIn
                 and event.reason() == Qt.MouseFocusReason):
             # Deferred: moving focus from inside its own FocusIn is re-entrant
             QTimer.singleShot(0, self._return_focus_to_canvas)
+        elif isinstance(obj, LabelDisplay) and self._field_guide_event(obj.label, event):
+            return True
         return super().eventFilter(obj, event)
+
+    def _field_guide_event(self, label, event):
+        """Show the field guide for `label` while Ctrl is held over it, as the Image Window does for images.
+
+        Returns True for an event the field guide consumed.
+        """
+        event_type = event.type()
+        if event_type == QEvent.MouseMove:
+            if event.modifiers() & Qt.ControlModifier:
+                if self._preview_label is not label:
+                    self.show_label_preview(label)
+            else:
+                self.hide_label_preview()
+        elif event_type in (QEvent.Leave, QEvent.MouseButtonPress, QEvent.Hide):
+            self.hide_label_preview()
+        elif event_type == QEvent.ToolTip:
+            # The guide and the label's own tooltip are both tooltip windows, and
+            # whichever opened last covers the other: hold the label's back while
+            # Ctrl asks for the guide
+            return bool(QApplication.keyboardModifiers() & Qt.ControlModifier
+                        or self.label_preview.isVisible())
+        return False
+
+    def show_label_preview(self, label):
+        """Show example crops of `label` beside its row."""
+        if label.id not in self._field_guide_cache:
+            self._field_guide_cache[label.id] = self._field_guide_examples(label)
+        examples = self._field_guide_cache[label.id]
+
+        count = max(len(examples), self._project_counts.get(label.short_label_code, 0))
+        total = sum(self._project_counts.values())
+        share = 100.0 * count / total if total else 0.0
+
+        self._preview_label = label
+        # The label's tooltip, if already open, would cover the guide
+        QToolTip.hideText()
+        self.label_preview.set_label(label, examples, count, share)
+        self._place_label_preview(label)
+
+    def _place_label_preview(self, label):
+        """Show the field guide next to `label`'s row, on whichever side has room, so it covers no other label."""
+        size = self.label_preview.sizeHint()
+        top_left = label.mapToGlobal(QPoint(0, 0))
+        gap = app_theme.scale_int(8)
+
+        screen = QApplication.screenAt(top_left) or QApplication.primaryScreen()
+        bounds = screen.availableGeometry()
+
+        # Left of the Label Window first, which is over the canvas; right if that is off screen
+        x = top_left.x() - size.width() - gap
+        if x < bounds.left():
+            x = top_left.x() + label.width() + gap
+        x = max(bounds.left(), min(x, bounds.right() - size.width()))
+        y = max(bounds.top(), min(top_left.y(), bounds.bottom() - size.height()))
+
+        self.label_preview.move(x, y)
+        self.label_preview.show()
+
+    def hide_label_preview(self):
+        """Hide the field guide."""
+        self._preview_label = None
+        self.label_preview.hide()
+
+    def _field_guide_examples(self, label):
+        """Pick up to FIELD_GUIDE_EXAMPLES annotations of `label`, as (annotation, crop graphic) pairs.
+
+        Verified annotations come before machine predictions, since a guide
+        should show what a person confirmed. Within each, larger annotations
+        come first: a crop shrunk into a tile shows more of the class than one
+        blown up to fill it. Equal sizes (patches are all one size) go to crops
+        that already exist, then ones on the open image, and only then ones
+        that need another image opened.
+        """
+        current_path = self.annotation_window.current_image_path
+        ranked = []
+        for annotation in self.annotation_window.annotations_dict.values():
+            if getattr(annotation.label, 'id', None) != label.id:
+                continue
+            # The bounding box every annotation type keeps, not get_area(),
+            # which builds a shapely polygon for each one
+            min_x, min_y, max_x, max_y = getattr(annotation, 'cropped_bbox', (0, 0, 0, 0))
+            rank = (not getattr(annotation, 'verified', False),
+                    -abs((max_x - min_x) * (max_y - min_y)),
+                    annotation.cropped_image is None,
+                    annotation.image_path != current_path)
+            ranked.append((rank, annotation))
+        ranked.sort(key=lambda item: item[0])
+
+        examples = []
+        reads = 0
+        for _, annotation in ranked:
+            if annotation.cropped_image is None:
+                if reads >= FIELD_GUIDE_MAX_READS:
+                    continue
+                reads += 1
+            graphic = self._field_guide_crop(annotation)
+            if graphic is None:
+                continue
+            examples.append((annotation, graphic))
+            if len(examples) >= FIELD_GUIDE_EXAMPLES:
+                break
+        return examples
+
+    def _field_guide_crop(self, annotation):
+        """The annotation's cropped graphic, reading the crop from its image first if it has none."""
+        try:
+            if annotation.cropped_image is None:
+                source = self._field_guide_source(annotation.image_path)
+                if source is None:
+                    return None
+                annotation.create_cropped_image(source)
+            graphic = annotation.get_cropped_image_graphic()
+        except Exception:
+            return None
+        if graphic is None or graphic.isNull():
+            return None
+        return graphic
+
+    def _field_guide_source(self, image_path):
+        """The rasterio source to crop an annotation on `image_path` from, or None."""
+        if image_path == self.annotation_window.current_image_path:
+            return self.annotation_window.rasterio_image
+        if '::frame_' in image_path:
+            # A video's source reads whichever frame is on screen, not this one
+            return None
+        raster = self.main_window.image_window.raster_manager.get_raster(image_path)
+        if raster is None or getattr(raster, 'raster_type', None) == "VideoRaster":
+            return None
+        if raster.rasterio_src is None:
+            raster.load_rasterio()
+        return raster.rasterio_src
 
     def _return_focus_to_canvas(self):
         try:
@@ -1044,6 +1343,7 @@ class LabelWindow(QWidget):
         label.selected.connect(self.set_active_label)
         label.label_deleted.connect(self.delete_label)
         label.visibilityChanged.connect(self._on_label_visibility_changed)
+        label.display_widget.installEventFilter(self)
         self._start_count_bar(label)
         self.labels.insert(0, label)
         self._short_code_map[label.short_label_code.strip().lower()] = label
@@ -1065,6 +1365,7 @@ class LabelWindow(QWidget):
         label.selected.connect(self.set_active_label)
         label.label_deleted.connect(self.delete_label)
         label.visibilityChanged.connect(self._on_label_visibility_changed)
+        label.display_widget.installEventFilter(self)
         self._start_count_bar(label)
         self.labels.append(label)
         self._short_code_map[label.short_label_code.strip().lower()] = label
@@ -1968,6 +2269,8 @@ class LabelWindow(QWidget):
 
         self._image_counts = image_counts
         self._project_counts = total_counts
+        # Annotations changed, so the field guide's examples may have too
+        self._field_guide_cache.clear()
 
         # Now update tooltips using pre-computed data
         for label in self.labels:
