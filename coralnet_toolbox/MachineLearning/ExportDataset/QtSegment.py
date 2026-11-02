@@ -3,7 +3,7 @@ import yaml
 
 from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QLabel)
 
-from coralnet_toolbox.MachineLearning.ExportDataset.QtBase import Base
+from coralnet_toolbox.MachineLearning.ExportDataset.QtBase import Base, COCO_NOT_FOR_TRAINING
 from coralnet_toolbox.MachineLearning.ExportDataset.export_dataset_utils import (
     build_sample_export_name,
     busy_cursor,
@@ -22,6 +22,7 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 
 class Segment(Base):
     supports_unlabeled_video_frames = True
+    supports_coco = True
     task = "segment"
 
     def __init__(self, parent=None):
@@ -34,7 +35,8 @@ class Segment(Base):
         layout = QVBoxLayout()
 
         # Create a QLabel with explanatory text and hyperlink
-        info_text = "Export Polygons to create a YOLO-formatted Segmentation dataset."
+        info_text = ("Export Polygons to create a YOLO or COCO Segmentation dataset.\n\n"
+                     f"{COCO_NOT_FOR_TRAINING}")
         info_label = QLabel(info_text)
 
         info_label.setOpenExternalLinks(True)
@@ -171,3 +173,21 @@ class Segment(Base):
                         raise RuntimeError(f"Failed to export image sample: {image_path}")
 
                     progress_bar.update_progress()
+
+    def add_coco_annotations(self, writer, image_id, image_path, index):
+        """Add one image's annotations as COCO polygons.
+
+        Unlike the YOLO export, which writes a polygon's outline alone, a
+        polygon's holes are kept; CocoWriter writes a holed polygon as RLE, the
+        only COCO form that has holes. Rectangles and patches go in as their
+        four corners.
+        """
+        for annotation in index.get(image_path, []):
+            polygon = annotation.get_polygon()
+            exterior = [(polygon.at(i).x(), polygon.at(i).y()) for i in range(polygon.count())]
+            holes = [[(point.x(), point.y()) for point in hole]
+                     for hole in getattr(annotation, 'holes', None) or []]
+            writer.add_polygon(image_id,
+                               self._remap_target(annotation.label.short_label_code),
+                               exterior,
+                               holes)

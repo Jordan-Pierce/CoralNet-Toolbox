@@ -478,15 +478,25 @@ class Semantic(Base):
                     print(f"Warning: Could not get raster for {image_path}. Skipping.")
                     continue
 
-                # Ensure the raster has a mask annotation; show a status message the first time
-                if raster.mask_annotation is None:
-                    self.main_window.status_bar.showMessage(
-                        f"Creating mask annotation for {os.path.basename(image_path)}…", 3000
-                    )
-                    QApplication.processEvents()
-                    raster.get_mask_annotation(project_labels)
+                _is_video_frame = isinstance(image_path, str) and '::frame_' in image_path
 
-                mask_annotation = raster.mask_annotation
+                if (not _is_video_frame
+                        and image_path == self.annotation_window.current_image_path):
+                    # Through the annotation window, so a mask this run creates is
+                    # put on the canvas like a painted one and its tiles show as
+                    # they land. raster.get_mask_annotation alone leaves a new mask
+                    # with no graphics item, which showed nothing until the image
+                    # was reopened.
+                    mask_annotation = self.annotation_window.current_mask_annotation
+                else:
+                    # Ensure the raster has a mask annotation; show a status message the first time
+                    if raster.mask_annotation is None:
+                        self.main_window.status_bar.showMessage(
+                            f"Creating mask annotation for {os.path.basename(image_path)}…", 3000
+                        )
+                        QApplication.processEvents()
+                        raster.get_mask_annotation(project_labels)
+                    mask_annotation = raster.mask_annotation
                 # This call ensures the mask is synced with the live labels
                 mask_annotation.sync_label_map(project_labels)
                 # Get the mapping from Label UUID -> internal mask class ID (once)
@@ -498,7 +508,6 @@ class Semantic(Base):
 
                 # Suppress per-tile video cache syncs during the tile loop; we do
                 # one efficient sync after all tiles are done (see below).
-                _is_video_frame = isinstance(image_path, str) and '::frame_' in image_path
                 if _is_video_frame:
                     self.annotation_window._deferring_video_cache_sync = True
 
@@ -640,11 +649,17 @@ class Semantic(Base):
                             )
 
                             # --- 3d. Update Main Annotation (streaming, per tile) ---
+                            # Silent: an unsilenced write re-counts the whole mask
+                            # for the image table on every tile. The repaint is
+                            # below, and the table is refreshed once per image.
                             mask_annotation.update_mask_with_mask(
                                 reconstructed_mask,
                                 top_left=offset,
+                                silent=True,
                             )
                             progress_bar.update_progress()
+
+                        mask_annotation.refresh_graphics()
 
                         if not is_full_image:
                             for wa in batch_areas:
@@ -692,6 +707,12 @@ class Semantic(Base):
                 # --- 5. Recalculate Stats ---
                 # This is called *after* all tiles for an image are done
                 mask_annotation.recalculate_class_statistics()
+
+                # The image table's count. The tile writes were silent, and nothing
+                # listened to a mask this run created anyway. Video frames get
+                # theirs from the cache sync below.
+                if not _is_video_frame:
+                    self.image_window.update_image_annotations(image_path)
 
                 # For video frames: lift the deferral and sync THIS frame's mask
                 # into the per-frame cache under its own path. The VideoRaster

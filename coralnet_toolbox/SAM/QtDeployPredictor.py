@@ -423,8 +423,7 @@ class DeployPredictorDialog(QDialog):
             progress_bar.finish_progress()
             # The file name alone: a browsed path is absolute and blew the
             # status box out to the dialog's width.
-            self.status_bar.setText(f"Model loaded: {os.path.basename(self.model_path)}"
-                                    + (" (weights shared with SAM Generator)" if shared else ""))
+            self.status_bar.setText(f"Model loaded: {os.path.basename(self.model_path)}")
             QMessageBox.information(self, "Model Loaded", "Model loaded successfully")
             # The dialog has done its job; leaving it up meant it reappeared
             # behind the message box and had to be dismissed a second time.

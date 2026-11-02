@@ -26,6 +26,77 @@ from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 # ----------------------------------------------------------------------------------------------------------------------
 
 
+def pack_rgb(rgb):
+    """Pack an (H, W, 3) uint8 colour array into one 0xRRGGBB uint32 per pixel.
+
+    One integer per colour lets RGB masks use the same integer machinery as
+    index masks: np.unique sorts these ~15x faster than a 3-byte void view,
+    and they index a lookup table directly.
+
+    cv2 writes each pixel as B, G, R, A bytes, which a little-endian uint32
+    reads as 0xAARRGGBB; masking off the alpha leaves the colour. One SIMD
+    pass, against five for shifting the channels together (66 ms -> ~25 ms
+    on a 24 MP mask).
+    """
+    import cv2
+    packed = cv2.cvtColor(np.ascontiguousarray(rgb), cv2.COLOR_RGB2BGRA).view('<u4')[..., 0]
+    packed &= 0xFFFFFF
+    return packed
+
+
+def mask_row_blocks(height, width, block_pixels=1 << 22):
+    """Yield row slices that cover a mask in blocks of about `block_pixels`.
+
+    Packing colours takes 4 bytes a pixel and np.bincount converts to intp at
+    8; a block at a time holds those temporaries to tens of MB, where a whole
+    24k ortho would need several GB.
+    """
+    rows = max(1, block_pixels // max(1, width))
+    for top in range(0, height, rows):
+        yield slice(top, min(top + rows, height))
+
+
+def unique_mask_values(mask_array):
+    """Return a mask's distinct values: ints for a 2D mask, (r, g, b) tuples for an RGB one.
+
+    Counting beats sorting for 8- and 16-bit values (2x for uint8), and colours
+    are packed to one uint32 each first. Both work a block of rows at a time.
+    """
+    if not mask_array.size:
+        return []
+    height, width = mask_array.shape[:2]
+    dtype = mask_array.dtype
+
+    if mask_array.ndim == 3:
+        codes = np.unique(np.concatenate([np.unique(pack_rgb(mask_array[rows]))
+                                          for rows in mask_row_blocks(height, width)]))
+        return [(code >> 16, (code >> 8) & 255, code & 255) for code in codes.tolist()]
+
+    if dtype.kind == 'u' and dtype.itemsize <= 2:
+        counts = np.zeros(1 << (8 * dtype.itemsize), dtype=np.int64)
+        for rows in mask_row_blocks(height, width):
+            counts += np.bincount(mask_array[rows].ravel(), minlength=counts.size)
+        return np.flatnonzero(counts).tolist()
+
+    return np.unique(mask_array).tolist()
+
+
+def _column_major(array):
+    """Return a column-major copy of a 2D uint8 array, the layout pycocotools encodes.
+
+    cv2.transpose makes this copy ~12x faster than np.asfortranarray, whose
+    strided walk cost ~100 ms a class on a 24 MP mask and dominated saving.
+    """
+    import cv2
+    return cv2.transpose(array).T
+
+
+def _row_major(array):
+    """Return a row-major copy of a column-major 2D uint8 array, as pycocotools decodes to."""
+    import cv2
+    return cv2.transpose(array.T)
+
+
 def encode_mask_crop_rle(mask_data: np.ndarray) -> list:
     """Encode a uint8 class-ID array as a list of per-class crop-RLE records.
 
@@ -39,28 +110,25 @@ def encode_mask_crop_rle(mask_data: np.ndarray) -> list:
     MaskAnnotation for each frame.
     """
     rle_list = []
-    unique_classes = np.unique(mask_data)
-    for class_id in unique_classes:
+    for class_id in unique_mask_values(mask_data):
         if class_id == 0:
             continue
-        binary_mask = (mask_data == class_id).astype(np.uint8)
+        binary_mask = mask_data == class_id
 
-        # Find the tight bounding box of this class's pixels.
-        rows_any = binary_mask.any(axis=1)
-        cols_any = binary_mask.any(axis=0)
-        y_idx = np.where(rows_any)[0]
-        x_idx = np.where(cols_any)[0]
-        if y_idx.size == 0:
-            continue  # class present in map but not in mask data
+        # Find the tight bounding box of this class's pixels, looking for its
+        # columns only within its rows.
+        y_idx = np.flatnonzero(binary_mask.any(axis=1))
         y1, y2 = int(y_idx[0]), int(y_idx[-1])
+        band = binary_mask[y1:y2 + 1]
+        x_idx = np.flatnonzero(band.any(axis=0))
         x1, x2 = int(x_idx[0]), int(x_idx[-1])
 
         # RLE-encode only the crop, not the full image.
-        crop = binary_mask[y1:y2 + 1, x1:x2 + 1]
-        rle = mask.encode(np.asfortranarray(crop))
+        crop = band[:, x1:x2 + 1].view(np.uint8)
+        rle = mask.encode(_column_major(crop))
         rle['counts'] = base64.b64encode(rle['counts']).decode('ascii')
         rle_list.append({
-            'class_id': int(class_id),
+            'class_id': class_id,
             'rle': rle,
             'bbox': [x1, y1, x2, y2],  # inclusive xyxy offset for decode
         })
@@ -83,19 +151,20 @@ def decode_mask_crop_rle(rle_list, shape) -> np.ndarray:
             if isinstance(counts, str):
                 rle = dict(rle)
                 rle['counts'] = base64.b64decode(counts)
+            # pycocotools decodes column-major; writing through a row-major copy
+            # is ~3x faster than indexing the row-major mask with it directly
             if 'bbox' in item:
                 # Compact format: RLE covers the bounding-box crop only.
                 x1, y1, x2, y2 = item['bbox']
-                crop_mask = mask.decode(rle).astype(bool)
-                sub = mask_data[y1:y2 + 1, x1:x2 + 1]
-                sub[crop_mask] = class_id
+                crop_mask = _row_major(mask.decode(rle)).view(bool)
+                np.copyto(mask_data[y1:y2 + 1, x1:x2 + 1], class_id, where=crop_mask)
             else:
                 # Legacy format: RLE covers the full image.
-                binary_mask = mask.decode(rle).astype(bool)
+                binary_mask = _row_major(mask.decode(rle)).view(bool)
                 if binary_mask.shape != shape:
                     print(f"Warning: RLE decoded shape {binary_mask.shape} does not match expected shape {shape}")
                     continue
-                mask_data[binary_mask] = class_id
+                np.copyto(mask_data, class_id, where=binary_mask)
         except Exception as e:
             print(f"Error decoding RLE for class {class_id}: {e}")
             continue
@@ -2292,7 +2361,8 @@ def build_mask_annotation(image_path,
         transparency (int): Initial display transparency.
 
     Returns:
-        MaskAnnotation: The annotation, with its canvas built.
+        MaskAnnotation: The annotation. Its canvas is built on first display,
+        so masks imported in bulk do not each hold a QImage.
 
     Raises:
         ValueError: If the mask's dimensions do not match `shape`.
@@ -2305,33 +2375,57 @@ def build_mask_annotation(image_path,
             f"but the image is {width}x{height}."
         )
 
-    internal_mask = np.zeros((height, width), dtype=np.uint8)
-
+    # The constructor copies mask_data, so class IDs are written into its copy
     annotation = MaskAnnotation(
         image_path=image_path,
-        mask_data=internal_mask,
+        mask_data=np.zeros((height, width), dtype=np.uint8),
         initial_labels=project_labels,
         transparency=transparency,
         rasterio_src=rasterio_src,
     )
+    mask_data = annotation.mask_data
 
+    # External value -> class ID, with colours packed the way pack_rgb reads the pixels
+    is_rgb = source_mask.ndim == 3
+    class_ids = {}
     for external_value, label in value_to_label.items():
         class_id = annotation.label_id_to_class_id_map.get(label.id)
         if class_id is None:
             continue
 
         if isinstance(external_value, (tuple, list)):
-            red, green, blue = external_value
-            matches = ((source_mask[:, :, 0] == red)
-                       & (source_mask[:, :, 1] == green)
-                       & (source_mask[:, :, 2] == blue))
+            red, green, blue = (int(channel) for channel in external_value)
+            external_value = (red << 16) | (green << 8) | blue
+        class_ids[external_value] = class_id
+
+    if is_rgb:
+        table_size = 1 << 24
+    elif source_mask.dtype.kind == 'u' and source_mask.dtype.itemsize <= 2:
+        table_size = 1 << (8 * source_mask.dtype.itemsize)
+    else:
+        table_size = 0
+
+    if table_size:
+        # One gather through a value -> class ID table instead of a full-image
+        # comparison per value: 3x faster at 11 colours, more with more
+        lut = np.zeros(table_size, dtype=np.uint8)
+        for external_value, class_id in class_ids.items():
+            index = int(external_value)
+            if index == external_value and 0 <= index < table_size:
+                lut[index] = class_id
+
+        if table_size == 256:
+            # cv2.LUT runs a 256-entry table ~30x faster than numpy's gather
+            import cv2
+            cv2.LUT(source_mask, lut, dst=mask_data)
         else:
-            matches = source_mask == external_value
-
-        internal_mask[matches] = class_id
-
-    annotation.mask_data = internal_mask
-    annotation._initialize_canvas()
+            for rows in mask_row_blocks(height, width):
+                values = pack_rgb(source_mask[rows]) if is_rgb else source_mask[rows]
+                mask_data[rows] = lut[values]
+    else:
+        # Signed or float values cannot index a table
+        for external_value, class_id in class_ids.items():
+            mask_data[source_mask == external_value] = class_id
 
     return annotation
 

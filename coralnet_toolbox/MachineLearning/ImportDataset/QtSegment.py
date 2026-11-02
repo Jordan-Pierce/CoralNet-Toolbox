@@ -24,8 +24,9 @@ class Segment(Base):
         layout = QVBoxLayout()
 
         # Create a QLabel with explanatory text and hyperlink
-        info_text = ("Import a YOLO-formatted Instance Segmentation dataset. Polygon masks are converted to "
-                     "Polygon or Rectangle annotations, and labels are created from the dataset's class names.")
+        info_text = ("Import a YOLO or COCO Instance Segmentation dataset. Polygon masks are converted to "
+                     "Polygon or Rectangle annotations, and labels are created from the dataset's class names. "
+                     "COCO masks stored as RLE are traced into polygons, keeping their holes.")
         info_label = QLabel(info_text)
 
         info_label.setOpenExternalLinks(True)

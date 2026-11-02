@@ -2208,6 +2208,29 @@ class BatchInferenceDialog(QDialog):
         except Exception:
             pass
 
+    def _semantic_target_mask(self, image_path, raster, project_labels):
+        """The mask an image's semantic results paint into, synced to the project labels.
+
+        The displayed image's comes through the annotation window, so a mask this
+        run creates is put on the canvas like a painted one and its tiles show as
+        they land. raster.get_mask_annotation alone leaves a new mask with no
+        graphics item, which showed nothing until the image was reopened.
+        """
+        if image_path == self.annotation_window.current_image_path:
+            mask = self.annotation_window.current_mask_annotation
+        else:
+            if raster.mask_annotation is None:
+                try:
+                    self.main_window.status_bar.showMessage(
+                        f"Creating mask annotation for "
+                        f"{os.path.basename(image_path)}…", 3000
+                    )
+                except Exception:
+                    pass
+            mask = raster.get_mask_annotation(project_labels)
+        mask.sync_label_map(project_labels)
+        return mask
+
     def on_item_processed(self, inf_result):
         """Main-thread slot: receives one InferenceResult from the background worker.
 
@@ -2244,8 +2267,23 @@ class BatchInferenceDialog(QDialog):
 
                         project_labels = self.main_window.label_window.labels
 
-                        # Build a stable label_id -> class_id map (same ordering as MaskAnnotation.sync_label_map)
-                        mask_ann_map = {lbl.id: (i + 1) for i, lbl in enumerate(project_labels)}
+                        # An image paints into its own mask, so classes are numbered
+                        # the way that mask numbers them: an existing mask keeps the
+                        # IDs it was made with, which drift from the project's label
+                        # order once a label is deleted or the mask was imported.
+                        # A video frame gets a fresh mask, numbered in project order
+                        # (MaskAnnotation.sync_label_map).
+                        target_mask = None
+                        if not inf_result.is_video:
+                            # "Save Annotations: False" is preview only, and an
+                            # image run has no preview: its masks are left alone.
+                            if raster is None or not save:
+                                return
+                            target_mask = self._semantic_target_mask(
+                                inf_result.image_path, raster, project_labels)
+                            mask_ann_map = target_mask.label_id_to_class_id_map
+                        else:
+                            mask_ann_map = {lbl.id: (i + 1) for i, lbl in enumerate(project_labels)}
 
                         # Vectorizing belongs to the deploy dialog -- there are no
                         # separate controls here -- and runs through its own call so
@@ -2361,25 +2399,31 @@ class BatchInferenceDialog(QDialog):
                                     pass
                         else:
                             # Non-video: persist into the raster-level mask_annotation (existing behavior)
-                            if raster is not None:
-                                try:
-                                    if raster.mask_annotation is None:
-                                        try:
-                                            self.main_window.status_bar.showMessage(
-                                                f"Creating mask annotation for "
-                                                f"{os.path.basename(inf_result.image_path)}\u2026", 3000
-                                            )
-                                        except Exception:
-                                            pass
-                                    mask_ann = raster.get_mask_annotation(project_labels)
-                                    mask_ann.sync_label_map(project_labels)
-                                    mask_ann.update_mask_with_mask(reconstructed, top_left=offset)
+                            try:
+                                # Silent: an unsilenced write re-counts the whole mask
+                                # for the image table on every tile. Repainted here (a
+                                # no-op for a mask not on screen), counted once below.
+                                target_mask.update_mask_with_mask(
+                                    reconstructed, top_left=offset, silent=True)
+                                target_mask.refresh_graphics()
 
-                                    if not hasattr(self, '_semantic_processed_images'):
-                                        self._semantic_processed_images = set()
-                                    self._semantic_processed_images.add(inf_result.image_path)
-                                except Exception as e:
-                                    print(f"Semantic persist mask error: {e}")
+                                if not hasattr(self, '_semantic_processed_images'):
+                                    self._semantic_processed_images = set()
+                                self._semantic_processed_images.add(inf_result.image_path)
+
+                                # The count moves only when the mask first gets
+                                # content (a mask counts once), so one refresh per
+                                # image keeps the table current through a long run.
+                                # _finalize_semantic_images recounts every image.
+                                if not hasattr(self, '_semantic_counted_images'):
+                                    self._semantic_counted_images = set()
+                                if (inf_result.image_path not in self._semantic_counted_images
+                                        and reconstructed.any()):
+                                    self._semantic_counted_images.add(inf_result.image_path)
+                                    self.image_window.update_image_annotations(
+                                        inf_result.image_path, update_counts=False)
+                            except Exception as e:
+                                print(f"Semantic persist mask error: {e}")
                     except Exception as e:
                         print(f"Semantic inline paint error: {e}")
                 # Preserve original early-return for non-video semantic items
@@ -2700,6 +2744,58 @@ class BatchInferenceDialog(QDialog):
         _empty_cache()
         sam_pb.close()
 
+    def _finalize_semantic_images(self, processed):
+        """Vectorize (when asked) and recount each image a semantic run painted.
+
+        Vectorizing is per image, never per item: it has to see the whole mask,
+        and a work-area run paints that one tile at a time. Here is the first
+        point where every tile for an image has landed.
+
+        This runs on the GUI thread after inference ends, and vectorizing costs
+        up to ~1 s an image: a few hundred images froze the app with no sign of
+        progress. Same bar and pump cadence as the bake in _bake_cached_annotations.
+        """
+        raster_manager = getattr(self.image_window, 'raster_manager', None)
+        model_dialog = getattr(self, '_active_model_dialog', None)
+        vectorize = bool(getattr(self, '_semantic_auto_vectorize', False)) and model_dialog is not None
+        split_touching = getattr(self, '_semantic_split_touching', False)
+        verb = "Vectorizing" if vectorize else "Finalizing"
+
+        finalize_pb = ProgressBar(None, title=f"{verb} Semantic Predictions...")
+        finalize_pb.setWindowFlags(finalize_pb.windowFlags() | Qt.WindowStaysOnTopHint)
+        finalize_pb.show()
+        finalize_pb.start_progress(len(processed))
+        QApplication.processEvents()  # paint the bar before the first image
+        _last_pump = time.monotonic()
+
+        try:
+            for n, image_path in enumerate(processed, 1):
+                finalize_pb.message_label.setText(
+                    f"{verb} {n}/{len(processed)}: {os.path.basename(str(image_path))}")
+                try:
+                    raster = raster_manager.get_raster(image_path) if raster_manager else None
+                    if raster and raster.mask_annotation:
+                        if vectorize:
+                            # Statistics are recalculated after, not before: the
+                            # conversion empties the mask of everything it traced.
+                            model_dialog.vectorize_mask_annotation(
+                                raster.mask_annotation, raster, image_path,
+                                auto_vectorize=True,
+                                split_touching=split_touching,
+                            )
+                        raster.mask_annotation.recalculate_class_statistics()
+                    self.image_window.update_image_annotations(image_path)
+                except Exception as e:
+                    print(f"Semantic finalize error for {image_path}: {e}")
+
+                finalize_pb.update_progress()
+                _now = time.monotonic()
+                if _now - _last_pump >= 0.1:
+                    QApplication.processEvents()
+                    _last_pump = _now
+        finally:
+            finalize_pb.close()
+
     def _bake_cached_annotations(self):
         """Bakes all cached tensors into real Annotation objects and saves them to the project.
 
@@ -2737,29 +2833,8 @@ class BatchInferenceDialog(QDialog):
 
         if is_semantic_run:
             processed = getattr(self, '_semantic_processed_images', set())
-            raster_manager = getattr(self.image_window, 'raster_manager', None)
-            # Vectorizing is per image, never per item: it has to see the whole
-            # mask, and a work-area run paints that one tile at a time. Here is
-            # the first point where every tile for an image has landed.
-            model_dialog = getattr(self, '_active_model_dialog', None)
-            auto_vectorize = getattr(self, '_semantic_auto_vectorize', False)
-            split_touching = getattr(self, '_semantic_split_touching', False)
-            for image_path in processed:
-                try:
-                    raster = raster_manager.get_raster(image_path) if raster_manager else None
-                    if raster and raster.mask_annotation:
-                        if auto_vectorize and model_dialog is not None:
-                            # Statistics are recalculated after, not before: the
-                            # conversion empties the mask of everything it traced.
-                            model_dialog.vectorize_mask_annotation(
-                                raster.mask_annotation, raster, image_path,
-                                auto_vectorize=True,
-                                split_touching=split_touching,
-                            )
-                        raster.mask_annotation.recalculate_class_statistics()
-                    self.image_window.update_image_annotations(image_path)
-                except Exception as e:
-                    print(f"Semantic finalize error for {image_path}: {e}")
+            if processed:
+                self._finalize_semantic_images(processed)
 
             # Reload the mask graphics for the currently displayed image
             try:
@@ -2768,6 +2843,7 @@ class BatchInferenceDialog(QDialog):
             except Exception:
                 pass
             self._semantic_processed_images = set()
+            self._semantic_counted_images = set()
 
             # Video semantic batch inference: _semantic_processed_images is never
             # populated for video frames (results go to batch_results_cache instead).

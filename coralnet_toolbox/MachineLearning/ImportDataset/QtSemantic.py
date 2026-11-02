@@ -23,10 +23,12 @@ class Semantic(Base):
         layout = QVBoxLayout()
 
         # Create a QLabel with explanatory text and hyperlink
-        info_text = ("Import a YOLO-formatted Semantic Segmentation dataset. Single-channel masks are converted "
-                     "to one Mask annotation per image, where each pixel value is the class ID.\n"
-                     "Masks must share the base name of their image, and only lossless formats are read "
-                     "(PNG, TIF, TIFF). Pixel value 255 is the reserved ignore label.")
+        info_text = ("Import a YOLO or COCO Semantic Segmentation dataset as one Mask annotation per image.\n"
+                     "YOLO: single-channel masks where each pixel value is the class ID. Masks must share "
+                     "the base name of their image, and only lossless formats are read (PNG, TIF, TIFF). "
+                     "Pixel value 255 is the reserved ignore label.\n"
+                     "COCO: each image's masks, polygons and boxes are painted into its mask, smaller "
+                     "objects over larger ones.")
         info_label = QLabel(info_text)
 
         info_label.setOpenExternalLinks(True)

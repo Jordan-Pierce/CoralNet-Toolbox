@@ -3,7 +3,7 @@ import yaml
 
 from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QLabel)
 
-from coralnet_toolbox.MachineLearning.ExportDataset.QtBase import Base
+from coralnet_toolbox.MachineLearning.ExportDataset.QtBase import Base, COCO_NOT_FOR_TRAINING
 from coralnet_toolbox.MachineLearning.ExportDataset.export_dataset_utils import (
     build_sample_export_name,
     busy_cursor,
@@ -22,6 +22,7 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 
 class Detect(Base):
     supports_unlabeled_video_frames = True
+    supports_coco = True
     task = "detect"
 
     def __init__(self, parent=None):
@@ -34,7 +35,8 @@ class Detect(Base):
         layout = QVBoxLayout()
 
         # Create a QLabel with explanatory text and hyperlink
-        info_text = "Export Rectangles and Polygons to create a YOLO-formatted Detection dataset."
+        info_text = ("Export Rectangles and Polygons to create a YOLO or COCO Detection dataset.\n\n"
+                     f"{COCO_NOT_FOR_TRAINING}")
         info_label = QLabel(info_text)
 
         info_label.setOpenExternalLinks(True)
@@ -171,3 +173,13 @@ class Detect(Base):
                         raise RuntimeError(f"Failed to export image sample: {image_path}")
 
                     progress_bar.update_progress()
+
+    def add_coco_annotations(self, writer, image_id, image_path, index):
+        """Add one image's annotations as COCO boxes, each annotation's bounding box."""
+        for annotation in index.get(image_path, []):
+            top_left = annotation.get_bounding_box_top_left()
+            bottom_right = annotation.get_bounding_box_bottom_right()
+            writer.add_box(image_id,
+                           self._remap_target(annotation.label.short_label_code),
+                           [top_left.x(), top_left.y(),
+                            bottom_right.x() - top_left.x(), bottom_right.y() - top_left.y()])
