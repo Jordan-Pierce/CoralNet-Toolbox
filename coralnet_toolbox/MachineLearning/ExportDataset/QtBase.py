@@ -18,18 +18,22 @@ from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Icons import get_icon, get_window_icon
+from coralnet_toolbox.MachineLearning.coco_format import CocoWriter
 from coralnet_toolbox.MachineLearning.ExportDataset.export_dataset_utils import (
     RefreshTimings,
     format_refresh_duration,
     build_export_sample_paths,
+    build_sample_export_name,
     build_video_frame_path,
     busy_cursor,
     closing_progress_bar,
     frame_matches_stride,
     group_annotations_by_source,
     locked_window,
+    materialize_sample_image,
     normalize_source_path,
     parse_frame_path,
+    sample_dimensions,
 )
 from coralnet_toolbox.MachineLearning.TrainModel.QtBase import (
     open_train_model_dialog_later,
@@ -44,6 +48,11 @@ REFRESH_STATUS_TIMEOUT_MS = 6000
 # Used when nothing more specific set a trigger: a label row checkbox is the
 # only control wired straight to update_summary_statistics.
 DEFAULT_REFRESH_TRIGGER = "label checkbox"
+
+# Said in each dialog's Information box, the Format tooltip and the prompt on
+# OK, so the three never drift apart
+COCO_NOT_FOR_TRAINING = ("COCO exports cannot be used to train models in CoralNet-Toolbox. They are "
+                         "provided only as a convenience for use outside of the toolbox.")
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -103,6 +112,15 @@ class Base(QDialog):
     # Every dialog here is on the index now. A subclass that cannot be set
     # this False and keeps the per-annotation rescan in its own override.
     uses_annotation_index = True
+    # Whether the dialog offers COCO beside YOLO. A subclass that does
+    # implements add_coco_annotations; classification has no COCO form.
+    supports_coco = False
+
+    # (split, progress title, images attribute, annotations attribute) for a
+    # COCO export, in the order the files are written
+    COCO_SPLITS = (("train", "Training", "train_images", "train_annotations"),
+                   ("val", "Validation", "val_images", "val_annotations"),
+                   ("test", "Testing", "test_images", "test_annotations"))
 
     # The label table's columns. Export As is last on purpose: the update loop
     # addresses columns 2 through 6 by number, so inserting ahead of them would
@@ -294,7 +312,8 @@ class Base(QDialog):
         self.output_dir_edit = QLineEdit()
         self.output_dir_button = QPushButton("Browse...")
         self.output_dir_button.clicked.connect(self.browse_output_dir)
-        self.output_dir_edit.setToolTip("Directory where the exported dataset will be saved.\nWill create subdirectories: images/, labels/, dataset.yaml")
+        self.output_dir_edit.setToolTip("Directory where the exported dataset will be saved,\n"
+                                        "in a subdirectory named after the dataset.")
         self.output_dir_button.setToolTip("Browse for an output directory.")
         output_layout.addWidget(self.output_dir_edit)
         output_layout.addWidget(self.output_dir_button)
@@ -304,6 +323,22 @@ class Base(QDialog):
         self.dataset_name_edit = QLineEdit()
         self.dataset_name_edit.setToolTip("Name for the exported dataset.\nUsed for subdirectory naming and in the dataset.yaml file.")
         layout.addRow("Dataset Name:", self.dataset_name_edit)
+
+        # COCO is for handing annotations to another tool rather than for
+        # training here, so choosing it also drops the training prompt and the
+        # every-class-in-every-split readiness check
+        self.format_combo = None
+        if self.supports_coco:
+            self.format_combo = QComboBox()
+            self.format_combo.addItems(["YOLO", "COCO"])
+            self.format_combo.setToolTip(
+                "YOLO: train/, valid/ and test/ folders of images with their labels, and a data.yaml.\n"
+                "Ready to train on in CoralNet-Toolbox.\n"
+                "COCO: train/, val/ and test/ folders of images, and one annotations/instances_<split>.json\n"
+                "per split, readable by most annotation and analysis tools.\n\n"
+                f"{COCO_NOT_FOR_TRAINING}")
+            self.format_combo.currentIndexChanged.connect(self.on_export_format_changed)
+            layout.addRow("Format:", self.format_combo)
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
@@ -1699,7 +1734,10 @@ class Base(QDialog):
 
                 self.ready_status = self.check_label_distribution()
                 self.split_status = abs(self.train_ratio + self.val_ratio + self.test_ratio - 1.0) < 1e-9
-                self.ready_label.setText("✅ Ready" if (self.ready_status and self.split_status) else "❌ Not Ready")
+                # Every class in every split is what training needs; a COCO
+                # export is not trained on, so only the ratios have to add up
+                ready = self.split_status and (self.ready_status or self.export_format() == 'coco')
+                self.ready_label.setText("✅ Ready" if ready else "❌ Not Ready")
 
                 # Get counts directly from the image split lists
                 train_count = len(self.train_images)
@@ -1744,7 +1782,7 @@ class Base(QDialog):
         # lists, so build them here - once, on the way into an export.
         self.materialize_selection()
 
-        if not self.ready_status:
+        if not self.ready_status and self.export_format() != 'coco':
             reply = QMessageBox.question(
                 self,
                 "Dataset Not Ready",
@@ -1766,6 +1804,16 @@ class Base(QDialog):
         if not self.is_ready():
             return
 
+        coco = self.export_format() == 'coco'
+        if coco:
+            reply = QMessageBox.question(self,
+                                         "Export as COCO",
+                                         f"{COCO_NOT_FOR_TRAINING}\n\nExport as COCO?",
+                                         QMessageBox.Ok | QMessageBox.Cancel,
+                                         QMessageBox.Ok)
+            if reply != QMessageBox.Ok:
+                return
+
         # Create the output folder
         output_dir_path = os.path.join(self.output_dir, self.dataset_name)
 
@@ -1773,20 +1821,29 @@ class Base(QDialog):
         # up, so the prompt is not sitting under an hourglass.
         merge_existing = os.path.exists(output_dir_path)
         if merge_existing:
-            reply = QMessageBox.question(self,
-                                         "Directory Exists",
-                                         "The output directory already exists. Do you want to merge the datasets?",
-                                         QMessageBox.Yes | QMessageBox.No)
+            if coco:
+                # COCO files are replaced, never merged: two exports number
+                # their images and annotations independently
+                question = ("The output directory already exists. Its COCO annotation files will be "
+                            "replaced, and images with the same names overwritten. Continue?")
+            else:
+                question = "The output directory already exists. Do you want to merge the datasets?"
+            reply = QMessageBox.question(self, "Directory Exists", question, QMessageBox.Yes | QMessageBox.No)
             if reply == QMessageBox.No:
                 return
 
         train_requested = False
+        coco_problems = None
 
         # create_dataset() runs on the GUI thread and pumps events through its
         # progress bars, so the project stays locked for the whole write -
         # otherwise annotations can be edited or deleted out from under it.
         with busy_cursor(), locked_window(self.main_window):
-            if merge_existing:
+            if coco:
+                # Each COCO file's categories carry the class names, so there
+                # is no class_mapping.json to write
+                os.makedirs(output_dir_path, exist_ok=True)
+            elif merge_existing:
                 # Read the existing class_mapping.json file if it exists
                 class_mapping_path = os.path.join(output_dir_path, "class_mapping.json")
                 if os.path.exists(class_mapping_path):
@@ -1806,12 +1863,15 @@ class Base(QDialog):
                 self.save_class_mapping_json(class_mapping, output_dir_path)
 
             try:
-                # Create the dataset
-                self.create_dataset(output_dir_path)
+                if coco:
+                    coco_problems = self.create_coco_dataset(output_dir_path)
+                else:
+                    # Create the dataset
+                    self.create_dataset(output_dir_path)
 
-                train_requested = prompt_train_model(self,
-                                                     "Dataset Created",
-                                                     "Dataset has been successfully created.")
+                    train_requested = prompt_train_model(self,
+                                                         "Dataset Created",
+                                                         "Dataset has been successfully created.")
 
             except Exception as e:
                 QMessageBox.critical(self, "Failed to Create Dataset", f"{e}")
@@ -1819,9 +1879,124 @@ class Base(QDialog):
             finally:
                 super().accept()
 
+        if coco_problems is not None:
+            self.report_coco_export(output_dir_path, coco_problems)
+
         # Hand off to the Train Model dialog once this dialog has closed
         if train_requested:
             open_train_model_dialog_later(self.main_window, self.task, output_dir_path)
+
+    def export_format(self):
+        """Return 'coco' when the dialog is set to COCO, otherwise 'yolo'."""
+        if self.format_combo is not None and self.format_combo.currentText() == "COCO":
+            return 'coco'
+        return 'yolo'
+
+    def on_export_format_changed(self):
+        """Redraw the status for the new format, whose readiness rule differs.
+
+        A subclass with format-specific options of its own extends this.
+        """
+        self._refresh_trigger = "export format"
+        self.update_summary_statistics()
+
+    def create_coco_dataset(self, output_dir_path):
+        """Write the export as COCO: one instances file per split, beside a folder of its images.
+
+        The official layout - annotations/instances_train.json beside train/ -
+        with each file_name the bare image name, which is what tools reading
+        COCO look for first. The images, splits and Export As remap are the
+        ones a YOLO export would use; only the writing differs, and the
+        per-task part of it is add_coco_annotations.
+
+        An image whose annotations cannot be written is still exported, and
+        its problem is returned rather than ending the export for every other
+        image.
+
+        Args:
+            output_dir_path (str): The dataset's folder.
+
+        Returns:
+            list: Problems, one line per image.
+        """
+        names = self.export_class_names()
+        labels_by_code = {label.short_label_code: label for label in self.main_window.label_window.labels}
+        colors = {name: labels_by_code[name].color.name() for name in names if name in labels_by_code}
+        raster_manager = self.image_window.raster_manager
+        problems = []
+
+        for split, title, images_attribute, annotations_attribute in self.COCO_SPLITS:
+            image_paths = getattr(self, images_attribute)
+            if not image_paths:
+                continue
+
+            image_dir = os.path.join(output_dir_path, split)
+            os.makedirs(image_dir, exist_ok=True)
+            writer = CocoWriter(names,
+                                colors=colors,
+                                description=f"{self.dataset_name} ({split}), exported from CoralNet-Toolbox")
+            index = self.index_split_annotations(getattr(self, annotations_attribute))
+
+            # Parented to the dialog, not the annotation window: accept() disables
+            # the main window during the export, which would disable a bar inside it.
+            with busy_cursor():
+                progress_bar = ProgressBar(self, title=f"Creating {title} Dataset")
+                progress_bar.show()
+                progress_bar.start_progress(len(image_paths))
+
+                with closing_progress_bar(progress_bar):
+                    for image_path in image_paths:
+                        file_name = build_sample_export_name(image_path)
+                        if not materialize_sample_image(image_path, raster_manager, os.path.join(image_dir, file_name)):
+                            raise RuntimeError(f"Failed to export image sample: {image_path}")
+
+                        height, width, _ = sample_dimensions(image_path, raster_manager)
+                        image_id = writer.add_image(file_name, width, height)
+                        try:
+                            self.add_coco_annotations(writer, image_id, image_path, index)
+                        except Exception as e:
+                            problems.append(f"{file_name}: {e}")
+
+                        progress_bar.update_progress()
+
+            writer.write(os.path.join(output_dir_path, "annotations", f"instances_{split}.json"))
+
+        return problems
+
+    def index_split_annotations(self, annotations):
+        """Index a split's annotations for add_coco_annotations: {image path: [annotations]}.
+
+        A subclass whose annotations are not filed under their sample's path -
+        a video's mask is filed under the video - indexes them its own way.
+        """
+        index = {}
+        for annotation in annotations:
+            index.setdefault(annotation.image_path, []).append(annotation)
+        return index
+
+    def add_coco_annotations(self, writer, image_id, image_path, index):
+        """Add one image's annotations to a CocoWriter.
+
+        Args:
+            writer (CocoWriter): The split's writer; its categories are
+                export_class_names(), so annotations go in under their Export As
+                name.
+            image_id (int): The image's id in the writer.
+            image_path (str): The sample's path.
+            index: What index_split_annotations built for the split.
+        """
+        raise NotImplementedError("Subclasses that support COCO must implement this method.")
+
+    def report_coco_export(self, output_dir_path, problems):
+        """Say where the COCO export went, with any per-image problems behind Show Details."""
+        text = f"COCO dataset has been successfully created in:\n{output_dir_path}"
+        box = QMessageBox(QMessageBox.Information, "Dataset Created", text, QMessageBox.Ok, self)
+        if problems:
+            box.setIcon(QMessageBox.Warning)
+            box.setText(f"{text}\n\nHowever, {len(problems)} image(s) had annotations that could not "
+                        "be written. Please review them below.")
+            box.setDetailedText("\n".join(problems))
+        box.exec_()
 
     def create_dataset(self, output_dir_path):
         raise NotImplementedError("Method must be implemented in the subclass.")

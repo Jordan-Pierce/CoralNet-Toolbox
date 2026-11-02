@@ -12,9 +12,9 @@ from ultralytics.models.sam import Predictor as SAMPredictor
 from ultralytics.models.sam import SAM2Predictor, SAM3Predictor
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QDoubleSpinBox, QFormLayout,
-                             QHBoxLayout, QLabel, QMessageBox, QPushButton, QSpinBox,
-                             QToolButton, QVBoxLayout, QGroupBox, QWidget)
+from PyQt5.QtWidgets import (QApplication, QComboBox, QDialog, QDoubleSpinBox, QFileDialog,
+                             QFormLayout, QHBoxLayout, QLabel, QMessageBox, QPushButton,
+                             QSpinBox, QToolButton, QVBoxLayout, QGroupBox, QWidget)
 
 from coralnet_toolbox.Results import ResultsProcessor
 from coralnet_toolbox.Results import MapResults
@@ -238,6 +238,9 @@ class DeployGeneratorDialog(QDialog):
         if find_weights("sam3.pt"):
             self.models["SAM 3"] = "sam3.pt"
 
+        if find_weights("sam3.1_multiplex.pt"):
+            self.models["SAM 3.1 Multiplex"] = "sam3.1_multiplex.pt"
+
         # Add all models to combo box
         for model_name in self.models.keys():
             self.model_combo.addItem(model_name)
@@ -246,11 +249,74 @@ class DeployGeneratorDialog(QDialog):
         self.model_combo.setCurrentText("MobileSAM")
         self.model_combo.setToolTip("Choose a SAM variant for segment-everything inference.\nFastSAM: Fastest, lower accuracy.\nSAM 2.1/3: Slower, higher quality segmentation.\nMobileSAM: Lightweight, good balance.")
 
+        # The combo keeps every built-in choice; Browse only adds to it.
+        browse_button = QPushButton("Browse...")
+        browse_button.clicked.connect(self.browse_model_file)
+        browse_button.setToolTip("Select a local SAM or FastSAM weights file (.pt) to add to the list.")
+
+        selection_layout = QHBoxLayout()
+        selection_layout.addWidget(self.model_combo, 1)
+        selection_layout.addWidget(browse_button)
+
         layout.addWidget(QLabel("Select Model:"))
-        layout.addWidget(self.model_combo)
+        layout.addLayout(selection_layout)
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
+
+    def browse_model_file(self):
+        """Add a local weights file to the model list and select it.
+
+        The built-in choices stay in the combo; a browsed file is just one
+        more entry, so switching back to them needs no re-browse.
+        """
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open SAM Model File", "",
+            "Model Files (*.pt *.pth);;All Files (*)"
+        )
+        if not file_path:
+            return
+
+        file_path = os.path.normpath(file_path).replace("\\", "/")
+        # Name the entry by its file, but keep the full path in the tooltip and
+        # fall back to the path itself if two directories hold the same name.
+        name = os.path.basename(file_path)
+        if self.models.get(name, file_path) != file_path:
+            name = file_path
+
+        if name not in self.models:
+            self.models[name] = file_path
+            self.model_combo.addItem(name)
+        index = self.model_combo.findText(name)
+        self.model_combo.setItemData(index, file_path, Qt.ToolTipRole)
+        self.model_combo.setCurrentIndex(index)
+
+    def _selected_model_path(self):
+        """The weights file for the current selection.
+
+        The combo is editable, so an unknown entry is taken as a path (or as a
+        name ultralytics can download) rather than a missing key.
+        """
+        name = self.model_combo.currentText().strip()
+        return self.models.get(name, name)
+
+    def _model_family(self):
+        """'fastsam', 'sam3', 'sam2' or 'sam' for the current selection.
+
+        Matched on the name and weights file together, squashed, so a browsed
+        "sam3.1_multiplex.pt" or "FastSAM-s.pt" resolves like its built-in entry.
+        """
+        tag = f"{self.model_combo.currentText()} {self._selected_model_path()}".lower()
+        for char in " _-":
+            tag = tag.replace(char, "")
+        if "fastsam" in tag:
+            return "fastsam"
+        if "sam3" in tag:
+            return "sam3"
+        if "sam2" in tag:
+            return "sam2"
+        return "sam"
 
     def setup_parameters_layout(self):
         """
@@ -439,7 +505,7 @@ class DeployGeneratorDialog(QDialog):
 
     def update_generate_enabled(self):
         """Grey the segment-everything settings out for FastSAM, which doesn't use them."""
-        self.generate_group.setEnabled("FastSAM" not in self.model_combo.currentText())
+        self.generate_group.setEnabled(self._model_family() != "fastsam")
 
     def setup_thresholds_layout(self):
         """
@@ -529,9 +595,11 @@ class DeployGeneratorDialog(QDialog):
         progress_bar.show()
 
         try:
-            # Get selected model name and path
-            selected_model_name = self.model_combo.currentText()
-            self.model_path = self.models[selected_model_name]
+            # Get selected model path (a browsed file is an entry in
+            # self.models like any other; an edited one is taken as a path)
+            self.model_path = self._selected_model_path()
+            if not self.model_path:
+                raise ValueError("No model selected")
             self.task = self.use_task_dropdown.currentText()
             imgsz = self.get_imgsz()
             shared = False
@@ -541,7 +609,7 @@ class DeployGeneratorDialog(QDialog):
             blank = np.zeros((64, 64, 3), dtype=np.uint8)
 
             # Determine which class to instantiate
-            if "FastSAM" in selected_model_name:
+            if self._model_family() == "fastsam":
                 self.loaded_model = FastSAM(resolve_weights(self.model_path))
                 self.model_type = "fastSAM"
                 # Warm-up at the precision the real calls use: ultralytics
@@ -563,8 +631,7 @@ class DeployGeneratorDialog(QDialog):
                 self.loaded_model.predictor(blank, point_grids=[np.array([[0.5, 0.5]])])
 
             progress_bar.finish_progress()
-            self.status_bar.setText(f"Model loaded: {os.path.basename(self.model_path)}"
-                                    + (" (weights shared with SAM Predictor)" if shared else ""))
+            self.status_bar.setText(f"Model loaded: {os.path.basename(self.model_path)}")
             QMessageBox.information(self, "Model Loaded", "Model loaded successfully")
             # Close on success, as the Predictor dialog does; a failed load
             # keeps it open so the choice can be retried.
@@ -629,7 +696,7 @@ class DeployGeneratorDialog(QDialog):
         the old 24-px step), and 32 suits the rest. The spinbox is updated to
         match.
         """
-        stride = 14 if "SAM 3" in self.model_combo.currentText() else 32
+        stride = 14 if self._model_family() == "sam3" else 32
         low, high = self.imgsz_spinbox.minimum(), self.imgsz_spinbox.maximum()
 
         value = self.imgsz_spinbox.value()

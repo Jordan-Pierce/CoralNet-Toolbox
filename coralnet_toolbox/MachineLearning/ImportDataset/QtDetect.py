@@ -24,7 +24,7 @@ class Detect(Base):
         layout = QVBoxLayout()
 
         # Create a QLabel with explanatory text and hyperlink
-        info_text = ("Import a YOLO-formatted Detection dataset. Bounding boxes are converted to Rectangle "
+        info_text = ("Import a YOLO or COCO Detection dataset. Bounding boxes are converted to Rectangle "
                      "or Polygon annotations, and labels are created from the dataset's class names.")
         info_label = QLabel(info_text)
 

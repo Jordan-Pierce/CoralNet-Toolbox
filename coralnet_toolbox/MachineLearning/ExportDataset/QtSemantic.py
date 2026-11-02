@@ -13,7 +13,7 @@ from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (QGroupBox, QVBoxLayout, QLabel, QApplication, QCheckBox,
                              QRadioButton)
 
-from coralnet_toolbox.MachineLearning.ExportDataset.QtBase import Base
+from coralnet_toolbox.MachineLearning.ExportDataset.QtBase import Base, COCO_NOT_FOR_TRAINING
 from coralnet_toolbox.MachineLearning.ExportDataset.export_dataset_utils import (
     build_sample_export_name,
     busy_cursor,
@@ -70,6 +70,7 @@ class Semantic(Base):
     """
 
     supports_unlabeled_video_frames = True
+    supports_coco = True
     task = "semantic"
 
     def __init__(self, main_window, parent=None):
@@ -94,10 +95,12 @@ class Semantic(Base):
         layout = QVBoxLayout()
 
         # Create a QLabel with explanatory text
-        info_text = ("Export semantic segmentation masks in YOLO format. "
+        info_text = ("Export semantic segmentation masks in YOLO or COCO format. "
                      "Supports both MaskAnnotations and vector annotations (Patches, Rectangles, Polygons). "
                      "Vector annotations will be rasterized into semantic masks. "
-                     "This exports pixel-level class labels for semantic segmentation training.")
+                     "This exports pixel-level class labels for semantic segmentation training. "
+                     "In COCO, each class in an image is one RLE mask annotation.\n\n"
+                     f"{COCO_NOT_FOR_TRAINING}")
         info_label = QLabel(info_text)
 
         info_label.setOpenExternalLinks(True)
@@ -201,6 +204,8 @@ class Semantic(Base):
         
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
+        # Kept to grey out for COCO, which writes no unlabeled pixels at all
+        self.unlabeled_group_box = group_box
 
     # Set for the length of one index rebuild, which needs the mask list twice:
     # once for the statistics pass and once for _indexable_annotations. Building
@@ -845,21 +850,8 @@ class Semantic(Base):
             progress_bar: Progress bar object
             image_paths (list): All image paths for this split (including negatives)
         """
-        # Separate mask and vector annotations
-        mask_annotations = [ann for ann in annotations if ann.__class__.__name__ == 'MaskAnnotation']
-        vector_annotation_types = ['PatchAnnotation', 'RectangleAnnotation', 'PolygonAnnotation']
-        vector_annotations = [ann for ann in annotations if ann.__class__.__name__ in vector_annotation_types]
-        
-        # Create mappings by image path
-        image_to_mask = {normalize_source_path(ann.image_path): ann for ann in mask_annotations}
-        
-        # Group vector annotations by image path
-        image_to_vectors = {}
-        for ann in vector_annotations:
-            if ann.image_path not in image_to_vectors:
-                image_to_vectors[ann.image_path] = []
-            image_to_vectors[ann.image_path].append(ann)
-        
+        image_to_mask, image_to_vectors = self.index_split_annotations(annotations)
+
         for i, image_path in enumerate(image_paths):
             try:
                 source_path, frame_idx, raster = resolve_sample_source(image_path, self.image_window.raster_manager)
@@ -886,6 +878,63 @@ class Semantic(Base):
                 
             except Exception as e:
                 print(f"Error processing image {image_path}: {e}")
+
+    def index_split_annotations(self, annotations):
+        """Index a split's annotations as (image_to_mask, image_to_vectors).
+
+        Used by the YOLO export as well as the COCO one. A mask annotation is
+        filed under its source path, which for a video is the video rather
+        than any one frame, so masks are keyed by normalized source path;
+        vector annotations are keyed by their own path.
+        """
+        mask_annotations = [ann for ann in annotations if ann.__class__.__name__ == 'MaskAnnotation']
+        vector_annotation_types = ['PatchAnnotation', 'RectangleAnnotation', 'PolygonAnnotation']
+        vector_annotations = [ann for ann in annotations if ann.__class__.__name__ in vector_annotation_types]
+
+        image_to_mask = {normalize_source_path(ann.image_path): ann for ann in mask_annotations}
+
+        image_to_vectors = {}
+        for ann in vector_annotations:
+            image_to_vectors.setdefault(ann.image_path, []).append(ann)
+
+        return image_to_mask, image_to_vectors
+
+    def add_coco_annotations(self, writer, image_id, image_path, index):
+        """Add one image as COCO RLE masks, one annotation per class present.
+
+        Built from the same combined mask the YOLO export writes as a PNG, so
+        both formats agree pixel for pixel. Unlabeled pixels - background or
+        ignore, whichever the mask was built with - are simply not written.
+        """
+        image_to_mask, image_to_vectors = index
+        source_path = normalize_source_path(image_path)
+        combined_mask = self.build_combined_semantic_mask(
+            image_path,
+            image_to_mask.get(source_path),
+            image_to_vectors.get(image_path, image_to_vectors.get(source_path, [])),
+        )
+
+        fill_value, index_offset = self._unlabeled_encoding()
+        names = self.export_class_names()
+        present = np.flatnonzero(np.bincount(combined_mask.ravel(), minlength=256))
+        for value in present:
+            class_index = int(value) - index_offset
+            if value != fill_value and 0 <= class_index < len(names):
+                writer.add_mask(image_id, names[class_index], combined_mask == value)
+
+    def on_export_format_changed(self):
+        """Grey out Unlabeled Pixel Handling for COCO, which never writes unlabeled pixels."""
+        self.unlabeled_group_box.setEnabled(self.export_format() != 'coco')
+        super().on_export_format_changed()
+
+    def _unlabeled_encoding(self):
+        """Return (fill value, class index offset) for the Unlabeled Pixel Handling choice.
+
+        Background puts unlabeled pixels at 0 and shifts every class up one;
+        ignore puts them at 255 and leaves the classes 0-based.
+        """
+        treat_as_background = getattr(self, 'background_radio', None) and self.background_radio.isChecked()
+        return (0, 1) if treat_as_background else (255, 0)
 
     def create_semantic_mask(self, mask_annotation, output_path):
         """
@@ -924,10 +973,52 @@ class Semantic(Base):
         mask_image = Image.fromarray(output_mask, mode='L')
         mask_image.save(output_path)
 
+    def build_combined_semantic_mask(self, image_path, mask_annotation, vector_annotations):
+        """
+        Combine an image's mask annotation and vector annotations into one class-index mask.
+
+        Vector annotations are drawn over the mask. Values follow the Unlabeled
+        Pixel Handling choice: see _unlabeled_encoding.
+
+        Args:
+            image_path (str): Path to the source image
+            mask_annotation (MaskAnnotation or None): Mask annotation for this image
+            vector_annotations (list): List of vector annotations for this image
+
+        Returns:
+            np.ndarray: (height, width) uint8 mask.
+        """
+        height, width, _ = sample_dimensions(image_path, self.image_window.raster_manager)
+        fill_value, index_offset = self._unlabeled_encoding()
+
+        # Start with chosen fill value
+        combined_mask = np.full((height, width), fill_value, dtype=np.uint8)
+
+        if mask_annotation is not None:
+            mask_data = mask_annotation.mask_data.copy()
+            export_index = self.export_label_index()
+            label_to_index = {}
+            for class_id, label_obj in mask_annotation.class_id_to_label_map.items():
+                index = export_index.get(label_obj.short_label_code)
+                if index is not None:
+                    label_to_index[class_id] = index + index_offset
+
+            for class_id, label_index in label_to_index.items():
+                class_mask = ((mask_data == class_id) |
+                              (mask_data == class_id + mask_annotation.LOCK_BIT))
+                combined_mask[class_mask] = label_index
+
+        if vector_annotations:
+            vector_mask = self.rasterize_vector_annotations(vector_annotations, image_path)
+            # Overlay non-fill values
+            combined_mask = np.where(vector_mask != fill_value, vector_mask, combined_mask)
+
+        return combined_mask
+
     def create_combined_semantic_mask(self, image_path, mask_annotation, vector_annotations, output_path):
         """
         Create a combined semantic segmentation mask from both mask and vector annotations.
-        
+
         Args:
             image_path (str): Path to the source image
             mask_annotation (MaskAnnotation or None): Mask annotation for this image
@@ -935,38 +1026,10 @@ class Semantic(Base):
             output_path (str): Path to save the combined mask
         """
         try:
-            height, width, _ = sample_dimensions(image_path, self.image_window.raster_manager)
-            
-            # Determine fill value and index offset
-            treat_as_background = getattr(self, 'background_radio', None) and self.background_radio.isChecked()
-            fill_value = 0 if treat_as_background else 255
-            index_offset = 1 if treat_as_background else 0
-
-            # Start with chosen fill value
-            combined_mask = np.full((height, width), fill_value, dtype=np.uint8)
-            
-            if mask_annotation is not None:
-                mask_data = mask_annotation.mask_data.copy()
-                export_index = self.export_label_index()
-                label_to_index = {}
-                for class_id, label_obj in mask_annotation.class_id_to_label_map.items():
-                    index = export_index.get(label_obj.short_label_code)
-                    if index is not None:
-                        label_to_index[class_id] = index + index_offset
-                
-                for class_id, label_index in label_to_index.items():
-                    class_mask = ((mask_data == class_id) |
-                                  (mask_data == class_id + mask_annotation.LOCK_BIT))
-                    combined_mask[class_mask] = label_index
-            
-            if vector_annotations:
-                vector_mask = self.rasterize_vector_annotations(vector_annotations, image_path)
-                # Overlay non-fill values
-                combined_mask = np.where(vector_mask != fill_value, vector_mask, combined_mask)
-            
+            combined_mask = self.build_combined_semantic_mask(image_path, mask_annotation, vector_annotations)
             mask_image = Image.fromarray(combined_mask, mode='L')
             mask_image.save(output_path)
-            
+
         except Exception as e:
             print(f"Error creating combined semantic mask for {image_path}: {e}")
             self.create_empty_mask(image_path, output_path)

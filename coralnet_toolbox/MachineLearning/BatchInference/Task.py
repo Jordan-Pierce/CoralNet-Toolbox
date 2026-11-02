@@ -279,10 +279,24 @@ class SemanticBatchInferenceTask(AsyncYoloBatchInferenceTask):
             dialog._semantic_split_touching = False
 
         dialog._semantic_processed_images = set()
+        dialog._semantic_counted_images = set()
 
+        # A preview-only run ("Save Annotations: False") paints no image masks,
+        # so it must not clear them either.
+        if getattr(dialog, "save_video_annotations", True):
+            self._clear_target_masks(items)
+
+    def _clear_target_masks(self, items: list[InferenceItem]) -> None:
+        """Empty the masks a full-image item replaces, before its first item lands.
+
+        Work-area (tiled) items clear nothing, as in the deploy dialog: each tile
+        write already replaces every unlocked pixel inside the tile, and clearing
+        the whole mask wiped every region outside the run's tiles.
+        """
+        dialog = self.dialog
         try:
             raster_manager = getattr(dialog.image_window, "raster_manager", None)
-            images_to_clear = {item.image_path for item in items}
+            images_to_clear = {item.image_path for item in items if item.work_area is None}
             for image_path in images_to_clear:
                 try:
                     raster = raster_manager.get_raster(image_path) if raster_manager else None

@@ -140,6 +140,7 @@ mobileclip_blt.ts
 # Local
 data/
 datasets/
+patches/
 
 # Faiss index files
 *.faiss

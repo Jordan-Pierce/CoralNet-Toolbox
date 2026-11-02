@@ -20,6 +20,9 @@ from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotati
 from coralnet_toolbox.Annotations.QtMaskAnnotation import build_mask_annotation
 
 from coralnet_toolbox.IO.QtImportImages import SUPPORTED_IMAGE_EXTENSIONS
+from coralnet_toolbox.MachineLearning.coco_format import (DIALECT_CORALSCOP, annotation_polygons, category_counts,
+                                              find_annotation_files, load_annotation_files,
+                                              paint_class_mask)
 
 # Semantic masks are single-channel class-ID rasters, so only lossless
 # formats are accepted: JPEG compression would rewrite the very integers
@@ -203,6 +206,46 @@ def _annotation_key(raw_ann_data):
     return (kind, raw_ann_data["class_name"], geometry)
 
 
+def _message_with_details(parent, icon, title, text, details):
+    """Show a message box with a long list behind its Show Details button.
+
+    QMessageBox's static helpers take no details text, and passing one raises
+    TypeError - which, inside a slot, loses the message altogether.
+    """
+    box = QMessageBox(icon, title, text, QMessageBox.Ok, parent)
+    if details:
+        box.setDetailedText(details)
+    box.exec_()
+
+
+def _size_problem(expected, actual):
+    """Describe a mismatch between the size a COCO file gives an image and its real size.
+
+    COCO coordinates are pixels, not fractions, so annotations on an image of
+    another size land in the wrong place and are better skipped than imported.
+    A swap is called out on its own: CoralNet-Toolbox reads pixels as stored and ignores
+    EXIF orientation, so an image another tool displayed rotated - and was
+    annotated that way - arrives with its width and height exchanged.
+
+    Args:
+        expected (tuple): (height, width) from the file; either may be None
+            when the file leaves it out, and then nothing is checked.
+        actual (tuple): (height, width) of the image.
+
+    Returns:
+        str: The problem, or None when the sizes agree.
+    """
+    if None in expected or tuple(expected) == tuple(actual):
+        return None
+
+    message = (f"the annotation file says it is {expected[1]}x{expected[0]}, but the image is "
+               f"{actual[1]}x{actual[0]}, so its annotations were not imported.")
+    if tuple(expected) == tuple(actual)[::-1]:
+        message += (" The tool that made the file probably rotated the image by its EXIF "
+                    "orientation, which CoralNet-Toolbox does not apply.")
+    return message
+
+
 def discover_dataset_files(yaml_path, image_import_policy='annotated_only', exclude_dirs=(),
                            sidecar_kind='labels'):
     """Find every image in a YOLO dataset and the sidecar file that goes with it.
@@ -340,9 +383,12 @@ class DatasetProcessor(QObject):
 
     def __init__(self, yaml_path, output_folder, task, import_as, rename_on_conflict=False,
                  excluded_classes=None, image_import_policy='annotated_only', copy_images=True,
-                 sample_size=None, parent=None):
+                 sample_size=None, coco_dataset=None, parent=None):
         super().__init__(parent)
         self.yaml_path = yaml_path
+        # A COCO dataset the dialog already read (see coco_format), or None for
+        # a YOLO import, which reads yaml_path instead.
+        self.coco_dataset = coco_dataset
         # None when importing in place, where there is no destination at all.
         self.output_folder = output_folder
         self.copy_images = copy_images
@@ -366,15 +412,22 @@ class DatasetProcessor(QObject):
     def run(self):
         """Main processing method executed in the thread."""
         try:
-            # Step 1: Read YAML and discover files
-            with open(self.yaml_path, 'r') as file:
-                data = yaml.safe_load(file)
-            class_names = data.get('names', [])
-
-            source_image_label_map = self._find_source_files()
+            # Step 1: Discover files - through the YAML for YOLO, from the
+            # annotation file the dialog already read for COCO
+            if self.coco_dataset is not None:
+                class_names = None
+                source_image_label_map = self._find_coco_source_files()
+            else:
+                with open(self.yaml_path, 'r') as file:
+                    data = yaml.safe_load(file)
+                class_names = data.get('names', [])
+                source_image_label_map = self._find_source_files()
 
             if not source_image_label_map:
-                if self.image_import_policy == 'annotated_only':
+                if self.coco_dataset is not None and not any(image['path'] for image in self.coco_dataset['images']):
+                    self.error.emit("None of the annotation file's images were found on disk. "
+                                    "Pick the folder that holds them under Images.")
+                elif self.image_import_policy == 'annotated_only':
                     self.error.emit("No valid image/label pairs found in the dataset.")
                 else:
                     self.error.emit("No images found in the dataset.")
@@ -447,6 +500,44 @@ class DatasetProcessor(QObject):
 
         return source_map
 
+    def _find_coco_source_files(self):
+        """Map each COCO image found on disk to its annotations.
+
+        The same rules as _find_source_files, applied to an annotation file
+        instead of a folder tree: the import rule picks the images, the sample
+        is drawn from those, and each image carries its annotations along. An
+        image counts as annotated by the checked classes only, so one whose
+        annotations are all of unchecked classes is left out of an 'only images
+        with annotations' import rather than arriving empty.
+
+        Each value is {'image': the image entry, 'annotations': [...]}, or None
+        for an images-only import. Images that were not found are skipped
+        here; the dialog reported them when it read the file.
+        """
+        names = {category['id']: category['name'] for category in self.coco_dataset['categories']}
+        annotations_by_image = {}
+        for annotation in self.coco_dataset['annotations']:
+            if names[annotation['category_id']] not in self.excluded_classes:
+                annotations_by_image.setdefault(annotation['image_id'], []).append(annotation)
+
+        source_map = {}
+        for image in self.coco_dataset['images']:
+            if image['path'] is None:
+                continue
+            annotations = annotations_by_image.get(image['id'], [])
+            if self.image_import_policy == 'annotated_only' and not annotations:
+                continue
+            if self.image_import_policy == 'images_only':
+                source_map[image['path']] = None
+            else:
+                source_map[image['path']] = {'image': image, 'annotations': annotations}
+
+        if self.sample_size and self.sample_size < len(source_map):
+            chosen = random.sample(sorted(source_map), self.sample_size)
+            source_map = {path: source_map[path] for path in chosen}
+
+        return source_map
+
     def _copy_files_with_progress(self, source_image_label_map):
         """Copies files and reports progress for each file.
 
@@ -456,7 +547,8 @@ class DatasetProcessor(QObject):
         img_out_dir = os.path.join(self.output_folder, "images")
         os.makedirs(img_out_dir, exist_ok=True)
 
-        copy_masks = self.task == 'semantic'
+        # A COCO import has no mask files: its masks are in the annotation file
+        copy_masks = self.task == 'semantic' and self.coco_dataset is None
         mask_out_dir = os.path.join(self.output_folder, "masks")
         if copy_masks:
             os.makedirs(mask_out_dir, exist_ok=True)
@@ -504,6 +596,8 @@ class DatasetProcessor(QObject):
         makes it safe -- the same box on two different images is two real
         annotations.
         """
+        if self.coco_dataset is not None:
+            return self._create_raw_coco_annotations(image_label_paths)
         if self.task == 'semantic':
             return self._create_raw_mask_records(image_label_paths)
 
@@ -616,6 +710,83 @@ class DatasetProcessor(QObject):
             self.progress_updated.emit(i + 1)
         return records
 
+    def _create_raw_coco_annotations(self, image_records):
+        """Turn COCO annotations into the same raw records a YOLO import produces.
+
+        A semantic import gets one record per image carrying that image's
+        annotations, and the mask is painted on the GUI thread alongside the
+        MaskAnnotation it becomes, for the same reason a YOLO mask file is read
+        there. Painting here would hold every image's full-size mask in memory
+        until the import finished.
+        """
+        names = {category['id']: category['name'] for category in self.coco_dataset['categories']}
+
+        records = []
+        for i, (image_path, record) in enumerate(image_records.items()):
+            if not self.is_running:
+                break
+
+            if record and record['annotations']:
+                image = record['image']
+                if self.task == 'semantic':
+                    records.append({"type": "MaskAnnotation",
+                                    "image_path": image_path,
+                                    "annotations": record['annotations'],
+                                    "size": (image['height'], image['width'])})
+                else:
+                    records.extend(self._coco_image_annotations(image_path, image, record['annotations'], names))
+
+            self.progress_updated.emit(i + 1)
+        return records
+
+    def _coco_image_annotations(self, image_path, image, annotations, names):
+        """Raw annotation records for one image's COCO annotations.
+
+        Coordinates are already pixels, so nothing is scaled; that is also why
+        an image whose size disagrees with the file has its annotations skipped
+        rather than imported in the wrong place. Duplicates are dropped as
+        _create_raw_annotations drops them.
+        """
+        image_name = os.path.basename(image_path)
+
+        if image['height'] and image['width']:
+            # Opened directly for the reasons given in _create_raw_annotations
+            with rasterio.open(image_path) as src:
+                problem = _size_problem((image['height'], image['width']), src.shape)
+            if problem:
+                self.parsing_errors.append(f"'{image_name}': {problem}")
+                return []
+
+        raw_annotations = []
+        seen_keys = set()
+        for annotation in annotations:
+            class_name = names[annotation['category_id']]
+            try:
+                if self.import_as == 'rectangle':
+                    x, y, w, h = annotation['bbox']
+                    shapes = [{"type": "RectangleAnnotation",
+                               "top_left": (x, y),
+                               "bottom_right": (x + w, y + h)}]
+                else:
+                    # A mask is traced, and the tracing has simplified it
+                    traced = isinstance(annotation['segmentation'], dict)
+                    shapes = [{"type": "PolygonAnnotation", "points": exterior, "holes": holes, "traced": traced}
+                              for exterior, holes in annotation_polygons(annotation)]
+            except Exception as e:
+                self.parsing_errors.append(f"'{image_name}': skipped a '{class_name}' annotation: {e}")
+                continue
+
+            for shape in shapes:
+                shape.update(image_path=image_path, class_name=class_name)
+                key = _annotation_key(shape)
+                if key in seen_keys:
+                    self.duplicates_removed += 1
+                    continue
+                seen_keys.add(key)
+                raw_annotations.append(shape)
+
+        return raw_annotations
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Dialog Classes
@@ -640,6 +811,12 @@ class Base(QDialog):
         self.sample_size = None
         self.images_only = False
         self.class_checkboxes = []
+        # The value each checkbox's class has in the dataset: the YOLO class
+        # index, or the COCO category id. Parallel to class_checkboxes.
+        self.class_values = []
+        # Read when a COCO file or folder is picked, and handed to the worker
+        self.coco_dataset = None
+        self.coco_problems = []
 
         # Two columns over a full-width button box. self.layout is the left
         # column, which is where the subclasses' info and options groups land;
@@ -662,7 +839,7 @@ class Base(QDialog):
 
         self.setup_info_layout()
         self.setup_options_layout()
-        self.setup_yaml_layout()
+        self.setup_dataset_layout()
         self.setup_output_layout()
         self.layout.addStretch()
         self.setup_import_rules_layout()
@@ -684,31 +861,57 @@ class Base(QDialog):
         """
         raise NotImplementedError("Subclasses must implement method.")
 
-    def setup_yaml_layout(self):
-        """Set up the layout for selecting the data YAML file."""
-        group_box = QGroupBox("Data YAML File")
+    def setup_dataset_layout(self):
+        """Set up the layout for choosing the dataset: a YOLO data.yaml, or COCO annotations."""
+        group_box = QGroupBox("Dataset")
         layout = QGridLayout()
         layout.addWidget(QLabel("File:"), 0, 0)
-        self.yaml_path_label = QLineEdit()
-        self.yaml_path_label.setReadOnly(True)
-        self.yaml_path_label.setPlaceholderText("Select Data YAML file...")
-        self.yaml_path_label.setToolTip("Path to the dataset.yaml file from your YOLO dataset.\nDefines the structure and class names for import.")
-        layout.addWidget(self.yaml_path_label, 0, 1)
-        self.browse_yaml_button = QPushButton("Browse")
-        self.browse_yaml_button.clicked.connect(self.browse_data_yaml)
-        self.browse_yaml_button.setToolTip("Browse for a dataset.yaml file.")
-        layout.addWidget(self.browse_yaml_button, 0, 2)
+        self.dataset_path_edit = QLineEdit()
+        self.dataset_path_edit.setReadOnly(True)
+        self.dataset_path_edit.setPlaceholderText("Select a YOLO data.yaml, or a COCO .json file or folder...")
+        self.dataset_path_edit.setToolTip("YOLO: the dataset's data.yaml, which names its classes and splits.\n"
+                                          "COCO: an annotation .json, or a folder of them for tools that write\n"
+                                          "one file per image.")
+        layout.addWidget(self.dataset_path_edit, 0, 1)
+        self.browse_dataset_button = QPushButton("File...")
+        self.browse_dataset_button.clicked.connect(self.browse_dataset_file)
+        self.browse_dataset_button.setToolTip("Browse for a data.yaml, or a COCO .json file.")
+        layout.addWidget(self.browse_dataset_button, 0, 2)
+        self.browse_dataset_folder_button = QPushButton("Folder...")
+        self.browse_dataset_folder_button.clicked.connect(self.browse_dataset_folder)
+        self.browse_dataset_folder_button.setToolTip("Browse for a folder of COCO .json files, read as one dataset.")
+        layout.addWidget(self.browse_dataset_folder_button, 0, 3)
+
+        # A COCO file does not say where its images are. They are looked for
+        # beside it first; this row is for when they are somewhere else.
+        self.images_row_label = QLabel("Images:")
+        layout.addWidget(self.images_row_label, 1, 0)
+        self.images_dir_edit = QLineEdit()
+        self.images_dir_edit.setReadOnly(True)
+        self.images_dir_edit.setPlaceholderText("Found automatically beside the annotation file")
+        self.images_dir_edit.setToolTip("Folder holding the dataset's images, when they are not beside the\n"
+                                        "annotation file or in an images/ or data/ folder next to it.")
+        layout.addWidget(self.images_dir_edit, 1, 1)
+        self.browse_images_button = QPushButton("Browse")
+        self.browse_images_button.clicked.connect(self.browse_images_dir)
+        self.browse_images_button.setToolTip("Browse for the folder holding the dataset's images.")
+        layout.addWidget(self.browse_images_button, 1, 2, 1, 2)
+        self.set_images_row_visible(False)
 
         # One line describing what was actually found, so the size and label
         # coverage of a dataset are known before committing to the import.
         self.dataset_summary_label = QLabel("No dataset selected.")
         self.dataset_summary_label.setWordWrap(True)
-        self.dataset_summary_label.setToolTip("What was found in the selected dataset.\n"
-                                              "Counts every split the YAML points at.")
-        layout.addWidget(self.dataset_summary_label, 1, 0, 1, 3)
+        self.dataset_summary_label.setToolTip("What was found in the selected dataset.")
+        layout.addWidget(self.dataset_summary_label, 2, 0, 1, 4)
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
+
+    def set_images_row_visible(self, visible):
+        """Show the Images row, which only a COCO dataset uses."""
+        for widget in (self.images_row_label, self.images_dir_edit, self.browse_images_button):
+            widget.setVisible(visible)
 
     def setup_output_layout(self):
         """Set up the layout for output directory and the advanced options accordion."""
@@ -733,7 +936,7 @@ class Base(QDialog):
         layout.addWidget(self.output_dir_row_label, 2, 0)
         self.output_dir_label = QLineEdit()
         self.output_dir_label.setPlaceholderText("Select output directory...")
-        self.output_dir_label.setToolTip("Directory where the imported dataset will be saved.\nDefault: same directory as the YAML file.")
+        self.output_dir_label.setToolTip("Directory where the imported dataset will be saved.\nDefault: same directory as the dataset file.")
         layout.addWidget(self.output_dir_label, 2, 1)
         self.browse_output_button = QPushButton("Browse")
         self.browse_output_button.clicked.connect(self.browse_output_dir)
@@ -851,19 +1054,154 @@ class Base(QDialog):
         self.button_box.rejected.connect(self.reject)
         parent_layout.addWidget(self.button_box)
 
-    def browse_data_yaml(self):
-        """Open a file dialog to select the data YAML file and populate the class list."""
-        options = QFileDialog.Options()
+    def browse_dataset_file(self):
+        """Open a file dialog for a data.yaml or a COCO .json, and load it."""
         file_path, _ = QFileDialog.getOpenFileName(
-            self, 
-            "Select Data YAML",
-            "", 
-            "YAML Files (*.yaml);;All Files (*)", 
-            options=options
+            self,
+            "Select Dataset",
+            "",
+            "Datasets (*.yaml *.yml *.json);;YOLO data.yaml (*.yaml *.yml);;"
+            "COCO annotations (*.json);;All Files (*)"
         )
         if not file_path:
             return
 
+        if file_path.lower().endswith('.json'):
+            self.load_coco_dataset(file_path)
+        else:
+            self.load_yolo_dataset(file_path)
+
+    def browse_dataset_folder(self):
+        """Open a folder dialog for a folder of COCO .json files, and load it."""
+        dir_path = QFileDialog.getExistingDirectory(self, "Select Folder of COCO Annotation Files")
+        if dir_path:
+            self.load_coco_dataset(dir_path)
+
+    def browse_images_dir(self):
+        """Pick where a COCO dataset's images are, and read the dataset again to find them."""
+        dir_path = QFileDialog.getExistingDirectory(self, "Select Images Folder")
+        if dir_path:
+            self.images_dir_edit.setText(dir_path)
+            self.load_coco_dataset(self.dataset_path_edit.text(), reload=True)
+
+    def set_class_list(self, names, values, keep_unchecked=False):
+        """Rebuild the Classes to Import list.
+
+        Args:
+            names (list): Class names, in the order they are listed.
+            values (list): Each class's value in the dataset, as class_values.
+            keep_unchecked (bool): Leave classes the user had unchecked
+                unchecked, for when the same dataset is read again.
+        """
+        unchecked = set()
+        if keep_unchecked:
+            unchecked = {checkbox.text() for checkbox in self.class_checkboxes if not checkbox.isChecked()}
+
+        for checkbox in self.class_checkboxes:
+            self.class_layout.removeWidget(checkbox)
+            checkbox.deleteLater()
+        self.class_checkboxes.clear()
+
+        for name in names:
+            checkbox = QCheckBox(name)
+            checkbox.setChecked(name not in unchecked)
+            self.class_layout.addWidget(checkbox)
+            self.class_checkboxes.append(checkbox)
+        self.class_values = list(values)
+
+    def load_coco_dataset(self, path, reload=False):
+        """Read COCO annotations - one file, or a folder of them - and list their classes.
+
+        The whole dataset is read here, not just its class names as for a
+        YAML: a COCO file holds its annotations, so this is the read the import
+        needs anyway, and the summary can say how many images were found.
+
+        Args:
+            path (str): A .json file, or a folder of them.
+            reload (bool): The same dataset read again after its images folder
+                changed, which keeps the output settings and unchecked classes.
+        """
+        if not reload:
+            self.images_dir_edit.clear()
+
+        json_paths = find_annotation_files(path)
+        if not json_paths:
+            QMessageBox.warning(self, "No Annotation Files", f"There are no .json files in:\n{path}")
+            return
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            dataset, problems = load_annotation_files(json_paths, self.images_dir_edit.text() or None)
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        # A tool that writes one file per image is nearly always meant to be
+        # read whole, so picking one of its files offers the rest of them
+        if not reload and len(json_paths) == 1 and dataset['dialects'] == [DIALECT_CORALSCOP]:
+            folder = os.path.dirname(path)
+            siblings = find_annotation_files(folder)
+            if len(siblings) > 1:
+                reply = QMessageBox.question(self,
+                                             "One File per Image",
+                                             "This annotation file describes a single image, and its folder "
+                                             f"holds {len(siblings)} .json files.\n\n"
+                                             "Import all of them as one dataset?",
+                                             QMessageBox.Yes | QMessageBox.No,
+                                             QMessageBox.Yes)
+                if reply == QMessageBox.Yes:
+                    self.load_coco_dataset(folder)
+                    return
+
+        if not dataset['images']:
+            _message_with_details(self,
+                                  QMessageBox.Critical,
+                                  "Error",
+                                  f"No COCO annotations could be read from:\n{path}",
+                                  '\n'.join(problems))
+            return
+
+        self.coco_dataset = dataset
+        self.coco_problems = problems
+        self.dataset_path_edit.setText(path)
+        if not reload:
+            self.output_dir_label.setText(path if os.path.isdir(path) else os.path.dirname(path))
+            self.output_folder_name.setText("data")
+        self.set_images_row_visible(True)
+
+        # Only the categories something uses: an unused one is noise at best,
+        # and at worst a placeholder like the one Roboflow puts at id 0
+        counts = category_counts(dataset)
+        used = [category for category in dataset['categories'] if counts[category['id']]]
+        self.set_class_list([category['name'] for category in used],
+                            [category['id'] for category in used],
+                            keep_unchecked=reload)
+
+        self.update_coco_summary()
+
+    def update_coco_summary(self):
+        """Summarize the loaded COCO dataset in a single line, with its problems on hover."""
+        dataset = self.coco_dataset
+        images = dataset['images']
+        found = sum(1 for image in images if image['path'])
+        annotated_ids = {annotation['image_id'] for annotation in dataset['annotations']}
+        annotated = sum(1 for image in images if image['path'] and image['id'] in annotated_ids)
+        class_count = len(self.class_checkboxes)
+        plural = "es" if class_count != 1 else ""
+        text = (f"COCO · {len(images)} images, {found} found · {annotated} with annotations · "
+                f"{len(dataset['annotations'])} annotations · {class_count} class{plural}")
+        tooltip = "What was found in the selected dataset."
+        if self.coco_problems:
+            text += f" · {len(self.coco_problems)} issue(s), hover for details"
+            shown = self.coco_problems[:30]
+            tooltip += "\n\n" + "\n".join(shown)
+            if len(self.coco_problems) > len(shown):
+                tooltip += f"\n... and {len(self.coco_problems) - len(shown)} more"
+
+        self.dataset_summary_label.setText(text)
+        self.dataset_summary_label.setToolTip(tooltip)
+
+    def load_yolo_dataset(self, file_path):
+        """Read a YOLO data.yaml's class names into the class list."""
         try:
             with open(file_path, 'r') as file:
                 data = yaml.safe_load(file)
@@ -886,21 +1224,19 @@ class Base(QDialog):
                                     f"The 'names' entry in the YAML has an unexpected format: {type(names_data)}.")
                 return
             
-            self.yaml_path_label.setText(file_path)
+            self.dataset_path_edit.setText(file_path)
             yaml_dir = os.path.dirname(file_path)
             self.output_dir_label.setText(yaml_dir)
             self.output_folder_name.setText("data")
 
-            for checkbox in self.class_checkboxes:
-                self.class_layout.removeWidget(checkbox)
-                checkbox.deleteLater()
-            self.class_checkboxes.clear()
+            # A COCO dataset picked earlier no longer applies
+            self.coco_dataset = None
+            self.coco_problems = []
+            self.images_dir_edit.clear()
+            self.set_images_row_visible(False)
 
-            for name in names_to_display:
-                checkbox = QCheckBox(name)
-                checkbox.setChecked(True)
-                self.class_layout.addWidget(checkbox)
-                self.class_checkboxes.append(checkbox)
+            # A YOLO class's value is its index in names
+            self.set_class_list(names_to_display, range(len(names_to_display)))
 
             self.update_dataset_summary(file_path, len(names_to_display))
 
@@ -932,6 +1268,8 @@ class Base(QDialog):
         finally:
             QApplication.restoreOverrideCursor()
 
+        self.dataset_summary_label.setToolTip("What was found in the selected dataset.\n"
+                                              "Counts every split the YAML points at.")
         plural = "es" if class_count != 1 else ""
         if not discovered:
             self.dataset_summary_label.setText(
@@ -955,8 +1293,8 @@ class Base(QDialog):
         copy_images = self.copy_images_radio.isChecked()
         rename_files = False
 
-        if not self.yaml_path_label.text():
-            QMessageBox.warning(self, "Error", "Please select a Data YAML file.")
+        if not self.dataset_path_edit.text():
+            QMessageBox.warning(self, "Error", "Please select a dataset: a data.yaml, or COCO annotations.")
             return
 
         if copy_images:
@@ -972,15 +1310,20 @@ class Base(QDialog):
                                              QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
                 if reply == QMessageBox.No: return
 
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-            try:
-                # The same discovery the worker will use, so the conflict check
-                # sees exactly the files that are about to be copied.
-                image_paths = discover_dataset_files(self.yaml_path_label.text(),
-                                                     image_import_policy='all',
-                                                     exclude_dirs=[self.output_folder])
-            finally:
-                QApplication.restoreOverrideCursor()
+            if self.coco_dataset is not None:
+                # Every image the annotation file resolved, which is what the
+                # worker copies from
+                image_paths = [image['path'] for image in self.coco_dataset['images'] if image['path']]
+            else:
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+                try:
+                    # The same discovery the worker will use, so the conflict check
+                    # sees exactly the files that are about to be copied.
+                    image_paths = discover_dataset_files(self.dataset_path_edit.text(),
+                                                         image_import_policy='all',
+                                                         exclude_dirs=[self.output_folder])
+                finally:
+                    QApplication.restoreOverrideCursor()
 
             basenames, duplicates_exist = set(), False
             for path in image_paths:
@@ -1044,7 +1387,7 @@ class Base(QDialog):
 
         self.thread = QThread()
         self.worker = DatasetProcessor(
-            yaml_path=self.yaml_path_label.text(),
+            yaml_path=None if self.coco_dataset is not None else self.dataset_path_edit.text(),
             output_folder=self.output_folder,
             task=self.task,
             import_as=import_as,
@@ -1052,7 +1395,8 @@ class Base(QDialog):
             excluded_classes=excluded_classes,
             image_import_policy=image_import_policy,
             copy_images=copy_images,
-            sample_size=self.sample_size
+            sample_size=self.sample_size,
+            coco_dataset=self.coco_dataset,
         )
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
@@ -1128,11 +1472,16 @@ class Base(QDialog):
                 )
             else: # PolygonAnnotation
                 points = [QPointF(p[0], p[1]) for p in raw_ann["points"]]
+                holes = [[QPointF(x, y) for x, y in hole] for hole in raw_ann.get("holes", [])]
                 annotation = PolygonAnnotation(
                     points,
                     label,
                     raw_ann["image_path"],
                     transparency=self.main_window.get_transparency_value(),
+                    holes=holes,
+                    # A traced COCO mask was simplified as it was traced, so the
+                    # cleanup pass would cost a shapely round-trip for nothing
+                    simplify=not raw_ann.get("traced", False),
                 )
             
             if annotation:
@@ -1180,26 +1529,28 @@ class Base(QDialog):
             summary_message += (f"\n\nRemoved {duplicates_removed} exact duplicate annotation(s) "
                                 f"({len(newly_created_annotations)} kept).")
         if parsing_errors:
-            QMessageBox.warning(self, 
-                                "Import Complete with Warnings", 
-                                f"{summary_message}\n\nHowever, {len(parsing_errors)} issue(s) were found. "
-                                "Please review them below.", 
-                                details='\n'.join(parsing_errors))
+            _message_with_details(self,
+                                  QMessageBox.Warning,
+                                  "Import Complete with Warnings",
+                                  f"{summary_message}\n\nHowever, {len(parsing_errors)} issue(s) were found. "
+                                  "Please review them below.",
+                                  '\n'.join(parsing_errors))
         else:
             QMessageBox.information(self, "Dataset Imported", summary_message)
             
     def get_class_id_to_label(self):
-        """Map each YOLO class ID to the project Label it should import as.
+        """Map each class's value in the dataset to the project Label it should import as.
 
-        The checkbox list is built from the YAML's names in order, so its index
-        is the class ID -- which is also the pixel value in a semantic mask.
-        Two kinds of class are deliberately absent from the result, and so stay
-        background: ones the user unchecked, and a class literally named
-        "background", which is what this toolbox's own semantic export writes
-        at index 0 to mean "nothing here".
+        For YOLO the value is the class ID, the index into the YAML's names --
+        which is also the pixel value in a semantic mask. For COCO it is the
+        category id, which is the value paint_class_mask writes. Two kinds of
+        class are deliberately absent from the result, and so stay background:
+        ones the user unchecked, and a YOLO class literally named "background"
+        at index 0, which is what this toolbox's own semantic export writes to
+        mean "nothing here". COCO ids start at 1, so that rule never applies.
         """
         class_id_to_label = {}
-        for class_id, checkbox in enumerate(self.class_checkboxes):
+        for class_id, checkbox in zip(self.class_values, self.class_checkboxes, strict=True):
             if not checkbox.isChecked():
                 continue
 
@@ -1245,16 +1596,25 @@ class Base(QDialog):
 
         for record in raw_records:
             image_path = record["image_path"]
-            mask_path = record["mask_path"]
+            # A COCO record carries its annotations rather than a mask file
+            mask_path = record.get("mask_path") or image_path
             try:
                 raster = self.image_window.raster_manager.get_raster(image_path)
                 if raster is None:
                     raise ValueError("Image was not added to the project.")
 
-                # Read band 1: a semantic mask is single-channel by definition,
-                # and a palette PNG still carries the class IDs as its indices.
-                with rasterio.open(mask_path) as src:
-                    source_mask = src.read(1)
+                if "annotations" in record:
+                    shape = (raster.height, raster.width)
+                    problem = _size_problem(record["size"], shape)
+                    if problem:
+                        raise ValueError(problem)
+                    source_mask = paint_class_mask([(annotation['category_id'], annotation)
+                                                    for annotation in record["annotations"]], *shape)
+                else:
+                    # Read band 1: a semantic mask is single-channel by definition,
+                    # and a palette PNG still carries the class IDs as its indices.
+                    with rasterio.open(mask_path) as src:
+                        source_mask = src.read(1)
 
                 mask_annotation = build_mask_annotation(
                     image_path=image_path,
@@ -1300,11 +1660,12 @@ class Base(QDialog):
         if self.sample_size:
             summary_message += f"\n\nImported a random subset of {len(image_paths)} image(s)."
         if errors:
-            QMessageBox.warning(self,
-                                "Import Complete with Warnings",
-                                f"{summary_message}\n\nHowever, {len(errors)} issue(s) were found. "
-                                "Please review them below.",
-                                details='\n'.join(errors))
+            _message_with_details(self,
+                                  QMessageBox.Warning,
+                                  "Import Complete with Warnings",
+                                  f"{summary_message}\n\nHowever, {len(errors)} issue(s) were found. "
+                                  "Please review them below.",
+                                  '\n'.join(errors))
         else:
             QMessageBox.information(self, "Dataset Imported", summary_message)
 
