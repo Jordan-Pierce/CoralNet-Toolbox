@@ -68,7 +68,11 @@ DOCK_TOOLTIPS = {
         "The toolbars add, edit, merge, delete, and filter labels,\n"
         "and the counts beside each label show how many\n"
         "annotations use it. Hovering a label also shows its full\n"
-        "name, color, and ID.",
+        "name, color, and ID.\n"
+        "\n"
+        "Hold Ctrl while hovering a label to see a field guide:\n"
+        "example crops of annotations carrying it, verified and\n"
+        "largest first, with its share of the project.",
 
     "ConfidenceDock":
         "Confidence Window\n"

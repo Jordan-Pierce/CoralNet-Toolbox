@@ -935,6 +935,12 @@ When a video is loaded, additional playback controls appear:
 - **Label Visibility**: Each label has a checkbox to show / hide annotations of that label
   - Hidden labels retain their data and can be shown again at any time
   - Transparency slider affects all labels (both visible and hidden)
+- **Field Guide**: Hold <kbd>Ctrl</kbd> while hovering a label to see example crops of annotations carrying it, shown beside the label
+  - Up to four examples: verified annotations before unverified ones, then the largest first
+  - Each crop is framed in the label's color, or in amber when it is unverified, and captioned with its height × width
+  - The bar underneath shows the label's share of all annotations in the project
+  - Crops not made yet are read from their images, so the first look at a label can take a moment
+  - Annotations on video frames other than the one on screen are skipped
 
 ### Label Management Toolbar
 Action buttons for label operations:
@@ -1193,6 +1199,7 @@ After a model is loaded, use these shortcuts to run inference:
 - <kbd>Left-Click</kbd> + <kbd>Drag</kbd>: Move selected annotation, draw shape
 - <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add / remove from selection, add positive point / prototype
 - <kbd>Shift</kbd> + <kbd>Left-Click</kbd>: Select range of items (Rasters Window)
+- <kbd>Ctrl</kbd> + <kbd>Hover</kbd>: Preview the image (Rasters Window) / show the label's field guide (Labels Window)
 - <kbd>Ctrl</kbd> + <kbd>Drag</kbd>: Box-select multiple annotations
 - <kbd>Right-Click</kbd> + <kbd>Drag</kbd>: Pan the image viewer
 - <kbd>Right-Click</kbd>: Open context menu (Rasters Window)
