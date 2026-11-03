@@ -16,7 +16,9 @@ the student ever sees.
     teacher score >= ignore_conf, no GT   -> excluded from the cls loss
     everything else                       -> background, as normal
 
-The band is the whole feature, and there is no confidence knob to get wrong.
+The band is the whole feature. Its one setting is ``ignore_conf``, the teacher
+score at which a region enters it: :data:`IGNORE_CONF` (0.25, the value it was
+measured with) unless the user sets PU Threshold in a dialog.
 
 Scope: the anchor-based v8 detection loss, and the instance segmentation loss
 built on top of it. ``v8SegmentationLoss`` subclasses ``v8DetectionLoss`` and
@@ -162,11 +164,20 @@ from ultralytics.utils.torch_utils import unwrap_model
 from ultralytics.utils import LOGGER, RANK
 
 
-# The defaults are the validated configuration, and they are constants rather
-# than dialog fields on purpose: every one of them was swept, and the feature is
-# offered as a single switch. Anything exposed here is another way for a run to
-# differ from the one the numbers came from.
-IGNORE_CONF = 0.25      # teacher score at/above which a region stops being background
+# The defaults are the validated configuration. All but one are constants rather
+# than dialog fields on purpose: every one of them was swept, and anything exposed
+# is another way for a run to differ from the one the numbers came from.
+#
+# The exception is IGNORE_CONF, the teacher score at or above which an unlabeled
+# region stops being background. Both dialogs offer it as PU Threshold, because it
+# is the one that trades directly against the data: lower protects more missed
+# objects and lets more of the model's own false positives escape the loss with
+# them. At 0.25 about 60% of the band sat on a real unlabeled object and a third
+# on nothing (scripts/PU_Testbed.py, nano, 40% of boxes missing). This is its
+# default, and the only value it was measured at.
+IGNORE_CONF = 0.25
+IGNORE_CONF_MIN = 0.05  # PU Threshold's range in the dialogs
+IGNORE_CONF_MAX = 0.95
 # The teacher's decay ceiling, per optimizer step. It is reached only slowly --
 # _pu_decay ramps it up from zero over about 2000 steps, as Ultralytics' ModelEMA
 # does -- and an Active Learning round is a few hundred steps, so there the
@@ -209,6 +220,17 @@ PU_MODELS_NOTE = ("Works with: YOLOv3u, YOLOv5u, YOLOv8, YOLOv9, YOLO11 and YOLO
                   "detection and for instance segmentation (-seg), plus the community\n"
                   "models.\n"
                   "Not available for: RT-DETR, YOLOv10, YOLO26 (yolo26-seg included).")
+
+# The PU Threshold tooltip, the same in both dialogs.
+PU_THRESHOLD_NOTE = ("How confident the model has to be about a region you did not label\n"
+                     "before that region is left out of the loss, instead of counted as\n"
+                     "background. Used only when PU Dataset is True.\n\n"
+                     "Lower leaves out more: more of the objects you missed are protected,\n"
+                     "and more of the model's own false positives escape the loss with them.\n"
+                     "Higher leaves out less, and behaves more like normal training.\n\n"
+                     "0.25 is the default and the only value PU has been measured at. There,\n"
+                     "about 60% of the regions left out sat on a real unlabeled object and\n"
+                     "about a third on nothing at all.")
 
 # How far back pu_supported_model follows a checkpoint's run records. A warm
 # started Active Learning round is a chain of best.pt files, one per round.
@@ -858,9 +880,13 @@ class _PUTrainer:
 
     Passed to ``model.train(trainer=...)``, which is Ultralytics' own hook for
     this, so everything else about the run -- dataset class, callbacks, saving,
-    validation, early stopping -- is untouched. It takes no configuration: the
-    feature is one switch, and the constants at the top of this module are the
-    validated values.
+    validation, early stopping -- is untouched. Its one setting is the band's
+    threshold, ``pu_ignore_conf``, taken as a constructor argument because
+    Ultralytics builds the trainer itself from the class it is handed, as
+    ``trainer(overrides=..., _callbacks=...)``, and refuses any key it does not
+    know in ``overrides``. A caller that wants another threshold hands it
+    ``functools.partial(trainer, pu_ignore_conf=...)``. Everything else is the
+    constants at the top of this module, the validated values.
 
     The teacher is a frozen copy of the student updated after every optimizer
     step as ``theta_t <- d * theta_t + (1 - d) * theta_s``, with ``d`` ramping up
@@ -870,6 +896,17 @@ class _PUTrainer:
     """
 
     pu_loss_cls = None  # set by the concrete trainers below
+
+    def __init__(self, *args, pu_ignore_conf=None, **kwargs):
+        if pu_ignore_conf is None:
+            pu_ignore_conf = IGNORE_CONF
+        pu_ignore_conf = float(pu_ignore_conf)
+        # Strictly inside (0, 1): at 0 every teacher box would be in the band,
+        # and at 1 none would, which is PU switched off by another name.
+        if not 0.0 < pu_ignore_conf < 1.0:
+            raise ValueError(f"PU Threshold must be between 0 and 1 (got {pu_ignore_conf}).")
+        self.pu_ignore_conf = pu_ignore_conf
+        super().__init__(*args, **kwargs)
 
     def _setup_train(self):
         super()._setup_train()
@@ -885,7 +922,7 @@ class _PUTrainer:
         # The optimizer step count the teacher last followed; see _pu_update_teacher.
         self._pu_seen_steps = self._pu_optimizer_steps()
 
-        criterion = self.pu_loss_cls(student)
+        criterion = self.pu_loss_cls(student, ignore_conf=self.pu_ignore_conf)
         criterion.teacher = self.teacher
         # Ultralytics builds the criterion lazily on the first loss call and
         # caches it here, so assigning it now is what swaps the loss.
@@ -915,7 +952,9 @@ class _PUTrainer:
 
         if RANK in (-1, 0):
             LOGGER.info(f"PU: ignore-band training. warmup={self.pu_warmup} epochs "
-                        f"(GT only), ignore_conf={IGNORE_CONF}, ema_decay={EMA_DECAY}.")
+                        f"(GT only), ignore_conf={self.pu_ignore_conf}"
+                        + ("" if self.pu_ignore_conf == IGNORE_CONF else f" (default {IGNORE_CONF})")
+                        + f", ema_decay={EMA_DECAY}.")
             LOGGER.info(f"PU: early stopping waits for fitness AND recall to stall "
                         f"(patience={self.stopper.patience}), because mAP50-95 alone "
                         f"is the metric PU trades away.")

@@ -3,6 +3,7 @@ import gc
 import yaml
 import uuid
 import datetime
+import functools
 import traceback
 import ujson as json
 from pathlib import Path
@@ -34,8 +35,9 @@ from coralnet_toolbox.MachineLearning.EvaluateModel.QtBase import EvaluateModelW
 from coralnet_toolbox.MachineLearning.RunLog import capture_run_log
 from coralnet_toolbox.paths import resolve_weights
 from coralnet_toolbox.MachineLearning.PUDetection import (
-    PU_MODELS_NOTE, PU_TRAINERS, install_union_stopping, pu_close_mosaic,
-    pu_supported_model, pu_trainer_for, pu_unavailable_tooltip, supports_pu)
+    IGNORE_CONF, IGNORE_CONF_MAX, IGNORE_CONF_MIN, PU_MODELS_NOTE, PU_THRESHOLD_NOTE,
+    PU_TRAINERS, install_union_stopping, pu_close_mosaic, pu_supported_model,
+    pu_trainer_for, pu_unavailable_tooltip, supports_pu)
 
 from coralnet_toolbox.Icons import get_window_icon
 
@@ -232,6 +234,9 @@ class TrainModelWorker(QThread):
         # choice of trainer cannot disagree: a segmentation run put through the
         # detection trainer builds a DetectionModel and never trains a mask.
         self.pu_trainer = None
+        # The ignore band's threshold (PU Threshold), or None for the default.
+        # Ours too, popped in pre_run and handed to the PU trainer in _train.
+        self.pu_ignore_conf = None
         # Stop on the union of fitness and recall rather than fitness alone
         # (PUDetection.UnionEarlyStopping). Ours too, popped in pre_run. A PU
         # run installs that stopper itself, so this matters for the others.
@@ -278,6 +283,7 @@ class TrainModelWorker(QThread):
             self.in_place_dataset = self.params.pop('in_place_dataset', None)
             # Private flags; must not reach model.train() either
             self.pu_dataset = bool(self.params.pop('pu_dataset', False))
+            self.pu_ignore_conf = self.params.pop('pu_ignore_conf', None)
             self.union_stopping = bool(self.params.pop('union_stopping', False))
             self.weighted = self.set_weighted_dataset()
             if self.in_place_dataset is not None:
@@ -515,8 +521,13 @@ class TrainModelWorker(QThread):
             # Train the model. `trainer` is Ultralytics' own hook for a custom
             # trainer, so a PU run differs from a normal one by this argument and
             # nothing else -- same dataset class, callbacks, saving and validation.
-            self.model.train(**self.params, device=self.device,
-                             trainer=self.pu_trainer if self.pu_dataset else None)
+            trainer = self.pu_trainer if self.pu_dataset else None
+            if trainer is not None and self.pu_ignore_conf is not None:
+                # Ultralytics builds the trainer itself, so PU Threshold travels
+                # as a constructor argument rather than a training parameter,
+                # which it would refuse as unknown.
+                trainer = functools.partial(trainer, pu_ignore_conf=float(self.pu_ignore_conf))
+            self.model.train(**self.params, device=self.device, trainer=trainer)
 
             # Post-run cleanup
             self.post_run()
@@ -967,6 +978,7 @@ class Base(QDialog):
         # rather than disabled elsewhere: a row that can never be used is a
         # question the user has to answer and then discover did not matter.
         self.pu_dataset_combo = None
+        self.pu_threshold_spinbox = None
         if self.task in PU_TRAINERS:
             self.pu_dataset_combo = create_bool_combo()
             # Off unless asked for: it is a statement about the data, and only
@@ -999,6 +1011,18 @@ class Base(QDialog):
             self.pu_dataset_combo.setToolTip(self.pu_dataset_tooltip)
             self.pu_dataset_label = QLabel("PU Dataset:")
             form_layout.addRow(self.pu_dataset_label, self.pu_dataset_combo)
+
+            # The band's one setting, directly under the switch it belongs to.
+            self.pu_threshold_spinbox = QDoubleSpinBox()
+            self.pu_threshold_spinbox.setRange(IGNORE_CONF_MIN, IGNORE_CONF_MAX)
+            self.pu_threshold_spinbox.setSingleStep(0.05)
+            self.pu_threshold_spinbox.setDecimals(2)
+            self.pu_threshold_spinbox.setValue(IGNORE_CONF)
+            self.pu_threshold_spinbox.setToolTip(PU_THRESHOLD_NOTE)
+            self.pu_threshold_label = QLabel("PU Threshold:")
+            form_layout.addRow(self.pu_threshold_label, self.pu_threshold_spinbox)
+            self.pu_dataset_combo.currentTextChanged.connect(self.update_pu_threshold_state)
+
             # The chosen model decides whether this can be offered at all,
             # and it can change after this runs. Both tabs are watched, plus
             # the tab bar itself, because which tab is in front is what picks
@@ -1119,12 +1143,27 @@ class Base(QDialog):
         else:
             self.pu_dataset_combo.setCurrentText("False")
             self.pu_dataset_combo.setToolTip(pu_unavailable_tooltip(model, reason, source))
+        self.update_pu_threshold_state()
+
+    def update_pu_threshold_state(self, *args):
+        """PU Threshold is live only while PU Dataset is: it means nothing otherwise."""
+        spinbox = getattr(self, 'pu_threshold_spinbox', None)
+        if spinbox is None:
+            return
+        active = self.pu_dataset_requested()
+        spinbox.setEnabled(active)
+        self.pu_threshold_label.setEnabled(active)
 
     def pu_dataset_requested(self):
         """Whether this run should train as positive-unlabeled."""
         combo = getattr(self, 'pu_dataset_combo', None)
         return bool(combo is not None and combo.isEnabled()
                     and combo.currentText() == "True")
+
+    def pu_ignore_conf(self):
+        """PU Threshold for this run, or None when the task has no PU control."""
+        spinbox = getattr(self, 'pu_threshold_spinbox', None)
+        return None if spinbox is None else round(float(spinbox.value()), 4)
 
     def _create_cache_combo(self):
         """Create the Ultralytics cache mode combo box."""
@@ -1494,10 +1533,11 @@ class Base(QDialog):
             }
             if self.pu_dataset_combo is not None:
                 param_mapping['pu_dataset'] = self.pu_dataset_combo
+                param_mapping['pu_ignore_conf'] = self.pu_threshold_spinbox
             else:
                 # No PU control on this task. As a custom parameter it would
                 # reach the worker and fail a run that never offered the choice.
-                excluded_keys.add('pu_dataset')
+                excluded_keys.update({'pu_dataset', 'pu_ignore_conf'})
 
             # Update UI controls with imported values
             for param_name, value in params_to_load.items():
@@ -1581,6 +1621,7 @@ class Base(QDialog):
             export_data['mask_ratio'] = self.mask_ratio_spinbox.value()
             if self.pu_dataset_combo is not None:
                 export_data['pu_dataset'] = self.pu_dataset_requested()
+                export_data['pu_ignore_conf'] = self.pu_ignore_conf()
 
             # Custom parameters
             for param_info in self.custom_params:
@@ -1670,8 +1711,9 @@ class Base(QDialog):
             'dropout': self.dropout_spinbox.value(),
             'val': self.val_combo.currentText() == "True",
             'mask_ratio': self.mask_ratio_spinbox.value(),
-            # Ours, not Ultralytics': the worker pops it before model.train().
+            # Ours, not Ultralytics': the worker pops these before model.train().
             'pu_dataset': self.pu_dataset_requested(),
+            'pu_ignore_conf': self.pu_ignore_conf(),
             'exist_ok': True,
             'plots': True,
         }

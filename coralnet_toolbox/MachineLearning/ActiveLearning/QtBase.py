@@ -85,7 +85,9 @@ from coralnet_toolbox.Features.FeatureMapCodec import load_feature_vector
 from coralnet_toolbox.MachineLearning import InPlaceTraining
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 from coralnet_toolbox.MachineLearning.TrainModel.QtBase import TrainModelWorker
-from coralnet_toolbox.MachineLearning.PUDetection import (PU_MODELS_NOTE, PU_TRAINERS,
+from coralnet_toolbox.MachineLearning.PUDetection import (IGNORE_CONF, IGNORE_CONF_MAX,
+                                                         IGNORE_CONF_MIN, PU_MODELS_NOTE,
+                                                         PU_THRESHOLD_NOTE, PU_TRAINERS,
                                                          pu_alternative,
                                                          pu_supported_model,
                                                          pu_unavailable_tooltip)
@@ -1028,6 +1030,7 @@ class Base(QDialog):
         # loss. Absent rather than disabled for the tasks that have no PU
         # trainer, so it is never a question with no answer.
         self.pu_dataset_combo = None
+        self.pu_threshold_spinbox = None
         if self.task in PU_TRAINERS:
             # Kept so update_pu_availability can restore it after a model
             # that cannot run PU has replaced it with the reason.
@@ -1071,6 +1074,18 @@ class Base(QDialog):
             pu_column.addWidget(self.pu_dataset_combo)
             pu_column.addWidget(self.pu_unavailable_note)
             layout.addRow(self.pu_dataset_label, pu_column)
+
+            # The band's one setting, directly under the switch it belongs to.
+            self.pu_threshold_spinbox = QDoubleSpinBox()
+            self.pu_threshold_spinbox.setRange(IGNORE_CONF_MIN, IGNORE_CONF_MAX)
+            self.pu_threshold_spinbox.setSingleStep(0.05)
+            self.pu_threshold_spinbox.setDecimals(2)
+            self.pu_threshold_spinbox.setValue(IGNORE_CONF)
+            self.pu_threshold_spinbox.setToolTip(PU_THRESHOLD_NOTE)
+            self.pu_threshold_label = QLabel("PU Threshold:")
+            layout.addRow(self.pu_threshold_label, self.pu_threshold_spinbox)
+            self.pu_dataset_combo.currentTextChanged.connect(self.update_pu_threshold_state)
+
             # create_model_group() has already run, so the combo exists to
             # watch. Browse writes into it too, so this covers both ways the
             # model can change.
@@ -2477,12 +2492,27 @@ class Base(QDialog):
                 note = f"PU is off: {name} cannot run it."
             self.pu_unavailable_note.setText(note)
             self.pu_unavailable_note.setVisible(True)
+        self.update_pu_threshold_state()
+
+    def update_pu_threshold_state(self, *args):
+        """PU Threshold is live only while PU Dataset is: it means nothing otherwise."""
+        spinbox = getattr(self, 'pu_threshold_spinbox', None)
+        if spinbox is None:
+            return
+        active = self.pu_dataset_requested()
+        spinbox.setEnabled(active)
+        self.pu_threshold_label.setEnabled(active)
 
     def pu_dataset_requested(self):
         """Whether the next round trains as positive-unlabeled."""
         combo = getattr(self, 'pu_dataset_combo', None)
         return bool(combo is not None and combo.isEnabled()
                     and combo.currentText() == "True")
+
+    def pu_ignore_conf(self):
+        """PU Threshold for the next round, or None when the task has no PU control."""
+        spinbox = getattr(self, 'pu_threshold_spinbox', None)
+        return None if spinbox is None else round(float(spinbox.value()), 4)
 
     def update_budget_range(self):
         """Cap the Image Budget at the number of images the project holds.
@@ -2875,6 +2905,7 @@ class Base(QDialog):
             # user can toggle it mid-session and round_improved has to know how
             # each round was actually trained.
             'pu_dataset': bool(params.get('pu_dataset')),
+            'pu_ignore_conf': params.get('pu_ignore_conf') if params.get('pu_dataset') else None,
             'fine_tuned': fine_tune,
             'stopped': False,
         }
@@ -3176,6 +3207,7 @@ class Base(QDialog):
             'freeze_layers': self.freeze_layers_spinbox.value(),
             'weighted': self.weighted_combo.currentText() == "True",
             'pu_dataset': self.pu_dataset_requested(),
+            'pu_ignore_conf': self.pu_ignore_conf() if self.pu_dataset_requested() else None,
             'single_cls': self.single_class_combo.currentText() == "True",
             'mask_ratio': self.mask_ratio_spinbox.value(),
             'workers': self.workers_spinbox.value(),
@@ -3211,6 +3243,7 @@ class Base(QDialog):
             # How the saved model was trained, which `settings` cannot say: that
             # is the widget now, and the toggle can change mid-session.
             'pu_dataset': bool(entry.get('pu_dataset')),
+            'pu_ignore_conf': entry.get('pu_ignore_conf'),
             'metrics': {
                 'precision': entry.get('precision'),
                 'recall': entry.get('recall'),
@@ -3232,6 +3265,7 @@ class Base(QDialog):
                 'fitness': record.get('fitness'),
                 'epoch': record.get('epoch'),
                 'pu_dataset': bool(record.get('pu_dataset')),
+                'pu_ignore_conf': record.get('pu_ignore_conf'),
                 'stopped': record.get('stopped'),
                 'labels': list(record.get('labels') or []),
             } for record in self.round_history],
@@ -3588,6 +3622,7 @@ class Base(QDialog):
             'weighted': self.weighted_combo.currentText() == "True",
             # Ours, not Ultralytics': the worker pops these before model.train().
             'pu_dataset': self.pu_dataset_requested(),
+            'pu_ignore_conf': self.pu_ignore_conf(),
             'union_stopping': TRAINING_DEFAULTS['union_stopping'],
             'freeze_layers': self.freeze_layers_spinbox.value(),
             'dropout': self.dropout_spinbox.value(),
@@ -4398,6 +4433,7 @@ class Base(QDialog):
             'weights': weights,
             'labels': pending['labels'],
             'pu_dataset': bool(pending.get('pu_dataset')),
+            'pu_ignore_conf': pending.get('pu_ignore_conf'),
             'fine_tuned': bool(pending.get('fine_tuned')),
             'stopped': bool(pending.get('stopped')),
         })
