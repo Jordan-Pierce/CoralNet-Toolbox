@@ -34,8 +34,8 @@ from coralnet_toolbox.MachineLearning.EvaluateModel.QtBase import EvaluateModelW
 from coralnet_toolbox.MachineLearning.RunLog import capture_run_log
 from coralnet_toolbox.paths import resolve_weights
 from coralnet_toolbox.MachineLearning.PUDetection import (
-    PU_MODELS_NOTE, PU_TRAINERS, pu_close_mosaic, pu_supported_model,
-    pu_trainer_for, pu_unavailable_tooltip, supports_pu)
+    PU_MODELS_NOTE, PU_TRAINERS, install_union_stopping, pu_close_mosaic,
+    pu_supported_model, pu_trainer_for, pu_unavailable_tooltip, supports_pu)
 
 from coralnet_toolbox.Icons import get_window_icon
 
@@ -232,6 +232,10 @@ class TrainModelWorker(QThread):
         # choice of trainer cannot disagree: a segmentation run put through the
         # detection trainer builds a DetectionModel and never trains a mask.
         self.pu_trainer = None
+        # Stop on the union of fitness and recall rather than fitness alone
+        # (PUDetection.UnionEarlyStopping). Ours too, popped in pre_run. A PU
+        # run installs that stopper itself, so this matters for the others.
+        self.union_stopping = False
         self.temp_data_yaml = None
         # Set when training reads straight from the project instead of a
         # dataset on disk; owns the patched dataset class and its scaffolding.
@@ -272,8 +276,9 @@ class TrainModelWorker(QThread):
             self.model_path = self.params.pop('model', None)
             # Private marker; must not reach model.train()
             self.in_place_dataset = self.params.pop('in_place_dataset', None)
-            # Private flag; must not reach model.train() either
+            # Private flags; must not reach model.train() either
             self.pu_dataset = bool(self.params.pop('pu_dataset', False))
+            self.union_stopping = bool(self.params.pop('union_stopping', False))
             self.weighted = self.set_weighted_dataset()
             if self.in_place_dataset is not None:
                 # Swaps in the dataset class that reads from the project. Done
@@ -501,6 +506,11 @@ class TrainModelWorker(QThread):
             # gets a results.csv row, it just carries a partial train loss.
             self.model.add_callback('on_train_batch_end', self._stop_if_requested)
             self.model.add_callback('on_train_epoch_end', self._stop_if_requested)
+
+            # Fired once the trainer has made its stock stopper, so this
+            # replaces it before the first epoch.
+            if self.union_stopping and not self.pu_dataset:
+                self.model.add_callback('on_pretrain_routine_end', install_union_stopping)
 
             # Train the model. `trainer` is Ultralytics' own hook for a custom
             # trainer, so a PU run differs from a normal one by this argument and
@@ -970,7 +980,7 @@ class Base(QDialog):
                 "came for and left other real objects in the same images unlabeled.\n\n"
                 "Normal training treats every unlabeled region as background, so it\n"
                 "learns to stop finding the objects nobody got to. With this on, a second\n"
-                "copy of the model, averaged slowly over training, marks regions it is\n"
+                "copy of the model, trailing it closely, marks regions it is\n"
                 "fairly sure about; where you drew nothing, those are dropped from the\n"
                 "loss instead. Nothing is ever added to your labels.\n\n"
                 "Costs a forward pass per batch and a second copy of the model in memory,\n"
