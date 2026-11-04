@@ -1,5 +1,5 @@
 site_name: CoralNet-Toolbox
-site_description: Tools for annotating and developing ML models for benthic imagery
+site_description: Human-in-the-Loop Annotation and Model Development for Benthic Imagery
 site_author: Jordan-Pierce
 site_url: https://Jordan-Pierce.github.io/CoralNet-Toolbox
 repo_url: https://github.com/Jordan-Pierce/CoralNet-Toolbox
