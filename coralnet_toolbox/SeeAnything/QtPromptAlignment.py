@@ -232,7 +232,7 @@ class PromptAlignmentWidget(QWidget):
         kept_row = QHBoxLayout()
         self.keep_button = QPushButton("Keep the selected phrase")
         self.keep_button.setToolTip(
-            "Adds the phrase to this run's prompts, alongside your reference images. "
+            "Adds the phrase to this run's prompts, alongside your reference images.\n"
             "Both are the same kind of embedding, so you can use text, images, or both."
         )
         self.keep_button.clicked.connect(self.keep_selected)
@@ -550,7 +550,8 @@ class TextPromptDialog(QDialog):
         self.suggest_button = QPushButton("Suggest from the boxes I drew")
         self.suggest_button.setToolTip(
             "Scores the boxes currently drawn against every word the model knows and lists "
-            "the closest. The best phrase is the one that finds the object, not necessarily "
+            "the closest.\n"
+            "The best phrase is the one that finds the object, not necessarily "
             "its real name, and not necessarily one of your labels."
         )
         self.suggest_button.clicked.connect(self.populate_suggestions)

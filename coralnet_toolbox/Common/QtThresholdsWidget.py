@@ -710,7 +710,7 @@ class ThresholdsWidget(QGroupBox):
         if show_uncertainty:
             self.uncertainty_threshold_slider = ThresholdSlider(Qt.Horizontal)
             self.uncertainty_threshold_slider.setRange(0, 100)
-            self.uncertainty_threshold_slider.setValue(int(self.uncertainty_thresh * 100))
+            self.uncertainty_threshold_slider.setValue(int(round(self.uncertainty_thresh * 100)))
             self.uncertainty_threshold_slider.setTickPosition(QSlider.TicksBelow)
             self.uncertainty_threshold_slider.setTickInterval(10)
             self.uncertainty_threshold_slider.valueChanged.connect(self._update_uncertainty_label)
@@ -805,7 +805,8 @@ class ThresholdsWidget(QGroupBox):
                 "The slider is logarithmic: each tick is one decade, spanning 0.0001% up to 100% of "
                 "the image.")
             self.area_threshold_label.setToolTip(
-                "Current area filter range, as a percentage of the image area. When an image is open "
+                "Current area filter range, as a percentage of the image area.\n"
+                "When an image is open "
                 "the equivalent bounds are also shown - in real-world units if that raster is scaled, "
                 "otherwise in pixels.")
             self._refresh_area_mode_availability()
@@ -946,7 +947,7 @@ class ThresholdsWidget(QGroupBox):
         
         if hasattr(self, 'uncertainty_threshold_slider'):
             current_value = self.main_window.get_uncertainty_thresh()
-            self.uncertainty_threshold_slider.setValue(int(current_value * 100))
+            self.uncertainty_threshold_slider.setValue(int(round(current_value * 100)))
             self.uncertainty_thresh = current_value
         
         if hasattr(self, 'iou_threshold_slider'):
@@ -1038,7 +1039,7 @@ class ThresholdsWidget(QGroupBox):
         """Update slider/label when MainWindow changes"""
         if hasattr(self, 'uncertainty_threshold_slider'):
             self.uncertainty_threshold_slider.blockSignals(True)
-            self.uncertainty_threshold_slider.setValue(int(value * 100))
+            self.uncertainty_threshold_slider.setValue(int(round(value * 100)))
             self.uncertainty_thresh = value
             self.uncertainty_threshold_label.setText(f"{value:.2f}")
             self.uncertainty_threshold_slider.blockSignals(False)

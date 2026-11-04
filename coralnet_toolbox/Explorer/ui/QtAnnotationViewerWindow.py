@@ -193,7 +193,8 @@ class AnnotationViewerWindow(QWidget):
         self.sort_combo.setMinimumWidth(100)
         self.sort_combo.setToolTip("Sort annotations by: None (no sort), Label, Image, Confidence score, "
                                    "Area size, Features (bins of similar-looking annotations, from the "
-                                   "embedding viewer's features). Similarity to the selection is applied "
+                                   "embedding viewer's features).\n"
+                                   "Similarity to the selection is applied "
                                    "automatically when you grow a selection by similarity in the embedding "
                                    "viewer (Ctrl+Shift+Wheel)")
         toolbar.addWidget(self.sort_combo)

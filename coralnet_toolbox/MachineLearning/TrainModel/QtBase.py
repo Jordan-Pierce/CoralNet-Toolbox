@@ -940,7 +940,7 @@ class Base(QDialog):
         self.mask_ratio_spinbox.setMinimum(1)
         self.mask_ratio_spinbox.setMaximum(32)
         self.mask_ratio_spinbox.setValue(4)
-        self.mask_ratio_spinbox.setToolTip("Downsample ratio for segmentation masks, affecting the resolution of masks used during training (e.g., 1 is native, 4 is 1/4th the resolution).")
+        self.mask_ratio_spinbox.setToolTip("Downsample ratio for segmentation masks, affecting the resolution of masks used during training\n(e.g., 1 is native, 4 is 1/4th the resolution).")
         form_layout.addRow("Mask Ratio:", self.mask_ratio_spinbox)
 
         # Weighted Dataset
@@ -1183,7 +1183,7 @@ class Base(QDialog):
 
         combo.setCurrentIndex(0)
         combo.setToolTip(
-            "Ultralytics cache mode for training. False disables caching, True/ram caches to RAM, and disk caches to storage."
+            "Ultralytics cache mode for training.\nFalse disables caching, True/ram caches to RAM, and disk caches to storage."
         )
         combo.setStatusTip(combo.toolTip())
         return combo

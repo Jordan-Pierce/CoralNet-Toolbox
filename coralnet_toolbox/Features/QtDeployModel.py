@@ -125,7 +125,8 @@ class FeaturesDeployModelDialog(QDialog):
         default_res_idx = self.resolution_combo.findText("1024")
         self.resolution_combo.setCurrentIndex(default_res_idx if default_res_idx >= 0 else 0)
         self.resolution_combo.setToolTip(
-            "Input size in pixels, as the edge of a square with the same area. DINOv2/v3 "
+            "Input size in pixels, as the edge of a square with the same area.\n"
+            "DINOv2/v3 "
             "and ConvNeXt keep the image's aspect ratio. Larger gives a denser feature "
             "grid and finer detail, but uses more VRAM/time (attention scales with tokens²)."
         )
@@ -140,7 +141,7 @@ class FeaturesDeployModelDialog(QDialog):
         self.upsample_combo.setCurrentText("4x")
         self.upsample_combo.setToolTip(
             "Densify the feature grid with AnyUp (https://github.com/wimmerth/anyup), "
-            "using the RGB image as guidance. Capped at the input resolution. "
+            "using the RGB image as guidance. Capped at the input resolution.\n"
             "First use downloads the model via torch.hub (requires internet)."
         )
         options_layout.addRow("Upsample (AnyUp):", self.upsample_combo)
@@ -176,7 +177,8 @@ class FeaturesDeployModelDialog(QDialog):
         self.output_type_combo.addItems(["Polygon", "Mask"])
         self.output_type_combo.setCurrentText("Mask")
         self.output_type_combo.setToolTip(
-            "What the 2D Feature Select tool creates when you press Space: vector "
+            "What the 2D Feature Select tool creates when you press Space:\n"
+            "vector "
             "Polygon annotations, or a paint into the raster Mask annotation."
         )
         output_layout.addRow("Output Type:", self.output_type_combo)

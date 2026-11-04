@@ -370,7 +370,7 @@ class Base(QDialog):
         
         # Set tooltip for teacher model
         teacher_tooltip = (
-            "Teacher model for knowledge distillation. We use a ViT-B/14 backbone from DINOv2 by default. "
+            "Teacher model for knowledge distillation. We use a ViT-B/14 backbone from DINOv2 by default.\n"
             "Supported models: DINOv3 variants and DINOv2 variants."
         )
         self.teacher_model_combo.setToolTip(teacher_tooltip)
@@ -431,7 +431,7 @@ class Base(QDialog):
         self.epochs_spinbox.setMaximum(10000)
         self.epochs_spinbox.setValue(500)
         epochs_tooltip = (
-            "Number of training epochs. Recommended: 100-3000 for standard datasets. "
+            "Number of training epochs. Recommended: 100-3000 for standard datasets.\n"
             "Distillation benefits from longer schedules; can extend to 10000 epochs for small datasets (<100k images)."
         )
         self.epochs_spinbox.setToolTip(epochs_tooltip)
@@ -443,7 +443,7 @@ class Base(QDialog):
         self.batch_spinbox.setMaximum(2048)
         self.batch_spinbox.setValue(256)
         batch_tooltip = (
-            "Batch size for training. Recommended: 128-2048 for knowledge distillation. "
+            "Batch size for training. Recommended: 128-2048 for knowledge distillation.\n"
             "Knowledge distillation is agnostic to the choice of student backbone networks."
         )
         self.batch_spinbox.setToolTip(batch_tooltip)
