@@ -85,7 +85,9 @@ from coralnet_toolbox.Features.FeatureMapCodec import load_feature_vector
 from coralnet_toolbox.MachineLearning import InPlaceTraining
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 from coralnet_toolbox.MachineLearning.TrainModel.QtBase import TrainModelWorker
-from coralnet_toolbox.MachineLearning.PUDetection import (PU_MODELS_NOTE, PU_TRAINERS,
+from coralnet_toolbox.MachineLearning.PUDetection import (IGNORE_CONF, IGNORE_CONF_MAX,
+                                                         IGNORE_CONF_MIN, PU_MODELS_NOTE,
+                                                         PU_THRESHOLD_NOTE, PU_TRAINERS,
                                                          pu_alternative,
                                                          pu_supported_model,
                                                          pu_unavailable_tooltip)
@@ -144,12 +146,24 @@ TRAINING_DEFAULTS = {
     # through WeightedInMemoryDataset, which is what the MRO composition test
     # covers, so this costs nothing here.
     'weighted': True,
-    # On, like weighted sampling: an Active Learning project is positive
-    # unlabeled by construction, and treating it that way helps enough here to
-    # be worth the teacher forward pass per batch. update_pu_availability forces
-    # it back off for a model that cannot run it, so this is a default rather
-    # than an assumption.
-    'pu_dataset': True,
+    # Off. An Active Learning project is positive unlabeled by construction, but
+    # at this dialog's defaults -- a nano model, imgsz 640, 30 epochs -- PU
+    # measured level with plain training (scripts/PU_Testbed.py: -0.010 and
+    # -0.002 mAP50-95 on clean test, yolov8n and yolo11n, three seeds each)
+    # while costing about 1.5x the training time and a second copy of the model
+    # in memory. What it did for the loop came from its early stopping rule,
+    # which every round now gets anyway (union_stopping below). The switch stays
+    # for larger models at larger image sizes, which is where the band's
+    # benefit was measured.
+    'pu_dataset': False,
+    # Stop a round only once fitness *and* recall have both stalled
+    # (PUDetection.UnionEarlyStopping), for plain rounds as well as PU ones. Ours,
+    # not Ultralytics': the worker pops it. The val split here is as partly
+    # labeled as the train split, so recall can still be improving while
+    # fitness falls -- and a warm-started round that dipped before recovering
+    # was being ended at epoch 11 of 30, set aside, and repeated identically on
+    # the next press of Train.
+    'union_stopping': True,
     'val': True,
     'verbose': True,
     'exist_ok': True,
@@ -158,6 +172,43 @@ TRAINING_DEFAULTS = {
     # better than the mAP column alone.
     'plots': True,
 }
+
+# A warm-started round continues a model that has already converged, and it
+# used to be trained as though it had not: Ultralytics' warmup ramped the
+# learning rate from zero back up to the full rate of a first run within three
+# epochs. A model whose last round ended at a hundredth of that rate was knocked
+# off its peak (val mAP50-95 down 0.07 to 0.11 by epoch 3, scripts/PU_Testbed.py
+# on african-wildlife) and needed most of the round to climb back, so its best
+# epoch was routinely epoch 1, early stopping ended it at epoch 11, and it was
+# set aside. So a warm round fine-tunes: no warmup, and a tenth of the rate a
+# first round starts at. Measured on the same round 2s, three seeds each of
+# yolov8n and yolo11n: adopted 6 of 6 (was 1 of 6) and better than round 1 on
+# clean test 6 of 6 (was 1 of 6). Three tenths, tried on yolo11n, also fixed
+# the stall but gained less and took longer.
+WARM_START_LR_SCALE = 0.1
+
+
+def warm_start_schedule(params, class_count):
+    """The parameters a warm-started round fine-tunes with, as overrides.
+
+    Ultralytics' 'auto' optimizer ignores lr0, so a scaled rate needs the choice
+    made here instead: AdamW at the rate auto fits to the class count, which is
+    what it picks below 10,000 iterations -- far more than a round runs -- with
+    auto's own momentum. Any other optimizer keeps its rate, scaled.
+
+    Only for a round that continues the best round's model on the same label
+    set. When the label set grew the head is reset, and a fresh head needs a
+    first run's schedule, not a fine-tune.
+    """
+    optimizer = str(params.get('optimizer') or 'auto')
+    overrides = {'warmup_epochs': 0}
+    if optimizer.lower() == 'auto':
+        lr0 = round(0.002 * 5 / (4 + int(class_count)), 6)
+        overrides.update(optimizer='AdamW', momentum=0.9)
+    else:
+        lr0 = float(params.get('lr0', 0.01))  # Ultralytics' default
+    overrides['lr0'] = lr0 * WARM_START_LR_SCALE
+    return overrides
 
 # Exactly what the Train Model dialog offers, imported rather than restated. The
 # short hand-written list this replaced had drifted: it contained 'yolo8n.pt',
@@ -867,14 +918,16 @@ class Base(QDialog):
         self.warm_start_combo = bool_combo(
             True,
             "Start each round from the best weights any round has produced so far,\n"
-            "which makes later rounds much cheaper.\n"
+            "which makes later rounds much cheaper. A warm round fine-tunes rather\n"
+            "than retrains: no warmup, and a tenth of the learning rate.\n"
             "False trains from the model above every round. That is not training from\n"
             "scratch: a .pt file is a COCO-pretrained checkpoint, so a cold round still\n"
             "begins with a backbone that has seen a million photographs.\n"
             "Either way, a round that scores worse than the best one is recorded and\n"
             "set aside -- predictions and Deploy keep using the best model, not the\n"
             "newest -- so a cold round can leave the application behaving exactly as\n"
-            "it did before.")
+            "it did before. The best model still predicts onto the next images, so\n"
+            "the round after a set aside one has new confirmations to learn from.")
         layout.addRow("Warm Start:", self.warm_start_combo)
 
         self.free_gpu_combo = bool_combo(
@@ -977,6 +1030,7 @@ class Base(QDialog):
         # loss. Absent rather than disabled for the tasks that have no PU
         # trainer, so it is never a question with no answer.
         self.pu_dataset_combo = None
+        self.pu_threshold_spinbox = None
         if self.task in PU_TRAINERS:
             # Kept so update_pu_availability can restore it after a model
             # that cannot run PU has replaced it with the reason.
@@ -986,18 +1040,17 @@ class Base(QDialog):
                 f"{unlabeled} are treated as unknown rather than as guaranteed background.\n\n"
                 "This is the normal state of an Active Learning project. You confirm what\n"
                 "the round put in front of you and leave the rest of the frame alone, so\n"
-                "real objects sit unlabeled in images that count as fully reviewed. A slow\n"
-                "average of the model marks regions it is fairly confident about, and where\n"
-                "you drew nothing those are dropped from the loss instead of teaching the\n"
-                "model that nothing is there. Your labels are never added to.\n\n"
+                "real objects sit unlabeled in images that count as fully reviewed. A copy\n"
+                "of the model that trails it closely marks regions it is fairly confident\n"
+                "about, and where you drew nothing those are dropped from the loss instead\n"
+                "of teaching the model that nothing is there. Your labels are never added to.\n\n"
                 "Costs a forward pass per batch and a second copy of the model in memory,\n"
-                "and turns mosaic off for the epochs it is active.\n\n"
-                "On by default here, because an Active Learning project is positive\n"
-                "unlabeled by construction. Two things to know. The measured benefit\n"
-                "needs a medium or larger model at a large image size; at nano, which is\n"
-                "the default model here, it came out level with or slightly behind\n"
-                "normal training.\n"
-                "And it usually lowers mAP while raising recall, because finding an\n"
+                "about 1.5 times the training time, and turns mosaic off for the epochs it\n"
+                "is active.\n\n"
+                "Off by default. The measured benefit needs a medium or larger model at a\n"
+                "large image size; at nano and image size 640, this dialog's defaults, it\n"
+                "came out level with normal training.\n"
+                "It usually lowers mAP while raising recall, because finding an\n"
                 "unlabeled object scores as a false positive. PU rounds are therefore\n"
                 "only ever compared with other PU rounds, and are marked (PU) in the\n"
                 "Rounds table.\n\n"
@@ -1009,9 +1062,9 @@ class Base(QDialog):
             self.pu_dataset_combo = bool_combo(TRAINING_DEFAULTS['pu_dataset'],
                                                self.pu_dataset_tooltip)
             self.pu_dataset_label = QLabel("PU Dataset:")
-            # Said in place rather than left in a tooltip. The default is on, so
-            # a model that cannot run PU turns off the thing the round wanted,
-            # and a greyed out box does not explain itself.
+            # Said in place rather than left in a tooltip. A model that cannot
+            # run PU turns off a switch the user may have turned on, and a
+            # greyed out box does not explain itself.
             self.pu_unavailable_note = QLabel()
             self.pu_unavailable_note.setWordWrap(True)
             self.pu_unavailable_note.setVisible(False)
@@ -1021,6 +1074,18 @@ class Base(QDialog):
             pu_column.addWidget(self.pu_dataset_combo)
             pu_column.addWidget(self.pu_unavailable_note)
             layout.addRow(self.pu_dataset_label, pu_column)
+
+            # The band's one setting, directly under the switch it belongs to.
+            self.pu_threshold_spinbox = QDoubleSpinBox()
+            self.pu_threshold_spinbox.setRange(IGNORE_CONF_MIN, IGNORE_CONF_MAX)
+            self.pu_threshold_spinbox.setSingleStep(0.05)
+            self.pu_threshold_spinbox.setDecimals(2)
+            self.pu_threshold_spinbox.setValue(IGNORE_CONF)
+            self.pu_threshold_spinbox.setToolTip(PU_THRESHOLD_NOTE)
+            self.pu_threshold_label = QLabel("PU Threshold:")
+            layout.addRow(self.pu_threshold_label, self.pu_threshold_spinbox)
+            self.pu_dataset_combo.currentTextChanged.connect(self.update_pu_threshold_state)
+
             # create_model_group() has already run, so the combo exists to
             # watch. Browse writes into it too, so this covers both ways the
             # model can change.
@@ -2427,12 +2492,27 @@ class Base(QDialog):
                 note = f"PU is off: {name} cannot run it."
             self.pu_unavailable_note.setText(note)
             self.pu_unavailable_note.setVisible(True)
+        self.update_pu_threshold_state()
+
+    def update_pu_threshold_state(self, *args):
+        """PU Threshold is live only while PU Dataset is: it means nothing otherwise."""
+        spinbox = getattr(self, 'pu_threshold_spinbox', None)
+        if spinbox is None:
+            return
+        active = self.pu_dataset_requested()
+        spinbox.setEnabled(active)
+        self.pu_threshold_label.setEnabled(active)
 
     def pu_dataset_requested(self):
         """Whether the next round trains as positive-unlabeled."""
         combo = getattr(self, 'pu_dataset_combo', None)
         return bool(combo is not None and combo.isEnabled()
                     and combo.currentText() == "True")
+
+    def pu_ignore_conf(self):
+        """PU Threshold for the next round, or None when the task has no PU control."""
+        spinbox = getattr(self, 'pu_threshold_spinbox', None)
+        return None if spinbox is None else round(float(spinbox.value()), 4)
 
     def update_budget_range(self):
         """Cap the Image Budget at the number of images the project holds.
@@ -2804,6 +2884,11 @@ class Base(QDialog):
 
         params = self.training_params(data_path, model, run_name)
         params['in_place_dataset'] = dataset
+        # Continuing the best round's model on the same labels is a fine-tune,
+        # not a second first run; see warm_start_schedule.
+        fine_tune = self.fine_tunes(model, list(dataset.names))
+        if fine_tune:
+            params.update(warm_start_schedule(params, len(dataset.names)))
 
         self._pending = {
             'round': round_number,
@@ -2820,6 +2905,8 @@ class Base(QDialog):
             # user can toggle it mid-session and round_improved has to know how
             # each round was actually trained.
             'pu_dataset': bool(params.get('pu_dataset')),
+            'pu_ignore_conf': params.get('pu_ignore_conf') if params.get('pu_dataset') else None,
+            'fine_tuned': fine_tune,
             'stopped': False,
         }
 
@@ -2845,6 +2932,9 @@ class Base(QDialog):
         print(f"Active Learning: round {round_number}. {source_note}")
         if warm_note:
             print(f"Active Learning: {warm_note}")
+        if fine_tune:
+            print(f"Active Learning: fine-tuning with {params['optimizer']} at "
+                  f"lr0 {params['lr0']:.6f}, no warmup.")
 
         self.worker = TrainModelWorker(params, self.main_window.device)
         self.worker.training_completed.connect(self.on_training_completed)
@@ -2884,6 +2974,16 @@ class Base(QDialog):
             note = ("Warm start kept the backbone; the detection head was reset because "
                     "the label set grew.")
         return self.last_model_path, note
+
+    def fine_tunes(self, model, classes):
+        """Whether a round trains `model` as a fine-tune of the best round.
+
+        That is warm starting from the best round's weights onto the very label
+        set they were trained with. A label set that grew resets the head, and
+        a fresh head needs a first run's schedule.
+        """
+        return bool(self.last_model_path and model == self.last_model_path
+                    and self.best_round and self.best_round.get('labels') == list(classes))
 
     # ------------------------------------------------------------------
     # Choosing a model to start from
@@ -3107,6 +3207,7 @@ class Base(QDialog):
             'freeze_layers': self.freeze_layers_spinbox.value(),
             'weighted': self.weighted_combo.currentText() == "True",
             'pu_dataset': self.pu_dataset_requested(),
+            'pu_ignore_conf': self.pu_ignore_conf() if self.pu_dataset_requested() else None,
             'single_cls': self.single_class_combo.currentText() == "True",
             'mask_ratio': self.mask_ratio_spinbox.value(),
             'workers': self.workers_spinbox.value(),
@@ -3142,6 +3243,7 @@ class Base(QDialog):
             # How the saved model was trained, which `settings` cannot say: that
             # is the widget now, and the toggle can change mid-session.
             'pu_dataset': bool(entry.get('pu_dataset')),
+            'pu_ignore_conf': entry.get('pu_ignore_conf'),
             'metrics': {
                 'precision': entry.get('precision'),
                 'recall': entry.get('recall'),
@@ -3163,6 +3265,7 @@ class Base(QDialog):
                 'fitness': record.get('fitness'),
                 'epoch': record.get('epoch'),
                 'pu_dataset': bool(record.get('pu_dataset')),
+                'pu_ignore_conf': record.get('pu_ignore_conf'),
                 'stopped': record.get('stopped'),
                 'labels': list(record.get('labels') or []),
             } for record in self.round_history],
@@ -3517,8 +3620,10 @@ class Base(QDialog):
             'single_cls': self.single_class_combo.currentText() == "True",
             'mask_ratio': self.mask_ratio_spinbox.value(),
             'weighted': self.weighted_combo.currentText() == "True",
-            # Ours, not Ultralytics': the worker pops it before model.train().
+            # Ours, not Ultralytics': the worker pops these before model.train().
             'pu_dataset': self.pu_dataset_requested(),
+            'pu_ignore_conf': self.pu_ignore_conf(),
+            'union_stopping': TRAINING_DEFAULTS['union_stopping'],
             'freeze_layers': self.freeze_layers_spinbox.value(),
             'dropout': self.dropout_spinbox.value(),
             'optimizer': self.optimizer_combo.currentText(),
@@ -3607,12 +3712,21 @@ class Base(QDialog):
             'deployed': False,
             'improved': improved,
             'stopped': bool(pending.get('stopped')) if pending else False,
+            # The round whose model is still in use, when this one lost to it.
+            'set_aside_for': (self.best_round.get('round')
+                              if weights and not improved and self.best_round else None),
         }
 
         # Everything downstream uses the best model, not the newest one. A round
         # that came out worse is recorded and then set aside: warm-starting from
         # it, predicting with it or deploying it would all be a step backwards
         # that nothing later in the session could undo.
+        #
+        # Set aside is not the end of the loop, though: the best model predicts
+        # onto the next images exactly as it did after its own round. It used to
+        # predict nothing here, and then nothing had changed by the next press of
+        # Train -- training is deterministic, so that round repeated this one
+        # bit for bit and was set aside again, and the session stalled for good.
         self._post_round = True
         try:
             if weights and improved:
@@ -3622,7 +3736,9 @@ class Base(QDialog):
                 # of Predict / Deploy switches read as if they were alternatives
                 # when they are two unrelated things.
                 self.last_round_outcome['deployed'] = self.deploy_model(weights, quiet=True)
-                self.after_training(self.last_model_path)
+            predict_with = self.post_round_weights(weights, self.last_model_path)
+            if predict_with:
+                self.after_training(predict_with)
         finally:
             self._post_round = False
 
@@ -3668,6 +3784,19 @@ class Base(QDialog):
         return metric > Base.round_score(best)
 
     @staticmethod
+    def post_round_weights(weights, best_weights):
+        """The weights the prediction pass after a round uses, or None.
+
+        Always the best model's: the round's own when it was adopted, since by
+        then `best_weights` already is it, and otherwise the model it lost to,
+        which is the one still deployed. None when the round produced no
+        weights, because a run that failed has nothing to follow up.
+        """
+        if not weights or not best_weights or not os.path.isfile(best_weights):
+            return None
+        return best_weights
+
+    @staticmethod
     def rounds_comparable(entry, other):
         """Whether two rounds' scores measure the same thing: same labels, same mode."""
         return (entry.get('labels') == other.get('labels')
@@ -3710,15 +3839,20 @@ class Base(QDialog):
             parts.append(f"mAP50-95 {outcome['fitness']:.3f}")
         if outcome.get('deployed'):
             parts.append("model deployed")
+        if outcome.get('set_aside_for'):
+            parts.append("set aside")
         headline = " · ".join(parts) + "."
 
         predictions = outcome.get('predictions', 0)
 
         skipped = Base.skipped_note(outcome.get('skipped'))
+        # First, whichever branch follows: the predictions below are not this
+        # round's, and nothing else on the panel would say so.
+        aside = Base.set_aside_note(outcome)
 
         if predictions:
-            detail = (f"{predictions} predictions are waiting on "
-                      f"{outcome.get('predicted_on', 0)} images. ")
+            detail = aside + (f"{predictions} predictions are waiting on "
+                              f"{outcome.get('predicted_on', 0)} images. ")
             action = ("Next: walk the queue with Next and Previous, marking each "
                       "prediction verified or for review.")
         elif outcome.get('weights') and not outcome.get('candidates'):
@@ -3726,16 +3860,16 @@ class Base(QDialog):
             # invisible: a project where every image already carries unreviewed
             # predictions has nothing left to spend a budget on, and so does one
             # where the only candidate was the image on screen.
-            detail = "No images were left to predict on. " + skipped
+            detail = aside + "No images were left to predict on. " + skipped
             action = ("Next: review what is already waiting, raise the Image Budget "
                       "on the Setup tab, or add more images.")
         elif outcome.get('weights'):
             # The threshold is named because it is the usual answer and the
             # least visible one: the round ran, the model predicted, and every
             # detection fell below the bar the user set somewhere else.
-            detail = (f"The model found nothing above the uncertainty threshold on "
-                      f"{outcome.get('candidates', 0)} images "
-                      f"(threshold {outcome.get('threshold', 0):.2f}). " + skipped)
+            detail = aside + (f"The model found nothing above the uncertainty threshold on "
+                              f"{outcome.get('candidates', 0)} images "
+                              f"(threshold {outcome.get('threshold', 0):.2f}). " + skipped)
             action = ("Next: lower the uncertainty threshold and press Re-run "
                       "Predictions, raise the Image Budget so the round reaches more "
                       "images, or annotate more examples and train again.")
@@ -3744,6 +3878,23 @@ class Base(QDialog):
             action = "Next: check the console output for what went wrong."
 
         return headline, detail, action
+
+    @staticmethod
+    def set_aside_note(outcome):
+        """Why the model in use is an earlier round's, or "" when it is not.
+
+        A round that loses to an earlier one used to end with nothing on the
+        panel but "No images were left to predict on", which was not true and
+        sent the user looking for a problem with their images.
+        """
+        kept = (outcome or {}).get('set_aside_for')
+        if not kept:
+            return ""
+        note = (f"It scored below round {kept}, so it was set aside and round {kept}'s "
+                f"model stays deployed")
+        if outcome.get('predictions'):
+            note += ". That model made the predictions waiting for review"
+        return note + ". "
 
     @staticmethod
     def skipped_note(skipped):
@@ -3800,6 +3951,8 @@ class Base(QDialog):
             return 'error', f"Round {number} produced no weights"
         if outcome.get('stopped'):
             return 'warn', f"Round {number} stopped early"
+        if outcome.get('set_aside_for'):
+            return 'warn', f"Round {number} set aside"
         return 'ok', f"Round {number} finished"
 
     def latest_delta(self):
@@ -4059,8 +4212,9 @@ class Base(QDialog):
             # The tiles carry the counts now. Repeating them in a sentence
             # underneath is the wall of text this panel was rebuilt to remove --
             # and it pushed the instruction, the only part that asks the user to
-            # do something, to the end of a paragraph.
-            return action + auto
+            # do something, to the end of a paragraph. A set aside round is the
+            # exception: which model made the predictions is not a count.
+            return self.set_aside_note(outcome) + action + auto
         # The rounds that produced nothing are the exception: what went wrong is
         # not a number, and no tile can show it.
         return detail + action + auto
@@ -4279,6 +4433,8 @@ class Base(QDialog):
             'weights': weights,
             'labels': pending['labels'],
             'pu_dataset': bool(pending.get('pu_dataset')),
+            'pu_ignore_conf': pending.get('pu_ignore_conf'),
+            'fine_tuned': bool(pending.get('fine_tuned')),
             'stopped': bool(pending.get('stopped')),
         })
 

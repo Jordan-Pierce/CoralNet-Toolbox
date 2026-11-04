@@ -16,7 +16,9 @@ the student ever sees.
     teacher score >= ignore_conf, no GT   -> excluded from the cls loss
     everything else                       -> background, as normal
 
-The band is the whole feature, and there is no confidence knob to get wrong.
+The band is the whole feature. Its one setting is ``ignore_conf``, the teacher
+score at which a region enters it: :data:`IGNORE_CONF` (0.25, the value it was
+measured with) unless the user sets PU Threshold in a dialog.
 
 Scope: the anchor-based v8 detection loss, and the instance segmentation loss
 built on top of it. ``v8SegmentationLoss`` subclasses ``v8DetectionLoss`` and
@@ -56,6 +58,20 @@ nothing reliable -- the spread across seeds there is wider than the mean. Offer
 this for a dataset that really is positive-unlabeled, not as a general
 improvement.
 
+**Both arms of that benchmark used PU's mosaic schedule.** The stock arms were
+given ``close_mosaic = pu_close_mosaic(epochs)`` as well, so +0.0222 is the band
+alone. Switching PU Dataset on in a dialog changes the schedule too -- off, a
+run keeps Ultralytics' close_mosaic of 10 -- and at the Active Learning
+dialog's defaults (nano, imgsz 640, 30 epochs, 40% of boxes missing) the
+schedule costs about what the band gains. Measured with scripts/PU_Testbed.py
+on african-wildlife, three seeds, clean test:
+
+    yolov8n   band alone +0.010 (3 of 3)  |  schedule alone -0.020 (0 of 3)
+              PU on vs off -0.010
+    yolo11n   PU on vs off -0.002, inside the seed-to-seed noise
+
+So quote +0.0222 as what the band does, never as what the switch does.
+
 It does not fully undo the damage, either. On the thinned arm it stayed 0.0032
 mAP50-95 behind the complete-label baseline, in every seed: the band recovers
 most of what the missing labels cost, never all of it. And it is not free -- the
@@ -89,12 +105,15 @@ exhaustively labeled val set is still worth more than any of this, because it is
 the only thing that restores honest absolutes, fitness and early stopping.
 
 Early stopping is the part of that which this module has to handle rather than
-document, because the user cannot be asked to notice it. Ultralytics stops on
+document, because the user cannot be asked to notice it. It is not PU's alone:
+any run validated on a partly labeled split has the same problem, so
+:class:`UnionEarlyStopping` lives here but the Active Learning dialog installs
+it on its plain rounds too (:func:`install_union_stopping`). Ultralytics stops on
 ``fitness``, and ``Metric.fitness()`` weights are ``[0, 0, 0, 1]`` over
 ``[P, R, mAP50, mAP50-95]`` -- mAP50-95 alone, the number PU spends. On a PU val
 split a run that is still getting better at finding unlabeled objects can have
-falling fitness and be stopped while improving. :class:`_PUEarlyStopping` is the
-answer: patience over the *union* of fitness and recall, so a PU run ends only
+falling fitness and be stopped while improving. :class:`UnionEarlyStopping` is
+the answer: patience over the *union* of fitness and recall, so a run ends only
 once both have stalled. It can stop later than the stock rule, never earlier.
 
 That is not hypothetical. Three further runs trained with a PU validation split
@@ -145,12 +164,26 @@ from ultralytics.utils.torch_utils import unwrap_model
 from ultralytics.utils import LOGGER, RANK
 
 
-# The defaults are the validated configuration, and they are constants rather
-# than dialog fields on purpose: every one of them was swept, and the feature is
-# offered as a single switch. Anything exposed here is another way for a run to
-# differ from the one the numbers came from.
-IGNORE_CONF = 0.25      # teacher score at/above which a region stops being background
-EMA_DECAY = 0.999       # slow teacher; the point is stability, not tracking
+# The defaults are the validated configuration. All but one are constants rather
+# than dialog fields on purpose: every one of them was swept, and anything exposed
+# is another way for a run to differ from the one the numbers came from.
+#
+# The exception is IGNORE_CONF, the teacher score at or above which an unlabeled
+# region stops being background. Both dialogs offer it as PU Threshold, because it
+# is the one that trades directly against the data: lower protects more missed
+# objects and lets more of the model's own false positives escape the loss with
+# them. At 0.25 about 60% of the band sat on a real unlabeled object and a third
+# on nothing (scripts/PU_Testbed.py, nano, 40% of boxes missing). This is its
+# default, and the only value it was measured at.
+IGNORE_CONF = 0.25
+IGNORE_CONF_MIN = 0.05  # PU Threshold's range in the dialogs
+IGNORE_CONF_MAX = 0.95
+# The teacher's decay ceiling, per optimizer step. It is reached only slowly --
+# _pu_decay ramps it up from zero over about 2000 steps, as Ultralytics' ModelEMA
+# does -- and an Active Learning round is a few hundred steps, so there the
+# teacher trails the student closely rather than averaging over the run. The
+# band was measured with a teacher that close; it is not a long-memory average.
+EMA_DECAY = 0.999
 DEDUP_IOU = 0.30        # an ignore box this close to a GT box is redundant
 MAX_TEACHER_DET = 300   # NMS cap per image, so the band is bounded in dense frames
 WARMUP_FRACTION = 0.12  # GT-only epochs before the teacher is worth listening to
@@ -187,6 +220,17 @@ PU_MODELS_NOTE = ("Works with: YOLOv3u, YOLOv5u, YOLOv8, YOLOv9, YOLO11 and YOLO
                   "detection and for instance segmentation (-seg), plus the community\n"
                   "models.\n"
                   "Not available for: RT-DETR, YOLOv10, YOLO26 (yolo26-seg included).")
+
+# The PU Threshold tooltip, the same in both dialogs.
+PU_THRESHOLD_NOTE = ("How confident the model has to be about a region you did not label\n"
+                     "before that region is left out of the loss, instead of counted as\n"
+                     "background. Used only when PU Dataset is True.\n\n"
+                     "Lower leaves out more: more of the objects you missed are protected,\n"
+                     "and more of the model's own false positives escape the loss with them.\n"
+                     "Higher leaves out less, and behaves more like normal training.\n\n"
+                     "0.25 is the default and the only value PU has been measured at. There,\n"
+                     "about 60% of the regions left out sat on a real unlabeled object and\n"
+                     "about a third on nothing at all.")
 
 # How far back pu_supported_model follows a checkpoint's run records. A warm
 # started Active Learning round is a chain of best.pt files, one per round.
@@ -696,22 +740,48 @@ class PUSegmentationLoss(_PUIgnoreBand, v8SegmentationLoss):
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-class _PUEarlyStopping:
+def epoch_recall(metrics):
+    """Validation recall out of an Ultralytics metrics dict, or None.
+
+    Prefers the mask figure when there is one, matching how the rest of the
+    toolbox reports a segmentation run, and falls back to any key that names
+    recall so a future column rename degrades to "no recall" rather than to a
+    wrong number.
+    """
+    for key in ('metrics/recall(M)', 'metrics/recall(B)'):
+        if key in metrics:
+            try:
+                return float(metrics[key])
+            except (TypeError, ValueError):
+                return None
+    for key, value in metrics.items():
+        if 'recall' in key.lower():
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+class UnionEarlyStopping:
     """``EarlyStopping`` over the union of fitness and validation recall.
 
-    Ultralytics stops on ``fitness``, which for detection is mAP50-95 alone, and
-    that is the number PU spends: on a positive-unlabeled val split every object
-    the model newly finds counts against it, so a run can be improving at exactly
-    the job it was given while its fitness falls. Stock early stopping then ends
-    it mid-improvement, and the Active Learning dialog's ``patience`` of 10 makes
-    that likely rather than theoretical.
+    Ultralytics stops on ``fitness``, which for detection is mAP50-95 alone. On a
+    positive-unlabeled val split every object the model newly finds counts
+    against it, so a run can be improving at exactly the job it was given while
+    its fitness falls. Stock early stopping then ends it mid-improvement, and the
+    Active Learning dialog's ``patience`` of 10 makes that likely rather than
+    theoretical. That is PU's problem first -- PU spends mAP on purpose -- but
+    not only PU's: an Active Learning val split is partly labeled whatever the
+    round trains with, and a warm-started plain round that dips and then
+    recovers was being ended at epoch 11 of 30, before it could.
 
     So this waits for **both** signals to stall: ``patience`` is measured from the
     more recent of the last fitness improvement and the last recall improvement.
     It can stop later than the stock rule and never earlier, which is why it is
-    safe to install unconditionally on a PU run. The user's ``patience`` value is
-    still the user's -- this changes what counts as "no improvement", not how long
-    to wait for it.
+    safe to install unconditionally. The user's ``patience`` value is still the
+    user's -- this changes what counts as "no improvement", not how long to wait
+    for it.
 
     Deliberately not a subclass: ``EarlyStopping.__call__`` logs its own stop
     message, and delegating would print "training stopped early" on epochs this
@@ -761,13 +831,35 @@ class _PUEarlyStopping:
         stop = delta >= self.patience
         if stop and RANK in (-1, 0):
             LOGGER.info(
-                f"PU early stopping: no improvement in fitness (best epoch "
+                f"Early stopping: no improvement in fitness (best epoch "
                 f"{self.best_epoch}, {self.best_fitness:.4f}) or recall (best epoch "
                 f"{self.best_recall_epoch}"
                 + (f", {self.best_recall:.4f}" if self.best_recall is not None else "")
                 + f") for {self.patience} epochs. Both are required to stall, because "
-                f"fitness alone is the metric PU trades away.")
+                f"on a partly labeled val split recall can still be improving while "
+                f"fitness falls.")
         return stop
+
+
+# The name this had while only PU runs installed it.
+_PUEarlyStopping = UnionEarlyStopping
+
+
+def install_union_stopping(trainer):
+    """Callback: swap a trainer's ``EarlyStopping`` for :class:`UnionEarlyStopping`.
+
+    Registered on ``on_pretrain_routine_end``, which Ultralytics fires at the end
+    of ``_setup_train``, right after it creates the stock stopper -- so this
+    replaces it before the first epoch. A PU trainer installs its own and does
+    not need this.
+    """
+    trainer.stopper = UnionEarlyStopping(
+        getattr(trainer.args, 'patience', 0),
+        lambda: epoch_recall(getattr(trainer, 'metrics', None) or {}),
+    )
+    if RANK in (-1, 0):
+        LOGGER.info(f"Early stopping waits for fitness AND recall to stall "
+                    f"(patience={trainer.stopper.patience}).")
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -788,17 +880,33 @@ class _PUTrainer:
 
     Passed to ``model.train(trainer=...)``, which is Ultralytics' own hook for
     this, so everything else about the run -- dataset class, callbacks, saving,
-    validation, early stopping -- is untouched. It takes no configuration: the
-    feature is one switch, and the constants at the top of this module are the
-    validated values.
+    validation, early stopping -- is untouched. Its one setting is the band's
+    threshold, ``pu_ignore_conf``, taken as a constructor argument because
+    Ultralytics builds the trainer itself from the class it is handed, as
+    ``trainer(overrides=..., _callbacks=...)``, and refuses any key it does not
+    know in ``overrides``. A caller that wants another threshold hands it
+    ``functools.partial(trainer, pu_ignore_conf=...)``. Everything else is the
+    constants at the top of this module, the validated values.
 
     The teacher is a frozen copy of the student updated after every optimizer
-    step as ``theta_t <- d * theta_t + (1 - d) * theta_s``. It is discarded when
-    training ends; ``best.pt`` is the student, which is what the rest of the
-    toolbox reads.
+    step as ``theta_t <- d * theta_t + (1 - d) * theta_s``, with ``d`` ramping up
+    from zero (see :data:`EMA_DECAY`), so over a short run it stays close to the
+    student. It is discarded when training ends; ``best.pt`` is the student,
+    which is what the rest of the toolbox reads.
     """
 
     pu_loss_cls = None  # set by the concrete trainers below
+
+    def __init__(self, *args, pu_ignore_conf=None, **kwargs):
+        if pu_ignore_conf is None:
+            pu_ignore_conf = IGNORE_CONF
+        pu_ignore_conf = float(pu_ignore_conf)
+        # Strictly inside (0, 1): at 0 every teacher box would be in the band,
+        # and at 1 none would, which is PU switched off by another name.
+        if not 0.0 < pu_ignore_conf < 1.0:
+            raise ValueError(f"PU Threshold must be between 0 and 1 (got {pu_ignore_conf}).")
+        self.pu_ignore_conf = pu_ignore_conf
+        super().__init__(*args, **kwargs)
 
     def _setup_train(self):
         super()._setup_train()
@@ -811,8 +919,10 @@ class _PUTrainer:
             p.requires_grad_(False)
         self.teacher = self.teacher.to(self.device)
         self._teacher_updates = 0
+        # The optimizer step count the teacher last followed; see _pu_update_teacher.
+        self._pu_seen_steps = self._pu_optimizer_steps()
 
-        criterion = self.pu_loss_cls(student)
+        criterion = self.pu_loss_cls(student, ignore_conf=self.pu_ignore_conf)
         criterion.teacher = self.teacher
         # Ultralytics builds the criterion lazily on the first loss call and
         # caches it here, so assigning it now is what swaps the loss.
@@ -828,7 +938,7 @@ class _PUTrainer:
 
         # Stop on the union of fitness and recall, not on fitness alone. Installed
         # after super()._setup_train(), which is what creates the stock stopper.
-        self.stopper = _PUEarlyStopping(
+        self.stopper = UnionEarlyStopping(
             getattr(self.args, 'patience', 0),
             lambda: self.epoch_recall(getattr(self, 'metrics', None) or {}),
         )
@@ -836,12 +946,15 @@ class _PUTrainer:
         self._pu_best_recall = None
         self.add_callback("on_train_epoch_start", self._pu_epoch_start)
         self.add_callback("on_train_batch_end", self._pu_update_teacher)
-        self.add_callback("on_fit_epoch_end", self._pu_track_recall)
+        # on_model_save, not on_fit_epoch_end: see _pu_track_recall.
+        self.add_callback("on_model_save", self._pu_track_recall)
         self.add_callback("on_train_end", self._pu_finalize)
 
         if RANK in (-1, 0):
             LOGGER.info(f"PU: ignore-band training. warmup={self.pu_warmup} epochs "
-                        f"(GT only), ignore_conf={IGNORE_CONF}, ema_decay={EMA_DECAY}.")
+                        f"(GT only), ignore_conf={self.pu_ignore_conf}"
+                        + ("" if self.pu_ignore_conf == IGNORE_CONF else f" (default {IGNORE_CONF})")
+                        + f", ema_decay={EMA_DECAY}.")
             LOGGER.info(f"PU: early stopping waits for fitness AND recall to stall "
                         f"(patience={self.stopper.patience}), because mAP50-95 alone "
                         f"is the metric PU trades away.")
@@ -865,11 +978,30 @@ class _PUTrainer:
     def _pu_decay(self):
         """Decay with a short ramp, so an EMA that starts at the student's own
         weights is not held there by a 0.999 average over its first few steps.
-        Mirrors Ultralytics' ModelEMA."""
+        Mirrors Ultralytics' ModelEMA, and like it counts optimizer steps."""
         return EMA_DECAY * (1 - math.exp(-self._teacher_updates / 2000.0))
+
+    def _pu_optimizer_steps(self):
+        """Optimizer steps taken so far, or None when there is no way to tell.
+
+        Ultralytics' ModelEMA is updated once per optimizer step, inside
+        ``optimizer_step``, and counts them in ``updates``.
+        """
+        updates = getattr(getattr(self, 'ema', None), 'updates', None)
+        return updates if isinstance(updates, int) else None
 
     @torch.no_grad()
     def _pu_update_teacher(self, *args, **kwargs):
+        # Once per optimizer step, not once per batch. Ultralytics accumulates
+        # gradients over nbs / batch batches -- sixteen at the Active Learning
+        # dialog's batch of 4 -- and steps once, so on the other batches the
+        # student had not changed: updating then averaged the same weights in
+        # again, and ran the decay ramp that many times too fast.
+        steps = self._pu_optimizer_steps()
+        if steps is not None:
+            if steps == self._pu_seen_steps:
+                return
+            self._pu_seen_steps = steps
         self._teacher_updates += 1
         d = self._pu_decay()
         msd = unwrap_model(self.model).state_dict()
@@ -878,28 +1010,8 @@ class _PUTrainer:
                 v *= d
                 v += (1 - d) * msd[k].detach().to(v.dtype)
 
-    @staticmethod
-    def epoch_recall(metrics):
-        """Validation recall out of an Ultralytics metrics dict, or None.
-
-        Prefers the mask figure when there is one, matching how the rest of the
-        toolbox reports a segmentation run, and falls back to any key that names
-        recall so a future column rename degrades to "no recall" rather than to
-        a wrong number.
-        """
-        for key in ('metrics/recall(M)', 'metrics/recall(B)'):
-            if key in metrics:
-                try:
-                    return float(metrics[key])
-                except (TypeError, ValueError):
-                    return None
-        for key, value in metrics.items():
-            if 'recall' in key.lower():
-                try:
-                    return float(value)
-                except (TypeError, ValueError):
-                    return None
-        return None
+    # Also a method, as it was before it moved out to serve plain runs too.
+    epoch_recall = staticmethod(epoch_recall)
 
     def _pu_track_recall(self, *args, **kwargs):
         """Keep a copy of the epoch that recalled best, as recall_best.pt.
@@ -910,13 +1022,21 @@ class _PUTrainer:
         false positives, so it can go on improving at the job it was given while
         its fitness falls, and the epoch worth keeping is never written.
 
-        This runs as ``on_fit_epoch_end``, which fires after Ultralytics has both
-        appended the epoch's row to results.csv and written ``last.pt`` -- so
+        This runs as ``on_model_save``, which Ultralytics fires right after it
+        has appended the epoch's row to results.csv and written ``last.pt`` -- so
         ``last.pt`` is exactly this epoch's model, and copying it is cheaper and
         far safer than re-serialising a checkpoint by hand. Whoever reads the run
         afterwards can find the same epoch by taking the best recall in
         results.csv; both use a strict improvement, so both settle a tie on the
         earlier epoch.
+
+        Not ``on_fit_epoch_end``, which this used to be. ``final_eval`` fires that
+        once more after the last epoch, carrying best.pt's re-validation in
+        ``trainer.metrics`` while ``last.pt`` is still the final epoch, so a
+        re-validated recall a hair above the best epoch's copied the final epoch
+        over recall_best.pt. Measured in scripts/PU_Testbed.py: 3 of 18 rounds,
+        and in 2 of those the file then held the wrong epoch. ``final_eval`` never
+        fires ``on_model_save``.
 
         Best-effort throughout: a failure here must not end a run that is
         otherwise fine, because ``best.pt`` is still there to fall back on.

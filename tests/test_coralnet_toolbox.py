@@ -1,12 +1,5 @@
 """Smoke tests for coralnet_toolbox.
 
-These exist because the previous check -- `import coralnet_toolbox` -- proved
-almost nothing. `coralnet_toolbox/__init__.py` is six lines of metadata with no
-imports, so that statement loads exactly one module and touches no dependency.
-A build stayed green with PyQtAds, torch or rasterio completely broken; the
-PyQtAds namespace difference between the PyPI and conda-forge builds passed CI
-and only failed when the application was actually launched.
-
 The tests below import the real GUI tree and build the main window, which is
 what exercises those dependencies.
 

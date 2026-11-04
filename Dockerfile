@@ -61,10 +61,10 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 # ---------------------------------------------------------------------------
 # Layer 1: torch, pinned to a CUDA build with Blackwell (sm_120) kernels.
 #
-# An RTX 5090 needs cu128 or newer. Letting ultralytics pull whatever torch
-# PyPI defaults to is how you end up with "no kernel image is available for
-# execution on the device" at runtime. Freeze the exact versions afterwards so
-# the dependency install below cannot quietly swap them for another build.
+# Letting ultralytics pull whatever torch PyPI defaults to is how you end up 
+# with "no kernel image is available for execution on the device" at runtime. 
+# Freeze the exact versions afterwards so the dependency install below cannot 
+# quietly swap them for another build.
 # ---------------------------------------------------------------------------
 ARG TORCH_CUDA=cu128
 RUN pip install --no-cache-dir torch torchvision \

@@ -73,7 +73,7 @@ coralnet-toolbox
 
 #### macOS Users
 
-Version `1.0.0` and greater relies heavily on a package (`PyQtADS`) that cannot be installed on your operating system. Please do not upgrade from `0.0.105` until this is resolved. Instead, use `Docker` for installation — see the [Installation Guide](https://jordan-pierce.github.io/CoralNet-Toolbox/installation) for details.
+Version `1.0.0` and greater relies heavily on a package (`PyQtADS`) that cannot be installed on your operating system. Please use `Docker` for installation — see the [Installation Guide](https://jordan-pierce.github.io/CoralNet-Toolbox/installation) for details.
 
 ### 🔧 Running into Issues?
 

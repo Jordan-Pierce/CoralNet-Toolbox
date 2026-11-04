@@ -1,20 +1,4 @@
-"""Run the smoke tests without letting Qt tear the interpreter down.
-
-Every test can pass and the process can still die:
-
-    Ran 6 tests in 46.160s
-    OK
-    Segmentation fault (core dumped)
-
-That crash happens after the results are in, while Python is dismantling
-modules and the remaining Qt objects are finalised in an order nobody
-controls. It says nothing about the code under test, but it does set a
-non-zero exit status and turn the job red.
-
-So: run the suite, report it, flush, and leave via os._exit, which skips
-interpreter shutdown entirely. The exit status still reflects real results --
-a genuine failure or a crash during the run is still a failure.
-"""
+"""Run the smoke tests without letting Qt tear the interpreter down."""
 
 import os
 import sys
