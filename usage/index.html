@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Tools for annotating and developing ML models for benthic imagery">
+        <meta name="description" content="Human-in-the-Loop Annotation and Model Development for Benthic Imagery">
       
       
         <meta name="author" content="Jordan-Pierce">
@@ -2977,6 +2977,12 @@ from <strong>Utilities &gt; Morphological</strong>. Its <strong>Overlaps</strong
 <li><strong>Label Visibility</strong>: Each label has a checkbox to show / hide annotations of that label</li>
 <li>Hidden labels retain their data and can be shown again at any time</li>
 <li>Transparency slider affects all labels (both visible and hidden)</li>
+<li><strong>Field Guide</strong>: Hold <kbd>Ctrl</kbd> while hovering a label to see example crops of annotations carrying it, shown beside the label</li>
+<li>Up to four examples: verified annotations before unverified ones, then the largest first</li>
+<li>Each crop is framed in the label's color, or in amber when it is unverified, and captioned with its height × width</li>
+<li>The bar underneath shows the label's share of all annotations in the project</li>
+<li>Crops not made yet are read from their images, so the first look at a label can take a moment</li>
+<li>Annotations on video frames other than the one on screen are skipped</li>
 </ul>
 <h3 id="label-management-toolbar">Label Management Toolbar<a class="headerlink" href="#label-management-toolbar" title="Permanent link">&para;</a></h3>
 <p>Action buttons for label operations:
@@ -3246,6 +3252,7 @@ from <strong>Utilities &gt; Morphological</strong>. Its <strong>Overlaps</strong
 <li><kbd>Left-Click</kbd> + <kbd>Drag</kbd>: Move selected annotation, draw shape</li>
 <li><kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add / remove from selection, add positive point / prototype</li>
 <li><kbd>Shift</kbd> + <kbd>Left-Click</kbd>: Select range of items (Rasters Window)</li>
+<li><kbd>Ctrl</kbd> + <kbd>Hover</kbd>: Preview the image (Rasters Window) / show the label's field guide (Labels Window)</li>
 <li><kbd>Ctrl</kbd> + <kbd>Drag</kbd>: Box-select multiple annotations</li>
 <li><kbd>Right-Click</kbd> + <kbd>Drag</kbd>: Pan the image viewer</li>
 <li><kbd>Right-Click</kbd>: Open context menu (Rasters Window)</li>
@@ -3282,7 +3289,7 @@ from <strong>Utilities &gt; Morphological</strong>. Its <strong>Overlaps</strong
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 21, 2026 17:03:43 UTC"><span class="timeago" datetime="2026-10-21T17:03:43+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 21, 2026 17:03:43 UTC">2026-10-21</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 2, 2026 23:45:02 UTC"><span class="timeago" datetime="2026-11-02T23:45:02+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 2, 2026 23:45:02 UTC">2026-11-02</span>
   </span>
 
     
