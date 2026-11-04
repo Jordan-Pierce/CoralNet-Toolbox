@@ -59,6 +59,7 @@ from coralnet_toolbox.SeeAnything.PromptCalibration import (DEFAULT_GOAL,
                                                             DEFAULT_PER_TRY,
                                                             DEFAULT_TRIES,
                                                             GOALS,
+                                                            MIN_IMAGES,
                                                             THRESHOLDS,
                                                             Calibration,
                                                             curve_for,
@@ -169,9 +170,8 @@ class DeployGeneratorDialog(QDialog):
         # examples meant saving the results as branching coral.
         self.output_label = None
         self.last_output_label_code = None
-        # Until the user picks an output label, it follows the annotation label,
-        # which is what the one combo used to do.
-        self._output_label_touched = False
+        # Choosing an annotation label sets the output label to match; one picked
+        # by hand holds until the annotation label changes again.
         self.last_annotation_label_code = None
 
         # The prompt. Every example is a row in it, wherever it came from.
@@ -338,10 +338,16 @@ class DeployGeneratorDialog(QDialog):
         annotation_label = self.annotation_label_combo.currentData()
 
         if annotation_label is not None:
-            # Remembered for a better experience on re-opening.
-            self.last_annotation_label_code = annotation_label.short_label_code
-            if not self._output_label_touched:
+            code = annotation_label.short_label_code
+            # A different annotation label sets the output label. This used to stop
+            # for good once an output label was picked by hand, even the one
+            # already shown, so later label changes no longer reached it. Now a
+            # hand-picked output holds until the annotation label changes again,
+            # and re-opening on the same label keeps it.
+            if code != self.last_annotation_label_code or self.output_label is None:
                 self._follow_annotation_label(annotation_label)
+            # Remembered for a better experience on re-opening.
+            self.last_annotation_label_code = code
 
         table_model = self.image_selection_window.table_model
         previously_highlighted = table_model.get_highlighted_paths()
@@ -352,6 +358,7 @@ class DeployGeneratorDialog(QDialog):
             self.toggle_annotations_button.setEnabled(False)
             self._annotation_image_count = 0
             self.update_annotation_note()
+            self.update_calibrate_state()
             return
 
         final_filtered_paths = self.paths_with_label_shapes(annotation_label.short_label_code)
@@ -373,6 +380,8 @@ class DeployGeneratorDialog(QDialog):
 
         self._annotation_image_count = len(final_filtered_paths)
         self.update_annotation_note()
+        # Calibrating works on the chosen label, so whether it can run changes with it.
+        self.update_calibrate_state()
 
     def paths_with_label_shapes(self, label_code):
         """Images with at least one rectangle or polygon of this label, from the pre-computed cache.
@@ -613,8 +622,6 @@ class DeployGeneratorDialog(QDialog):
             "It need not be the label of the annotations used as examples: find Porites\n"
             "from branching-coral examples and save them as Porites.")
         self.output_label_combo.currentIndexChanged.connect(self._on_output_label_changed)
-        # `activated` fires for the user's own choices only, not for programmatic ones.
-        self.output_label_combo.activated.connect(self._on_output_label_chosen)
         layout.addRow("Save detections as:", self.output_label_combo)
 
         group_box.setLayout(layout)
@@ -682,14 +689,16 @@ class DeployGeneratorDialog(QDialog):
         add_phrase_button.clicked.connect(self.add_phrase_from_input)
         self.prompt_panel.add_host_widget(add_phrase_button)
 
-        calibrate_button = QPushButton("Calibrate...")
-        calibrate_button.setToolTip(
+        self.calibrate_button = QPushButton("Calibrate...")
+        self._calibrate_tooltip = (
             "Choose which of the label's images to keep in the prompt, and the confidence threshold.\n"
             "Scores every image together and several random sets of a few, each on images none of\n"
-            "them came from, then keeps the best with the threshold that suited it.\n"
-            "Objects nobody annotated count as false positives, so the threshold may come out a little high.")
-        calibrate_button.clicked.connect(self.calibrate_prompt)
-        self.prompt_panel.add_host_widget(calibrate_button)
+            "them came from, then lets you pick one, at the threshold that suits your goal.\n"
+            "Only verified annotations are used. Objects nobody annotated count as false positives,\n"
+            "so the threshold may come out a little high.")
+        self.calibrate_button.setToolTip(self._calibrate_tooltip)
+        self.calibrate_button.clicked.connect(self.calibrate_prompt)
+        self.prompt_panel.add_host_widget(self.calibrate_button)
 
         self.prompt_panel.edited.connect(self.refresh_prompt)
         self.prompt_panel.saveRequested.connect(self.save_session_file)
@@ -869,10 +878,6 @@ class DeployGeneratorDialog(QDialog):
         index = self.output_label_combo.findText(label.short_label_code)
         if index != -1 and index != self.output_label_combo.currentIndex():
             self.output_label_combo.setCurrentIndex(index)
-
-    def _on_output_label_chosen(self, _index):
-        """The user picked an output label, so it stops following the annotation label."""
-        self._output_label_touched = True
 
     def _on_output_label_changed(self, _index=None):
         self.output_label = self.output_label_combo.currentData()
@@ -1866,6 +1871,62 @@ class DeployGeneratorDialog(QDialog):
         return (np.asarray(verified, dtype=np.float64).reshape(-1, 4),
                 np.asarray(unverified, dtype=np.float64).reshape(-1, 4))
 
+    def calibration_blocker(self):
+        """Why Calibrate cannot run, or None when it can.
+
+        Calibrate is disabled while this says anything, so nobody picks options
+        only to be told afterwards there is too little to test on. Stops as soon
+        as enough images are found, so it stays cheap on every prompt refresh.
+        """
+        if self.loaded_model is None:
+            return "Load a model first."
+        label = self.annotation_label_combo.currentData()
+        if label is None:
+            return "Choose a label under Add from annotations."
+        code = label.short_label_code
+        pool = self.calibration_pool(code)
+        if not pool:
+            return f"Add {code} images to the prompt first."
+        try:
+            self.session.check_stem(self._prompt_embedding_stem())
+        except ValueError:
+            return "The prompt was made with another model."
+
+        # Candidates need only verified annotations of the label; anything with
+        # a verified one can be tested on.
+        eligible = usable = 0
+        for path in pool:
+            verified, unverified = self.label_annotation_boxes(path, code)
+            usable += bool(len(verified))
+            eligible += bool(len(verified) and not len(unverified))
+            if eligible and usable >= MIN_IMAGES:
+                return None
+        if not eligible:
+            return (f"Every {code} image in the prompt has unverified {code} annotations, "
+                    f"and calibrating uses verified ones only.")
+        for path in self.paths_with_label_shapes(code):
+            if path in pool:
+                continue
+            usable += bool(len(self.label_annotation_boxes(path, code)[0]))
+            if usable >= MIN_IMAGES:
+                return None
+        return (f"Calibrating needs at least {MIN_IMAGES} images with verified {code} annotations. "
+                f"There {'is' if usable == 1 else 'are'} {usable}.")
+
+    def update_calibrate_state(self):
+        """Enable Calibrate only when it can run; its tooltip says why not.
+
+        Returns:
+            str | None: The reason it cannot run, if any.
+        """
+        reason = self.calibration_blocker()
+        button = getattr(self, 'calibrate_button', None)
+        if button is not None:
+            button.setEnabled(reason is None)
+            button.setToolTip(self._calibrate_tooltip if reason is None
+                              else f"{reason}\n\n{self._calibrate_tooltip}")
+        return reason
+
     def calibrate_prompt(self):
         """The Calibrate button: choose the label's images to keep and the threshold, on held out annotations.
 
@@ -1874,30 +1935,17 @@ class DeployGeneratorDialog(QDialog):
         from them; it can still be tested on, where its verified boxes are the
         answers and detections on its unverified ones are ignored.
         """
-        if self.loaded_model is None:
-            QMessageBox.warning(self, "No Model Loaded", "Load a model before calibrating.")
+        # The button is disabled while this says anything; checked again in
+        # case it was pressed before a refresh caught up.
+        reason = self.update_calibrate_state()
+        if reason:
+            QMessageBox.information(self, "Cannot Calibrate", reason)
             return
-        label = self.annotation_label_combo.currentData()
-        if label is None:
-            QMessageBox.warning(self, "No Label", "Choose the label whose annotations to calibrate on.")
-            return
-        code = label.short_label_code
+        code = self.annotation_label_combo.currentData().short_label_code
         pool = self.calibration_pool(code)
-        if not pool:
-            QMessageBox.information(self, "Nothing to Calibrate",
-                                    f"The prompt has no {code} images yet. Highlight some in the table "
-                                    f"and press Add highlighted.")
-            return
-
         boxes = {path: self.label_annotation_boxes(path, code)
                  for path in set(self.paths_with_label_shapes(code)) | set(pool)}
         eligible = [path for path in pool if len(boxes[path][0]) and not len(boxes[path][1])]
-        if not eligible:
-            QMessageBox.information(self, "Nothing to Calibrate",
-                                    f"Calibrating uses only verified annotations, and every {code} image in "
-                                    f"the prompt has unverified ones. Verify them, then press Add "
-                                    f"highlighted again.")
-            return
 
         options = self.ask_calibration_options(code, len(eligible))
         if options is None:
@@ -2161,6 +2209,7 @@ class DeployGeneratorDialog(QDialog):
             remove_button.setEnabled(bool(self.examples_from_annotations()))
         self.update_annotation_note()
         self.update_ok_state()
+        self.update_calibrate_state()
         self.update_status()
 
     def report(self, message):

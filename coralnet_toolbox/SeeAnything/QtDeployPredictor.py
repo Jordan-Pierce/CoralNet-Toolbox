@@ -48,7 +48,10 @@ from coralnet_toolbox.SeeAnything.QtPromptSessionPanel import (PromptSessionPane
 IMGSZ_STRIDE = 32
 
 # Shared by both See Anything dialogs so they open on the same model.
-DEFAULT_MODEL = 'yoloe-11l-seg.pt'
+# 11s rather than 11l: on THESIA (scripts/SeeAnything_Testbed.py, held out test,
+# every annotated image as a reference, 1024) 11s scored mAP50-95 0.183 and 11l
+# 0.029 less, worse in 6 of 6 paired runs; 11m was lowest. 11s is also the cheapest.
+DEFAULT_MODEL = 'yoloe-11s-seg.pt'
 
 # What the interactive tool produces unless the user says otherwise.
 DEFAULT_OUTPUT_TYPE = "Rectangle"
@@ -217,7 +220,7 @@ class DeployPredictorDialog(QDialog):
 
         # Set the default model
         self.model_combo.setCurrentIndex(standard_models.index(DEFAULT_MODEL))
-        self.model_combo.setToolTip("Choose a See Anything (YOLOE) model variant.\nSmall: Faster inference, lower accuracy.\nLarge: Slower, higher accuracy.\nDefault: 11l; drop to 11s or 11m if inference is too slow.")
+        self.model_combo.setToolTip("Choose a See Anything (YOLOE) model variant.\nSmall: faster. Large: slower, and not always more accurate.\nDefault: 11s, which did as well as or better than 11m and 11l on the data tested.")
         model_select_layout.addRow("Model:", self.model_combo)
 
         tab_widget.addTab(model_select_tab, "Select Model")

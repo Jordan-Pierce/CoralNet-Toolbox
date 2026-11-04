@@ -40,6 +40,8 @@ MATCH_IOU = 0.5
 VALIDATION_SHARE = 0.3
 MIN_VALIDATION = 5
 MAX_VALIDATION = 40
+# Images with verified annotations a calibration needs: enough to test on, plus one to prompt with.
+MIN_IMAGES = MIN_VALIDATION + 1
 
 DEFAULT_PER_TRY = 10
 DEFAULT_TRIES = 20
@@ -71,8 +73,8 @@ def split_images(pool, outside, rng):
     """
     pool, outside = sorted(pool), sorted(outside)
     total = len(pool) + len(outside)
-    if not pool or total < MIN_VALIDATION + 1:
-        raise ValueError(f"Calibrating needs at least {MIN_VALIDATION + 1} images with verified "
+    if not pool or total < MIN_IMAGES:
+        raise ValueError(f"Calibrating needs at least {MIN_IMAGES} images with verified "
                          f"annotations of the label. There are {total}.")
 
     target = min(MAX_VALIDATION, max(MIN_VALIDATION, round(VALIDATION_SHARE * total)))
