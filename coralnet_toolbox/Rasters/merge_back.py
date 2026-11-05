@@ -20,20 +20,35 @@ on its image is noticed too. For each original, then:
     the original changed     if its own fingerprint moved, or it was deleted
 
 Changed only on the images, the change is applied. Changed only on the
-original, the original is kept. Changed on both, it is a conflict. An
-annotation drawn on an image (no origin) is added, unless it overlaps one of
-the same label that the person could not see (added to the original after
-extraction), or one of the same label drawn on another image; then it is a
-conflict. Different classes are never treated as the same object, and Merge
-never joins them: both are brought in.
+original, the original is kept; but deleted on the original while the images
+still have it, it is a conflict (bring it back, or keep it deleted). Changed
+on both, it is a conflict. An annotation drawn on an image (no origin) is
+added as it is.
+
+Annotations are never merged or joined into one. Where two versions of
+something come back, both are kept, for the person to combine or delete
+afterwards.
 
 Pieces and overlap
 ------------------
-An original cut by an image's edge has a piece on each image; the pieces are
-rejoined. With overlapping work areas the same strip is on two images, so an
-image whose piece changed (or was deleted) governs its whole rectangle, and
-unchanged pieces from other images are trimmed to outside it. Otherwise an
-untouched copy would bring the old shape back.
+An original cut by an image's edge has a piece on each image. An image whose
+piece changed (or was deleted) governs its whole rectangle: the result is the
+original outside every governing rectangle, plus the changed pieces, each as
+its own annotation. Starting from the original, not from the pieces, keeps
+what no image showed: parts outside every work area, in images left out as
+empty, in images removed from the project, or slivers too small to copy.
+
+A patch annotation in an overlapping strip is on two images. Changed alike on
+both, it comes back once; changed differently, both versions come back,
+stacked on one spot.
+
+Masks
+-----
+A pixel holds one label, so overlapping images that changed it differently
+must be settled: either the image the pixel lies more centrally in has the
+final say (OWNER), or the pixel is relabeled Review (REVIEW). This is done
+among the images first, before anything is compared with the original, so one
+image's change is never mistaken for an edit on the original.
 """
 
 import copy
@@ -41,10 +56,10 @@ import json
 import os
 from dataclasses import dataclass, field
 
+import cv2
 import numpy as np
 from shapely.geometry import box
 from shapely.ops import unary_union
-from shapely.strtree import STRtree
 
 from coralnet_toolbox.Annotations.annotation_clipping import (PATCH, RECTANGLE, annotation_dict_bounds,
                                                               annotation_fingerprint, annotation_geometry,
@@ -56,25 +71,15 @@ from coralnet_toolbox.Annotations.annotation_clipping import (PATCH, RECTANGLE, 
 # Constants
 # ----------------------------------------------------------------------------------------------------------------------
 
-# Conflict choices
-MERGE = 'merge'
+# Conflict choices. Annotations are never merged or joined into one: every
+# version comes back, for the person to combine or delete afterwards.
 KEEP_OLD = 'keep_old'
 KEEP_NEW = 'keep_new'
 KEEP_BOTH = 'keep_both'
 
-CHOICE_LABELS = {
-    MERGE: "Merge",
-    KEEP_OLD: "Keep old",
-    KEEP_NEW: "Keep new",
-    KEEP_BOTH: "Keep both",
-}
-
-# Conflict kinds, as shown to the person
+# Conflict kinds
 KIND_EDITED_BOTH = "Edited on both"
 KIND_DELETED_ON_ORIGINAL = "Deleted on the original"
-KIND_LABELS_DIFFER = "Relabeled differently"
-KIND_OVERLAPS = "New overlaps existing"
-KIND_DUPLICATED = "Drawn on two images"
 # Changes moved to the conflicts list because their kind is set to Ask
 KIND_EDITED_ON_IMAGES = "Edited on the images"
 KIND_NEW_ON_IMAGES = "New on the images"
@@ -93,14 +98,32 @@ IGNORE = 'ignore'  # leave the original as it is, conflicts of that kind include
 # Provenance written into a copy's data; dropped once it is merged back
 TILE_DATA_KEYS = ('tile_origin_id', 'tile_origin_fingerprint', 'tile_copy_fingerprint')
 
-# Intersection over union at which a new annotation is the same object as another
-DEFAULT_OVERLAP_THRESHOLD = 0.5
-
 # Masks: MaskAnnotation.LOCK_BIT, kept here so this module stays free of Qt
 MASK_LOCK_BIT = 128
 
 # The snapshot of an image's mask as extracted, written next to the image
 MASK_BASE_SUFFIX = ".mask_base.npz"
+
+# Where overlapping images changed a mask pixel differently
+OWNER = 'owner'    # the image the pixel lies more centrally in has the final say
+REVIEW = 'review'  # the pixel is relabeled Review
+
+# The Review label, as QtLabelWindow creates it; it can be neither edited nor deleted
+REVIEW_LABEL_ID = "-1"
+
+# Mask disagreements thinner or smaller than this go to the more central image
+# instead of Review: predictions from two images differ by a pixel or two
+# along every object's edge, and marking those would outline everything
+REVIEW_MIN_WIDTH = 5    # pixels
+REVIEW_MIN_AREA = 100   # square pixels
+
+# How the images' mask pixels go onto the original
+MASK_ADD = 'add'                  # the images' labels fill every pixel the original has no label on
+MASK_REPLACE_ALL = 'replace_all'  # the images' pixels wherever they differ from the original
+
+# Conflicts by what they are about, each asked as its own question
+DELETED_KINDS = (KIND_DELETED_ON_ORIGINAL,)  # deleted on the original, still on the images
+EDITED_BOTH_KINDS = (KIND_EDITED_BOTH,)      # edited on both sides
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -124,20 +147,7 @@ class Conflict:
     existing: list = field(default_factory=list)       # [(type_name, data)]
     incoming: list = field(default_factory=list)       # [(type_name, data)]
     restore_id: str = None       # id a single incoming annotation takes when it replaces its original
-    overlap: float = None        # how strongly the overlap that made it a conflict matched
-    existing_is_new: bool = False  # the existing side was also drawn on an image, not on the original
     category: str = EDITED       # the kind of change on the images it comes from: EDITED, NEW or DELETED
-
-    @property
-    def allow_merge(self):
-        """Merging joins shapes of one class: it needs something incoming, one shared label, and no patches.
-
-        Two different classes are never joined into one; Merge keeps both instead.
-        """
-        members = self.existing + self.incoming
-        labels = {d.get('label_short_code') for _, d in members}
-        return (bool(self.incoming) and len(members) > 1 and len(labels) == 1
-                and all(t != PATCH for t, _ in members))
 
     def bounds(self):
         """(min_x, min_y, max_x, max_y) around everything involved, or None."""
@@ -167,11 +177,17 @@ class Change:
 @dataclass
 class MergePlan:
     edits: list = field(default_factory=list)      # [Change] edited only on the images
-    news: list = field(default_factory=list)       # [Change] drawn on an image, overlapping nothing
+    news: list = field(default_factory=list)       # [Change] drawn on an image
     removals: list = field(default_factory=list)   # [Change] deleted only on the images
     conflicts: list = field(default_factory=list)
     unchanged: int = 0        # copies still match their original
     kept_original: int = 0    # changed (or deleted) only on the original: the original stays as it is
+    stacked_patches: int = 0  # patches overlapping images changed differently: every version comes back
+    cut_annotations: int = 0  # edited annotations that come back as more than one piece
+
+    def conflict_count(self, kinds):
+        """How many conflicts are of the given kinds, e.g. DELETED_KINDS."""
+        return sum(1 for conflict in self.conflicts if conflict.kind in kinds)
 
     @property
     def applied(self):
@@ -205,16 +221,6 @@ class _Piece:
     geometry: object = None  # set when trimmed
 
 
-@dataclass
-class _Node:
-    """An annotation taking part in the overlap check."""
-    is_new: bool
-    type_name: str
-    data: dict
-    tile_path: str = None
-    annotation_id: str = None
-
-
 # ----------------------------------------------------------------------------------------------------------------------
 # Stamping copies (used by Extract and Import)
 # ----------------------------------------------------------------------------------------------------------------------
@@ -245,8 +251,7 @@ def clean_for_parent(data, parent_path):
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-def plan_merge_back(parent_path, parent_annotations, tiles, copies=None,
-                    overlap_threshold=DEFAULT_OVERLAP_THRESHOLD):
+def plan_merge_back(parent_path, parent_annotations, tiles, copies=None):
     """Work out what merging the images back would do.
 
     Args:
@@ -255,8 +260,6 @@ def plan_merge_back(parent_path, parent_annotations, tiles, copies=None,
         tiles: [TileState] for the set's images still in the project.
         copies: the set record's {copy_id: [origin_id, tile_path]}; None or {} for an
             older set, in which case a copy deleted on its image goes unnoticed.
-        overlap_threshold: intersection over union at which a new annotation is the
-            same object as another.
 
     Returns:
         MergePlan
@@ -268,7 +271,6 @@ def plan_merge_back(parent_path, parent_annotations, tiles, copies=None,
     pieces = {}          # origin_id -> [_Piece]
     origin_fingerprints = {}
     found_ids = set()
-    new_nodes = []
 
     for tile in tiles:
         x, y = tile.rect[0], tile.rect[1]
@@ -279,7 +281,8 @@ def plan_merge_back(parent_path, parent_annotations, tiles, copies=None,
             on_parent = clean_for_parent(shift_annotation_dict(type_name, data, x, y), parent_path)
 
             if not origin_id:
-                new_nodes.append(_Node(True, type_name, on_parent, tile_path=tile.path))
+                # Drawn on an image: added as it is, even over something alike
+                plan.news.append(Change([], [(type_name, on_parent, None)], [], [(type_name, on_parent)]))
                 continue
 
             changed = _copy_changed(type_name, data, stamp, parent_annotations.get(origin_id), tile.rect)
@@ -287,7 +290,7 @@ def plan_merge_back(parent_path, parent_annotations, tiles, copies=None,
             if stamp.get('tile_origin_fingerprint'):
                 origin_fingerprints.setdefault(origin_id, stamp['tile_origin_fingerprint'])
 
-    # Copies deleted on an image still in the project. One whose image has left
+    # The rectangles of images a copy was deleted on. One whose image has left
     # the project is not counted: that image just has nothing to say.
     gone = {}
     for copy_id, (origin_id, tile_path) in copies.items():
@@ -299,16 +302,6 @@ def plan_merge_back(parent_path, parent_annotations, tiles, copies=None,
         _plan_original(plan, origin_id, parent_annotations.get(origin_id),
                        pieces.get(origin_id, []), gone.get(origin_id, []),
                        origin_fingerprints.get(origin_id), parent_path)
-
-    # A new annotation is only checked against the original's annotations the
-    # person could not see on the images: ones added after extraction. One whose
-    # copy was on an image was in view when the new one was drawn, so drawing
-    # over it was deliberate, and both are kept.
-    touched = set(plan.deletes) | {i for conflict in plan.conflicts for i in conflict.existing_ids}
-    seen = set(pieces) | set(gone)
-    _plan_new(plan, new_nodes,
-              {i: a for i, a in parent_annotations.items() if i not in touched and i not in seen},
-              overlap_threshold)
     return plan
 
 
@@ -329,197 +322,166 @@ def _copy_changed(type_name, data, stamp, original, rect):
     return annotation_fingerprint(type_name, data) not in expected
 
 
-def _plan_original(plan, origin_id, original, pieces, gone_rects, origin_fingerprint, parent_path):
-    images_changed = bool(gone_rects) or any(piece.changed for piece in pieces)
+def _plan_original(plan, origin_id, original, pieces, gone, origin_fingerprint, parent_path):
+    images_changed = bool(gone) or any(piece.changed for piece in pieces)
     original_changed = original is None or (
         origin_fingerprint is not None and annotation_fingerprint(*original) != origin_fingerprint)
 
     if not images_changed:
+        if original is None and pieces:
+            # Deleted on the original since extraction, yet still on the images:
+            # whether the images bring it back is asked, not assumed
+            rebuilt, cut, _ = _rebuild(pieces, gone, parent_path)
+            if rebuilt:
+                plan.cut_annotations += int(cut)
+                plan.conflicts.append(Conflict(KIND_DELETED_ON_ORIGINAL, incoming=rebuilt, restore_id=origin_id,
+                                               category=EDITED))
+                return
         if original_changed:
             plan.kept_original += 1
         else:
             plan.unchanged += 1
         return
 
-    rebuilt, labels_differ = _rebuild(pieces, gone_rects, parent_path)
-    restore_id = origin_id if len(rebuilt) == 1 else None
+    # The original is only a sound starting point while it is still as it was copied
+    rebuilt, cut, stacked = _rebuild(pieces, gone, parent_path, None if original_changed else original)
+    plan.stacked_patches += int(stacked)
+    plan.cut_annotations += int(cut)
     # Whether the images edited it or deleted it, for the kind's action in the dialog
     category = EDITED if rebuilt else DELETED
 
     if original is None:
         if rebuilt:
-            plan.conflicts.append(Conflict(KIND_DELETED_ON_ORIGINAL, incoming=rebuilt, restore_id=restore_id,
+            plan.conflicts.append(Conflict(KIND_DELETED_ON_ORIGINAL, incoming=rebuilt, restore_id=origin_id,
                                            category=EDITED))
         else:
             plan.kept_original += 1  # deleted on both
         return
 
-    if original_changed or labels_differ:
-        plan.conflicts.append(Conflict(KIND_EDITED_BOTH if original_changed else KIND_LABELS_DIFFER,
-                                       existing_ids=[origin_id], existing=[original],
-                                       incoming=rebuilt, restore_id=restore_id, category=category))
+    if original_changed:
+        plan.conflicts.append(Conflict(KIND_EDITED_BOTH, existing_ids=[origin_id], existing=[original],
+                                       incoming=rebuilt, restore_id=origin_id, category=category))
         return
 
-    change = Change([origin_id], [(t, d, restore_id) for t, d in rebuilt], [original], rebuilt, restore_id)
+    change = Change([origin_id], with_restore_id(rebuilt, origin_id), [original], rebuilt, origin_id)
     (plan.edits if rebuilt else plan.removals).append(change)
 
 
-def _rebuild(pieces, gone_rects, parent_path):
-    """The original as the images now have it: ([(type_name, data)], whether pieces disagree on label)."""
-    governing = [piece.rect for piece in pieces if piece.changed] + list(gone_rects)
+def with_restore_id(items, restore_id):
+    """[(type_name, data, id or None)]: the largest of items takes restore_id, the rest get new ids.
+
+    An annotation that comes back as several keeps its id on one of them only,
+    so no two annotations ever share an id.
+    """
+    if not items or not restore_id:
+        return [(t, d, None) for t, d in items]
+    largest = max(range(len(items)), key=lambda k: _area(*items[k]))
+    return [(t, d, restore_id if k == largest else None) for k, (t, d) in enumerate(items)]
+
+
+def _area(type_name, data):
+    geometry = annotation_geometry(type_name, data)
+    return geometry.area if geometry is not None else 0.0
+
+
+def _rebuild(pieces, gone, parent_path, original=None):
+    """The original as the images now have it.
+
+    Args:
+        pieces: [_Piece] from the images still in the project.
+        gone: [rect] of the images its copy was deleted on.
+        original: (type_name, data) when it is still as it was copied, else None.
+
+    Returns:
+        ([(type_name, data)], whether it came back as several pieces, whether a patch came back stacked)
+    """
+    patches = [piece for piece in pieces if piece.type_name == PATCH]
+    regions = [piece for piece in pieces if piece.type_name != PATCH]
+    is_patch = original[0] == PATCH if original is not None else bool(patches) and not regions
+
+    if is_patch:
+        results = _settle_patch(patches, bool(gone), parent_path)
+        return results, False, len(results) > 1
+
+    results = _rebuild_regions(regions, gone, parent_path, original)
+    return results, len(results) > 1, False
+
+
+def _rebuild_regions(regions, gone_rects, parent_path, original=None):
+    """A rectangle or polygon original from its pieces: [(type_name, data)].
+
+    Each piece comes back as its own annotation, never joined, for the person
+    to combine afterwards or not.
+    """
+    governing = [piece.rect for piece in regions if piece.changed] + list(gone_rects)
     governing_area = unary_union([box(x, y, x + w, y + h) for x, y, w, h in governing]) if governing else None
 
-    kept = []
-    for piece in pieces:
-        if piece.changed or governing_area is None:
-            kept.append(piece)
-        elif piece.type_name == PATCH:
-            center = piece.data['center_xy']
-            if not any(_contains(rect, center) for rect in governing):
+    if original is not None:
+        # Changed pieces, plus the original wherever no changed image governs
+        kept = [piece for piece in regions if piece.changed]
+        rest = annotation_geometry(*original)
+        if rest is not None and governing_area is not None:
+            rest = rest.difference(governing_area)
+        if rest is not None and not rest.is_empty and rest.area > 0:
+            kept.append(_Piece(None, original[0], original[1], False, geometry=rest))
+    else:
+        # The original changed or was deleted: only the pieces are known to be the
+        # images' version. Changed pieces are kept whole; unchanged ones are trimmed
+        # to outside the changed images and to outside each other, since with
+        # overlapping work areas two of them hold the same strip
+        kept = [piece for piece in regions if piece.changed]
+        covered = governing_area
+        for piece in regions:
+            if piece.changed:
+                continue
+            if covered is None:
                 kept.append(piece)
-        else:
-            trimmed = annotation_geometry(piece.type_name, piece.data).difference(governing_area)
-            if not trimmed.is_empty and trimmed.area > 0:
-                kept.append(_Piece(piece.rect, piece.type_name, piece.data, False, geometry=trimmed))
-
-    groups = {}
-    for piece in kept:
-        groups.setdefault(piece.data.get('label_short_code'), []).append(piece)
+            else:
+                geometry = annotation_geometry(piece.type_name, piece.data)
+                trimmed = geometry.difference(covered) if geometry is not None else None
+                if trimmed is not None and not trimmed.is_empty and trimmed.area > 0:
+                    kept.append(_Piece(piece.rect, piece.type_name, piece.data, False, geometry=trimmed))
+            x, y, w, h = piece.rect
+            covered = box(x, y, x + w, y + h) if covered is None else covered.union(box(x, y, x + w, y + h))
 
     results = []
-    for group in groups.values():
-        seen_patches = set()
-        for piece in group:
-            if piece.type_name == PATCH:
-                fingerprint = annotation_fingerprint(PATCH, piece.data)
-                if fingerprint not in seen_patches:
-                    seen_patches.add(fingerprint)
-                    results.append((PATCH, clean_for_parent(piece.data, parent_path)))
-
-        regions = [piece for piece in group if piece.type_name != PATCH]
-        if regions:
-            base = clean_for_parent(next((p for p in regions if p.changed), regions[0]).data, parent_path)
-            union = unary_union([p.geometry if p.geometry is not None else annotation_geometry(p.type_name, p.data)
-                                 for p in regions])
-            if all(p.type_name == RECTANGLE for p in regions):
-                results.append(_rectangle_dict(base, union))
-            else:
-                results.extend(polygonal_dicts(base, union))
-
-    return results, len(groups) > 1
-
-
-def _plan_new(plan, new_nodes, candidates, overlap_threshold):
-    """Add new annotations, or make conflicts of those overlapping the original's or each other."""
-    if not new_nodes:
-        return
-
-    parent_nodes = [_Node(False, t, d, annotation_id=i) for i, (t, d) in candidates.items()]
-    nodes = new_nodes + parent_nodes
-    boxes = []
-    for node in nodes:
-        bounds = annotation_dict_bounds(node.type_name, node.data) or (0, 0, 0, 0)
-        boxes.append(box(*bounds))
-    tree = STRtree(boxes)
-
-    parent_of = list(range(len(nodes)))
-
-    def find(i):
-        while parent_of[i] != i:
-            parent_of[i] = parent_of[parent_of[i]]
-            i = parent_of[i]
-        return i
-
-    best_overlap = {}
-    for i, node in enumerate(new_nodes):
-        for j in tree.query(boxes[i]):
-            j = int(j)
-            if j == i:
-                continue
-            other = nodes[j]
-            # Two annotations drawn on the same image were drawn on purpose
-            if other.is_new and other.tile_path == node.tile_path:
-                continue
-            score = _overlap(node, other, overlap_threshold)
-            if score is None:
-                continue
-            root_i, root_j = find(i), find(j)
-            if root_i != root_j:
-                parent_of[root_j] = root_i
-            for k in (i, j):
-                best_overlap[k] = max(best_overlap.get(k, 0.0), score)
-
-    # Groups holding at least one new annotation; the original's annotations
-    # that overlap nothing new are not part of the merge
-    new_roots = {find(k) for k in range(len(new_nodes))}
-    components = {}
-    for i in range(len(nodes)):
-        root = find(i)
-        if root in new_roots:
-            components.setdefault(root, []).append(i)
-
-    for members in components.values():
-        new_members = [nodes[i] for i in members if nodes[i].is_new]
-        if not new_members:
-            continue
-        if len(members) == 1:
-            node = new_members[0]
-            plan.news.append(Change([], [(node.type_name, node.data, None)], [], [(node.type_name, node.data)]))
-            continue
-
-        parent_members = [nodes[i] for i in members if not nodes[i].is_new]
-        overlap = max((best_overlap.get(i, 0.0) for i in members), default=None)
-        if parent_members:
-            plan.conflicts.append(Conflict(
-                KIND_OVERLAPS,
-                existing_ids=[n.annotation_id for n in parent_members],
-                existing=[(n.type_name, n.data) for n in parent_members],
-                incoming=[(n.type_name, n.data) for n in new_members],
-                overlap=overlap,
-                category=NEW,
-            ))
+    for piece in kept:
+        base = clean_for_parent(piece.data, parent_path)
+        if piece.geometry is None:
+            results.append((piece.type_name, base))  # a changed piece, exactly as the image has it
+        elif piece.type_name == RECTANGLE and _is_box(piece.geometry):
+            results.append(_rectangle_dict(base, piece.geometry))
         else:
-            plan.conflicts.append(Conflict(
-                KIND_DUPLICATED,
-                existing=[(new_members[0].type_name, new_members[0].data)],
-                incoming=[(n.type_name, n.data) for n in new_members[1:]],
-                overlap=overlap,
-                existing_is_new=True,
-                category=NEW,
-            ))
+            # What is left of the original, or a trimmed piece; a rectangle cut at
+            # a corner is no longer a box, so it comes back as a polygon
+            results.extend(polygonal_dicts(base, piece.geometry))
+    return results
 
 
-def _overlap(a, b, overlap_threshold):
-    """How strongly two annotations are the same object (0 to 1), or None if they are not.
+def _is_box(geometry):
+    """Whether a geometry is one axis-aligned rectangle."""
+    return (geometry.geom_type == 'Polygon' and geometry.area > 0
+            and abs(geometry.envelope.area - geometry.area) <= 1e-6 * geometry.envelope.area)
 
-    Only annotations of the same label can match: two classes overlapping are
-    both brought in. Patches match when their centers are within half a patch
-    width; areas match at the intersection over union threshold. A patch and
-    an area never match: a point inside a polygon is normal, not a duplicate.
+
+def _settle_patch(patches, deleted, parent_path):
+    """A patch from its copies: [(type_name, data)], empty when it was deleted.
+
+    A patch in an overlapping strip is copied onto every image it falls in.
+    Unchanged copies still match the original and have no say. Copies changed
+    alike come back once; copies changed differently all come back, stacked on
+    one spot, for the person to keep or delete. A deletion on one image stands
+    only when no other image changed the patch.
     """
-    if a.data.get('label_short_code') != b.data.get('label_short_code'):
-        return None
-    a_patch, b_patch = a.type_name == PATCH, b.type_name == PATCH
-    if a_patch != b_patch:
-        return None
-
-    if a_patch:
-        (ax, ay), (bx, by) = a.data['center_xy'], b.data['center_xy']
-        half = min(a.data.get('annotation_size') or 0, b.data.get('annotation_size') or 0) / 2
-        distance = ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
-        if half <= 0:
-            return 1.0 if distance == 0 else None
-        return 1.0 - distance / half if distance <= half else None
-
-    geometry_a = annotation_geometry(a.type_name, a.data)
-    geometry_b = annotation_geometry(b.type_name, b.data)
-    if geometry_a is None or geometry_b is None:
-        return None
-    union_area = geometry_a.union(geometry_b).area
-    if union_area <= 0:
-        return None
-    iou = geometry_a.intersection(geometry_b).area / union_area
-    return iou if iou >= overlap_threshold else None
+    changed = {}
+    for piece in patches:
+        if piece.changed:
+            changed.setdefault(annotation_fingerprint(PATCH, piece.data), piece.data)
+    if changed:
+        return [(PATCH, clean_for_parent(data, parent_path)) for data in changed.values()]
+    if deleted or not patches:
+        return []
+    return [(PATCH, clean_for_parent(patches[0].data, parent_path))]
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -561,43 +523,23 @@ def apply_actions(plan, edited=APPLY, new=APPLY, deleted=APPLY):
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-def resolve(conflict, choice, parent_path):
+def resolve(conflict, choice):
     """What a choice does to a conflict: (ids to delete from the original, [(type_name, data, id or None)] to add).
 
     keep_old   the original stays; what came from the images is dropped
     keep_new   what came from the images replaces the original
     keep_both  both are kept
-    merge      shapes of one label are joined into one; with different labels
-               or patches, both are kept instead
     """
-    existing_adds = [(t, d, None) for t, d in conflict.existing] if conflict.existing_is_new else []
-
-    if choice == MERGE and not conflict.allow_merge:
-        choice = KEEP_BOTH
-
     if choice == KEEP_OLD:
-        return [], existing_adds
+        return [], []
 
     if choice == KEEP_NEW:
-        restore = conflict.restore_id if len(conflict.incoming) == 1 else None
-        return list(conflict.existing_ids), [(t, d, restore) for t, d in conflict.incoming]
+        return list(conflict.existing_ids), with_restore_id(conflict.incoming, conflict.restore_id)
 
     if choice == KEEP_BOTH:
-        return [], existing_adds + [(t, d, None) for t, d in conflict.incoming]
-
-    if choice == MERGE:
-        return list(conflict.existing_ids), [(t, d, None) for t, d in _merged(conflict, parent_path)]
+        return [], [(t, d, None) for t, d in conflict.incoming]
 
     raise ValueError(f"Unknown choice: {choice!r}")
-
-
-def _merged(conflict, parent_path):
-    members = conflict.existing + conflict.incoming
-    base = clean_for_parent(conflict.incoming[0][1], parent_path)
-    union = unary_union([g for g in (annotation_geometry(t, d) for t, d in members) if g is not None])
-    if all(t == RECTANGLE for t, _ in members):
-        return [_rectangle_dict(base, union)]
-    return polygonal_dicts(base, union)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -612,9 +554,15 @@ def _merged(conflict, parent_path):
 #     changed on the original only   -> the original's value stays
 #     changed on both, differently   -> a conflict, settled once for the whole set
 #
-# Values are compared raw, lock bit included. Without a base (a set extracted
-# before masks were tracked) only empty pixels on the original are filled, and
-# erasing on an image cannot be told from never having painted there.
+# Values are compared raw, lock bit included. A pixel locked on the original
+# since extraction is never overwritten. Without a base (a set extracted before
+# masks were tracked) only empty pixels on the original are filled, and erasing
+# on an image cannot be told from never having painted there.
+#
+# Overlapping images are settled among themselves first (settle_mask_overlaps):
+# where two images both changed a pixel to different values, one of them is
+# held back from it, or both are and the pixel is marked for Review. Only then
+# is each image compared with the original.
 
 
 def mask_base_path(tile_path):
@@ -665,41 +613,187 @@ def class_lut(source_codes, target_ids, lock_bit=MASK_LOCK_BIT):
     return lut
 
 
-def mask_merge_regions(parent, tile, base=None, lock_bit=MASK_LOCK_BIT):
-    """Which pixels of one image's region to take from the image, and which are conflicts.
+def mask_pixels_to_take(parent, tile, base=None, mode=MASK_ADD, lock_bit=MASK_LOCK_BIT):
+    """Which pixels of one image's region go onto the original, for a mask mode.
 
-    All three arrays are the same region, in the same class-id space.
+    All three arrays are the same region, in the same class-id space; base is
+    the image's mask as extracted, or None when unknown.
+
+    MASK_ADD          every pixel the image has a label on, where the original
+                      has none, including pixels erased on the original since
+                      extraction; nothing on the original is overwritten or erased
+    MASK_REPLACE_ALL  the image's pixels wherever they differ from the original,
+                      painting and erasing, including pixels the original changed
+                      since extraction; a pixel locked on the original since
+                      extraction is never taken
+    """
+    if mode == MASK_ADD:
+        return (tile != 0) & (parent == 0)
+    locked_since = (parent >= lock_bit) & ((parent != base) if base is not None else True)
+    return (tile != parent) & ~locked_since
+
+
+def settle_mask_overlaps(jobs, image_size=None, disagreement=OWNER, lock_bit=MASK_LOCK_BIT,
+                         min_width=REVIEW_MIN_WIDTH, min_area=REVIEW_MIN_AREA):
+    """Settle the pixels overlapping images changed differently, before any is compared with the original.
+
+    Where only one image changed a pixel, the others' untouched copies are held
+    back from it, so they can neither fill back an erasure nor undo the paint.
+    Where all that changed it agree, nothing is held back. Where two changed it
+    to different values, the image it lies
+    more centrally in keeps it and the other is held back (OWNER). With
+    REVIEW, disagreements on class wide and large enough to be real are held
+    back from both and returned as areas to mark for Review; thin or small
+    ones, and those differing only in the lock bit, still go to the more
+    central image.
 
     Args:
-        parent: the original's mask over the image's rectangle, as it is now.
-        tile: the image's mask now.
-        base: the image's mask as extracted, or None when it is unknown.
+        jobs: [{'rect': (x, y, width, height), 'tile': array, 'base': array or None}], one per
+            image with something to say, arrays (height, width) in the original's class ids.
+        image_size: (width, height) of the original.
+        disagreement: OWNER or REVIEW.
 
     Returns:
-        (apply, conflict): boolean arrays. `apply` pixels take the image's
-        value; `conflict` pixels changed on both sides to different values.
+        (held_back, review):
+            held_back: {job index: bool (height, width)} pixels that image must leave alone.
+            review: [(x, y, area, base)] in the original's pixels: `area` a bool array whose
+                top left is (x, y), `base` the snapshot under it, or None when unknown.
     """
-    if base is None:
-        tile_has = tile != 0
-        apply = tile_has & (parent == 0)
-        conflict = tile_has & (parent != 0) & ((parent % lock_bit) != (tile % lock_bit))
-        return apply, conflict
+    held_back = {}
+    review = []
 
-    tile_changed = tile != base
-    parent_changed = parent != base
-    apply = tile_changed & ~parent_changed
-    conflict = tile_changed & parent_changed & (tile != parent)
-    return apply, conflict
+    def hold(index, rows, cols, pixels):
+        if not pixels.any():
+            return
+        if index not in held_back:
+            held_back[index] = np.zeros(jobs[index]['tile'].shape, dtype=bool)
+        held_back[index][rows, cols] |= pixels
+
+    for i, j, (x0, y0, x1, y1) in _overlapping_pairs([job['rect'] for job in jobs]):
+        a, b = jobs[i], jobs[j]
+        rows_a, cols_a = _local_slices(a['rect'], x0, y0, x1, y1)
+        rows_b, cols_b = _local_slices(b['rect'], x0, y0, x1, y1)
+        tile_a, tile_b = a['tile'][rows_a, cols_a], b['tile'][rows_b, cols_b]
+
+        changed_a = _mask_changed(a, rows_a, cols_a)
+        changed_b = _mask_changed(b, rows_b, cols_b)
+
+        # Where only one image changed a pixel, the other's untouched copy has no
+        # say: it must not fill back what the first erased, or undo what it painted
+        hold(i, rows_a, cols_a, changed_b & ~changed_a & (tile_a != tile_b))
+        hold(j, rows_b, cols_b, changed_a & ~changed_b & (tile_a != tile_b))
+
+        differ = changed_a & changed_b & (tile_a != tile_b)
+        if not differ.any():
+            continue
+
+        settle = differ
+        if disagreement == REVIEW:
+            area = _solid_regions(differ & ((tile_a % lock_bit) != (tile_b % lock_bit)), min_width, min_area)
+            if area.any():
+                base = a['base'] if a['base'] is not None else b['base']
+                base_rows, base_cols = (rows_a, cols_a) if a['base'] is not None else (rows_b, cols_b)
+                review.append((x0, y0, area, base[base_rows, base_cols].copy() if base is not None else None))
+                hold(i, rows_a, cols_a, area)
+                hold(j, rows_b, cols_b, area)
+                settle = differ & ~area
+
+        if settle.any():
+            a_wins = _first_wins(a['rect'], b['rect'], x0, y0, x1, y1, image_size)
+            hold(i, rows_a, cols_a, settle & ~a_wins)
+            hold(j, rows_b, cols_b, settle & a_wins)
+
+    return held_back, review
+
+
+def _mask_changed(job, rows, cols):
+    """Pixels an image changed since extraction; without a base, any it painted."""
+    tile = job['tile'][rows, cols]
+    return tile != (job['base'][rows, cols] if job['base'] is not None else 0)
+
+
+def _solid_regions(pixels, min_width, min_area):
+    """The parts of a bool array at least min_width across and min_area in size."""
+    kept = pixels.astype(np.uint8)
+    if min_width > 1:
+        kept = cv2.morphologyEx(kept, cv2.MORPH_OPEN, np.ones((min_width, min_width), np.uint8))
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(kept, connectivity=8)
+    large = np.zeros(count, dtype=bool)
+    large[1:] = stats[1:, cv2.CC_STAT_AREA] >= min_area
+    return large[labels] & pixels
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Which image has the final say
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+def edge_depth(rect, xs, ys, image_size=None):
+    """How far points lie inside a rectangle, from its nearest edge that is not the image's own.
+
+    An image's edge where the original ends is no reason to distrust what is
+    near it: no other image covers past it. So such edges are ignored, and a
+    point is judged only by the edges it shares the original's pixels across.
+
+    Args:
+        rect: (x, y, width, height).
+        xs, ys: 1-D x and y coordinates.
+        image_size: (width, height) of the original, or None to count every edge.
+
+    Returns:
+        float array (len(ys), len(xs)).
+    """
+    x, y, width, height = rect
+    image_width, image_height = image_size if image_size else (None, None)
+    xs = np.asarray(xs, dtype=float)
+    ys = np.asarray(ys, dtype=float)
+
+    def side(distance, at_image_edge):
+        return np.full_like(distance, np.inf) if at_image_edge else distance
+
+    dx = np.minimum(side(xs - x, x <= 0),
+                    side(x + width - xs, image_width is not None and x + width >= image_width))
+    dy = np.minimum(side(ys - y, y <= 0),
+                    side(y + height - ys, image_height is not None and y + height >= image_height))
+    return np.minimum.outer(dy, dx)
+
+
+def _first_wins(rect_a, rect_b, x0, y0, x1, y1, image_size=None):
+    """Where image a has the final say over image b in their overlap: deeper inside a. Ties go to a."""
+    xs = np.arange(x0, x1) + 0.5
+    ys = np.arange(y0, y1) + 0.5
+    return edge_depth(rect_a, xs, ys, image_size) >= edge_depth(rect_b, xs, ys, image_size)
+
+
+def masks_overlap(jobs):
+    """Whether any two of the mask jobs overlap, so settle_mask_overlaps may have something to settle."""
+    return next(_overlapping_pairs([job['rect'] for job in jobs]), None) is not None
+
+
+def _overlapping_pairs(rects):
+    """(i, j, (x0, y0, x1, y1)) for each pair of rectangles that overlap, i < j."""
+    order = sorted(range(len(rects)), key=lambda k: rects[k][0])
+    for position, i in enumerate(order):
+        ax, ay, aw, ah = rects[i]
+        for j in order[position + 1:]:
+            bx, by, bw, bh = rects[j]
+            if bx >= ax + aw:
+                break  # sorted by x: nothing further right can touch this one
+            x0, y0 = max(ax, bx), max(ay, by)
+            x1, y1 = min(ax + aw, bx + bw), min(ay + ah, by + bh)
+            if x1 > x0 and y1 > y0:
+                yield min(i, j), max(i, j), (x0, y0, x1, y1)
+
+
+def _local_slices(rect, x0, y0, x1, y1):
+    """Row and column slices of a region of the original, in an image's own pixels."""
+    x, y = rect[0], rect[1]
+    return slice(y0 - y, y1 - y), slice(x0 - x, x1 - x)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------------------------------------------------------
-
-
-def _contains(rect, point):
-    x, y, width, height = rect
-    return x <= point[0] < x + width and y <= point[1] < y + height
 
 
 def _rectangle_dict(base, geometry):

@@ -1834,7 +1834,7 @@ class ImageWindow(QWidget):
             if len(sets) == 1:
                 set_id, (parent_path, _) = next(iter(sets.items()))
                 if parent_path in highlighted_paths:
-                    merge_label = "Merge Back Extracted Images..."
+                    merge_label = "Merge Back Work Area Images..."
                 else:
                     merge_label = f"Merge Back Into {os.path.basename(parent_path)}..."
                 merge_action = work_areas_menu.addAction(merge_label)
@@ -1845,11 +1845,11 @@ class ImageWindow(QWidget):
                 merge_action = work_areas_menu.addAction(f"Merge Back ({len(sets)} sets, one at a time)")
                 merge_action.setEnabled(False)
 
-            highlight_action = work_areas_menu.addAction("Highlight Extracted Images")
+            highlight_action = work_areas_menu.addAction("Highlight Work Area Images")
             highlight_action.triggered.connect(
                 lambda checked=False, paths=list(highlighted_paths): self.highlight_extracted_images(paths)
             )
-            unlink_action = work_areas_menu.addAction("Unlink Extracted Images...")
+            unlink_action = work_areas_menu.addAction("Unlink Work Area Images...")
             unlink_action.triggered.connect(
                 lambda checked=False, paths=list(highlighted_paths): self.unlink_extracted_images(paths)
             )
@@ -1913,8 +1913,8 @@ class ImageWindow(QWidget):
 
         reply = QMessageBox.question(
             self,
-            "Unlink Extracted Images",
-            f"Unlink {image_count} extracted image{'s' if image_count != 1 else ''} from {parent_names}?\n\n"
+            "Unlink Work Area Images",
+            f"Unlink {image_count} Work Area Image{'s' if image_count != 1 else ''} from {parent_names}?\n\n"
             "They stay in the project as ordinary images, and their annotations are not changed. "
             + " ".join(returns),
             QMessageBox.Yes | QMessageBox.No,
@@ -1923,9 +1923,20 @@ class ImageWindow(QWidget):
         if reply != QMessageBox.Yes:
             return
 
-        for set_id, (parent_path, _) in sets.items():
-            for changed_path in extracted_images.unlink_set(self.raster_manager, parent_path, set_id):
-                self.raster_manager.rasterUpdated.emit(changed_path)
+        from coralnet_toolbox.Rasters.merge_back import TILE_DATA_KEYS
+        with self.busy_cursor():
+            for set_id, (parent_path, record) in sets.items():
+                # Their annotations' record of where they were copied from means
+                # nothing once the set is gone, and would mislead a later merge
+                for tile_path in extracted_images.tile_paths_in_project(self.raster_manager, record):
+                    for annotation in self.annotation_window.image_annotations_dict.get(tile_path, []):
+                        if isinstance(getattr(annotation, 'data', None), dict):
+                            for key in TILE_DATA_KEYS:
+                                annotation.data.pop(key, None)
+                for changed_path in extracted_images.unlink_set(self.raster_manager, parent_path, set_id):
+                    self.raster_manager.rasterUpdated.emit(changed_path)
+        self._show_status(f"Unlinked {image_count} Work Area Image{'s' if image_count != 1 else ''} "
+                          f"from {parent_names}", 10000)
 
     def open_batch_inference_dialog(self, highlighted_image_paths):
         """
@@ -2354,8 +2365,8 @@ class ImageWindow(QWidget):
         parents = [path for path in paths
                    if extracted_images.has_active_set(self.raster_manager.get_raster(path))]
         if parents:
-            message += (f"\n\n{len(parents)} of these {'has' if len(parents) == 1 else 'have'} extracted "
-                        "images in this project. The extracted images stay, as ordinary images.")
+            message += (f"\n\n{len(parents)} of these {'has' if len(parents) == 1 else 'have'} Work Area "
+                        "Images in this project. The Work Area Images stay, as ordinary images.")
 
         msg_box = QMessageBox(self)
         msg_box.setIcon(QMessageBox.Question)

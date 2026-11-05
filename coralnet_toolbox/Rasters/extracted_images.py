@@ -31,7 +31,7 @@ SOURCE_RASTER_TYPES = ("ImageRaster", "OrthoRaster")
 
 # Reasons a raster cannot be extracted, as shown in menus and the dialog
 REASON_NOT_IMAGE = "video"
-REASON_EXTRACTED_IMAGE = "extracted image"
+REASON_EXTRACTED_IMAGE = "Work Area Image"
 REASON_ALREADY_EXTRACTED = "already extracted"
 REASON_NO_WORK_AREAS = "no work areas"
 
@@ -196,6 +196,87 @@ def write_manifest(path, manifest):
 def read_manifest(path):
     with open(path, 'r', encoding='utf-8') as f:
         return json.load(f)
+
+
+def _read_manifest_or_none(path):
+    try:
+        return read_manifest(path) if path and os.path.isfile(path) else None
+    except Exception:
+        return None
+
+
+def mark_manifest_merged(path):
+    """Stamp a manifest as merged back, so its images are not later mistaken for unmerged ones.
+
+    Returns:
+        bool: whether the stamp was written.
+    """
+    manifest = _read_manifest_or_none(path)
+    if manifest is None:
+        return False
+    manifest['merged'] = _now()
+    try:
+        write_manifest(path, manifest)
+    except Exception:
+        return False
+    return True
+
+
+def manifest_in(directory):
+    """The manifest in a folder of extracted images, or None."""
+    return _read_manifest_or_none(os.path.join(directory, MANIFEST_FILENAME))
+
+
+def merged_work_area_files(paths):
+    """Files that are images of a set already merged back, grouped by the raster they came from.
+
+    Found by the manifest next to them, matched by file name, so a folder that
+    has been moved is still recognised.
+
+    Returns:
+        {parent_path: {'merged': timestamp, 'paths': [path]}}
+    """
+    found = {}
+    folders = {}
+    for path in paths:
+        directory = os.path.dirname(path)
+        if directory not in folders:
+            manifest = manifest_in(directory)
+            if manifest and manifest.get('merged'):
+                names = {os.path.basename(tile.get('path', '')).lower() for tile in manifest.get('tiles', [])}
+                folders[directory] = (manifest, names)
+            else:
+                folders[directory] = None
+        entry = folders[directory]
+        if entry is None or os.path.basename(path).lower() not in entry[1]:
+            continue
+        manifest = entry[0]
+        group = found.setdefault(manifest.get('parent_path'), {'merged': manifest['merged'], 'paths': []})
+        group['paths'].append(path)
+    return found
+
+
+def _same_path(a, b):
+    return os.path.normcase(os.path.normpath(a or "")) == os.path.normcase(os.path.normpath(b or ""))
+
+
+def output_dir_for(output_root, stem, parent_path, taken=()):
+    """The folder one raster's images go in: <root>/<stem>, or <root>/<stem>_2 and on.
+
+    A folder is passed over when another raster in this run takes it, or when
+    its manifest says it holds another raster's images: reusing those files
+    would give this raster another raster's pixels.
+    """
+    taken = {normalize_path(path).lower() for path in taken}
+    candidate_number = 1
+    while True:
+        name = stem if candidate_number == 1 else f"{stem}_{candidate_number}"
+        directory = normalize_path(os.path.join(output_root, name))
+        manifest = manifest_in(directory)
+        owned_by_other = manifest is not None and not _same_path(manifest.get('parent_path'), parent_path)
+        if directory.lower() not in taken and not owned_by_other:
+            return directory
+        candidate_number += 1
 
 
 # ----------------------------------------------------------------------------------------------------------------------
