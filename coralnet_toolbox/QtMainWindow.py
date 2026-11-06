@@ -12,7 +12,8 @@ from PyQt5.QtGui import QMouseEvent, QIcon
 from PyQt5.QtCore import Qt, pyqtSignal, QEvent, QSize, QTimer
 from PyQt5.QtWidgets import (QMainWindow, QApplication, QToolBar, QAction, QActionGroup, QSizePolicy,
                              QMessageBox, QWidget, QVBoxLayout, QLabel, QHBoxLayout,
-                             QSpinBox, QComboBox, QSlider, QDialog, QPushButton, QListWidget)
+                             QSpinBox, QComboBox, QSlider, QDialog, QPushButton, QListWidget,
+                             QSplitter)
 
 from coralnet_toolbox import theme as app_theme
 
@@ -1354,16 +1355,32 @@ class MainWindow(QMainWindow):
         # 1. Initialize the Advanced Dock Manager
         # --------------------------------------------------
         
+        # ADS config flags are static and must be set BEFORE the dock manager
+        # is constructed: FocusHighlighting in particular only takes effect if
+        # it is on when CDockManager builds its focus controller.
+        #   - drop the "List all tabs", "detach group" and "close group"
+        #     buttons from the dock title bars (tabs keep their own X, and a
+        #     tab or title bar can still be dragged out to float)
+        #   - highlight the focused panel (styled in build_dock_stylesheet)
+        dock_flags = ads.CDockManager.configFlags()
+        dock_flags &= ~ads.CDockManager.DockAreaHasTabsMenuButton
+        dock_flags &= ~ads.CDockManager.DockAreaHasUndockButton
+        dock_flags &= ~ads.CDockManager.DockAreaHasCloseButton
+        dock_flags |= ads.CDockManager.FocusHighlighting
+        ads.CDockManager.setConfigFlags(dock_flags)
+
         # Instantiate the ADS dock manager.
         self.dock_manager = ads.CDockManager(self)
 
-        # Disable the "List all tabs" button in the dock tab bars
-        self.dock_manager.setConfigFlags(
-            self.dock_manager.configFlags() & ~ads.CDockManager.DockAreaHasTabsMenuButton
-        )
-
         # Apply the shared dock tab theme
         self.dock_manager.setStyleSheet(app_theme.build_dock_stylesheet())
+
+        # Splitters are created lazily whenever the user docks a panel into a
+        # new position, long after startup. Re-apply the handle width each
+        # time the dock areas change. Deferred so ADS has finished inserting
+        # the new area (and its splitter) before we walk the tree.
+        self.dock_manager.dockAreaCreated.connect(self._schedule_dock_splitter_width)
+        self.dock_manager.dockAreasAdded.connect(self._schedule_dock_splitter_width)
 
         # ADS ships title-bar button glyphs that are almost invisible against
         # the dark theme. The dock stylesheet above re-skins them via QSS,
@@ -3345,20 +3362,25 @@ class MainWindow(QMainWindow):
         thickness is a QSplitter property ADS reads from C++ and ignores from
         QSS. Walk the dock container and set the handle width on each
         CDockSplitter. Splitters are created lazily (on restore / on drag), so
-        this is called after layout restore and on every scale refresh; it is
-        cheap and idempotent.
+        this is called after layout restore, on every dock-area change and on
+        every scale refresh; it is cheap and idempotent.
+
+        Splitters are matched by Qt class name, not by findChildren(
+        ads.CDockSplitter): ADS creates them in C++, so PyQt wraps them as
+        plain QSplitter and a type-based lookup returns nothing.
         """
-        splitter_cls = getattr(ads, 'CDockSplitter', None)
-        if splitter_cls is None:
-            return
         width = app_theme.scale_int(app_theme.DOCK_SPLITTER_WIDTH)
         try:
-            for splitter in self.dock_manager.findChildren(splitter_cls):
-                splitter.setHandleWidth(width)
+            for splitter in self.dock_manager.findChildren(QSplitter):
+                if splitter.metaObject().className() == 'ads::CDockSplitter':
+                    splitter.setHandleWidth(width)
         except Exception:
-            # Older PyQtAds builds may not expose the class to findChildren;
-            # the QSS colour still applies, so fail quietly.
+            # The QSS colour still applies, so fail quietly.
             pass
+
+    def _schedule_dock_splitter_width(self, *args):
+        """Re-apply splitter handle width once ADS finishes a layout change."""
+        QTimer.singleShot(0, self._apply_dock_splitter_width)
 
     def _reattach_orphaned_docks(self):
         """Put docks back where a restored layout could not.
