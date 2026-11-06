@@ -1952,7 +1952,12 @@ class LabelWindow(QWidget):
             msg_box = QMessageBox(self)
             msg_box.setIcon(QMessageBox.Question)
             msg_box.setWindowTitle("Confirm Delete")
-            msg_box.setText("Are you sure you want to delete this label?\n"
+            # Plain text: label codes are user input and may contain "<" etc.
+            msg_box.setTextFormat(Qt.PlainText)
+            msg_box.setText("Are you sure you want to delete this label?\n\n"
+                            f"Short code: {label.short_label_code}\n"
+                            f"Long code: {label.long_label_code}\n"
+                            f"ID: {label.id}\n\n"
                             "This will delete all associated annotations.")
             msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
 
