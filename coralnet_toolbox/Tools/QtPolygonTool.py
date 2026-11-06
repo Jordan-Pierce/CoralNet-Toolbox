@@ -1,7 +1,18 @@
 from PyQt5.QtCore import Qt, QPointF
-from PyQt5.QtGui import QMouseEvent, QKeyEvent
+from PyQt5.QtGui import QMouseEvent, QKeyEvent, QColor, QBrush, QPainterPath
+from PyQt5.QtWidgets import QGraphicsPathItem
+
 from coralnet_toolbox.Tools.QtTool import Tool
+from coralnet_toolbox.Annotations.QtAnnotation import create_pen
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
+from coralnet_toolbox.utilities import get_view_scale
+
+
+# Same Z a hydrated annotation group gets: above the phantom layer (10).
+PREVIEW_Z = 20
+# Minimum on-screen spacing between free-hand vertices, in screen pixels
+# (Manhattan). Every mouse event used to add one, however small the move.
+FREEHAND_SAMPLE_SCREEN_PX = 2.0
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -20,6 +31,17 @@ class PolygonTool(Tool):
         self.ctrl_pressed = False  # Flag to track Ctrl key state for straight line drawing
         self.last_click_point = None  # Store the last clicked point for straight line drawing
 
+        # In-progress preview. A single path item updated in place: building a
+        # full PolygonAnnotation per mouse move (group, crosshair, bounding box,
+        # tag, centroid pass) made long traces lag, O(n) Python per move.
+        self._preview_item = None
+        # Path through self.points, extended as points are appended so each
+        # move costs only the new vertices. _trace_src/_trace_len detect when
+        # self.points was replaced or shrank and the path must be rebuilt.
+        self._trace_path = None
+        self._trace_src = None
+        self._trace_len = 0
+
     def activate(self):
         self.active = True
         self.annotation_window.setCursor(self.cursor)
@@ -34,9 +56,8 @@ class PolygonTool(Tool):
         return "Left click to start a polygon, then move to trace its outline"
 
     def deactivate(self):
-        self.active = False
-        self.annotation_window.setCursor(self.default_cursor)
-        self.clear_cursor_annotation()
+        # Base clears the preview and the crosshair, then stop_current_drawing().
+        super().deactivate()
         self.points = []
         self.drawing_continuous = False
         self.ctrl_pressed = False
@@ -48,7 +69,7 @@ class PolygonTool(Tool):
             self.annotation_window.main_window.status_bar.showMessage(
                 "A label must be selected before adding an annotation.", 4000)
             return None
-        
+
         # Add cursor bounds check
         if not self.annotation_window.cursorInWindow(event.pos()):
             return None
@@ -82,22 +103,27 @@ class PolygonTool(Tool):
         else:
             self.cancel_annotation()
 
-    def mouseMoveEvent(self, event: QMouseEvent):     
-        """Handles mouse move events for updating the polygon preview and crosshair."""  
-        # Tool-specific behavior (non-crosshair related) for mouse move events
-        if self.drawing_continuous:
-            active_image = self.annotation_window.active_image
-            cursor_in_window = self.annotation_window.cursorInWindow(event.pos())
-            scene_pos = self.annotation_window.mapToScene(event.pos())
-            
-            if active_image and cursor_in_window and self.points:
-                if self.ctrl_pressed and self.last_click_point:
-                    # Show a straight line preview
-                    self.update_cursor_annotation(scene_pos)
-                else:
-                    # Free-hand: add points as the mouse moves
+    def mouseMoveEvent(self, event: QMouseEvent):
+        """Handles mouse move events for updating the polygon preview and crosshair."""
+        # Crosshair, and last_scene_pos so a label change mid-draw can repaint
+        # the preview in place (refresh_label_preview).
+        super().mouseMoveEvent(event)
+
+        if not self.drawing_continuous:
+            return
+
+        active_image = self.annotation_window.active_image
+        cursor_in_window = self.annotation_window.cursorInWindow(event.pos())
+        scene_pos = self.annotation_window.mapToScene(event.pos())
+
+        if active_image and cursor_in_window and self.points:
+            if not (self.ctrl_pressed and self.last_click_point):
+                # Free-hand: commit a vertex once the cursor has moved far
+                # enough on screen. The preview runs to the cursor regardless.
+                if self._far_enough_on_screen(scene_pos):
                     self.points.append(scene_pos)
-                    self.update_cursor_annotation(scene_pos)
+            # Ctrl held: straight-line preview from the last vertex to the cursor.
+            self.update_cursor_annotation(scene_pos)
 
     def keyPressEvent(self, event: QKeyEvent):
         """Handles key press events for canceling annotation or toggling straight line mode."""
@@ -155,12 +181,12 @@ class PolygonTool(Tool):
         if finished and len(self.points) > 2:
             # Close the polygon
             self.points.append(self.points[0])
-            
+
             # --- Validation for polygon size and shape ---
             # Step 1: Remove duplicate or near-duplicate points
             filtered_points = []
             MIN_DISTANCE = 2.0  # Minimum distance between points in pixels
-            
+
             for i, point in enumerate(self.points):
                 # Skip if this point is too close to the previous one
                 if i > 0:
@@ -169,14 +195,14 @@ class PolygonTool(Tool):
                     if distance < MIN_DISTANCE:
                         continue
                 filtered_points.append(point)
-            
+
             # Step 2: Ensure we have enough points for a valid polygon
             if len(filtered_points) < 4:  # Need at least 3 + 1 closing point
                 # Create a small triangle/square if we don't have enough points
                 if len(filtered_points) > 0:
                     center_x = sum(p.x() for p in filtered_points) / len(filtered_points)
                     center_y = sum(p.y() for p in filtered_points) / len(filtered_points)
-                    
+
                     # Create a small polygon centered on the average of existing points
                     MIN_SIZE = 5.0
                     filtered_points = [
@@ -186,11 +212,11 @@ class PolygonTool(Tool):
                         QPointF(center_x - MIN_SIZE, center_y + MIN_SIZE),
                         QPointF(center_x - MIN_SIZE, center_y - MIN_SIZE)  # Close the polygon
                     ]
-                    
+
                     self.annotation_window.main_window.status_bar.showMessage(
                         "The polygon had too few unique points and has been adjusted to a minimum size.", 4000
                     )
-            
+
             # Use the filtered points list instead of the original
             self.points = filtered_points
 
@@ -210,34 +236,87 @@ class PolygonTool(Tool):
             self.last_click_point = None
 
         return annotation
-        
+
+    def _far_enough_on_screen(self, scene_pos: QPointF) -> bool:
+        """True once scene_pos is FREEHAND_SAMPLE_SCREEN_PX from the last vertex on screen."""
+        if not self.points:
+            return True
+        scale = get_view_scale(self.annotation_window.transform()) or 1.0
+        return (scene_pos - self.points[-1]).manhattanLength() * scale >= FREEHAND_SAMPLE_SCREEN_PX
+
+    def _committed_path(self) -> QPainterPath:
+        """Open path through self.points, extended in place with any new points."""
+        if self._trace_src is not self.points or self._trace_len > len(self.points):
+            self._trace_path = QPainterPath()
+            self._trace_src = self.points
+            self._trace_len = 0
+        for point in self.points[self._trace_len:]:
+            if self._trace_len == 0:
+                self._trace_path.moveTo(point)
+            else:
+                self._trace_path.lineTo(point)
+            self._trace_len += 1
+        return self._trace_path
+
     def create_cursor_annotation(self, scene_pos: QPointF = None):
-        """Create a polygon cursor annotation at the given position."""
-        if not scene_pos or not self.annotation_window.selected_label or not self.annotation_window.active_image:
+        """Draw the polygon in progress: the traced vertices, a live edge to the
+        cursor, and the closing edge back to the start.
+
+        The preview is drawn straight from the raw points, never through
+        PolygonAnnotation's simplify pass. An open stroke closed back to its
+        start is often a self-intersecting sliver (a vertical stroke with 1 px
+        of x jitter is a zigzag); simplify_polygon runs buffer(0) on that and
+        GEOS keeps only one lobe of a bowtie, so the preview used to collapse to
+        a 2 px triangle and vanish mid-draw. The finished polygon is still
+        simplified as before.
+        """
+        label = self.annotation_window.selected_label
+        if (not scene_pos or not label or not self.annotation_window.active_image
+                or not self.drawing_continuous or not self.points):
             self.clear_cursor_annotation()
             return
 
-        if self.drawing_continuous and len(self.points) > 0:
-            # Determine points for preview: always include current scene_pos
-            preview_points = self.points + [scene_pos]
+        path = QPainterPath(self._committed_path())
+        if scene_pos != self.points[-1]:
+            path.lineTo(scene_pos)
+        path.closeSubpath()
+        # Winding fill keeps both lobes of a self-crossing trace solid.
+        path.setFillRule(Qt.WindingFill)
 
-            # Create the preview annotation using preview_points
-            annotation = PolygonAnnotation(
-                preview_points,
-                self.annotation_window.selected_label,
-                self.annotation_window.current_image_path,
-                transparency=self.annotation_window.main_window.get_transparency_value(),
-                show_confidence=False,
-            )
-            self.cursor_annotation = annotation
-            self.cursor_annotation.update_transparency(self.annotation_window.main_window.get_transparency_value())
-            # Force hydrate the preview so the polygon cursor follows the mouse smoothly
-            self.cursor_annotation.create_graphics_item(self.annotation_window.scene, force_hydrate=True)
+        item = self._preview_item
+        try:
+            alive = item is not None and item.scene() is self.annotation_window.scene
+        except RuntimeError:
+            alive = False  # The scene was cleared and deleted the item.
+        if not alive:
+            self.clear_cursor_annotation()
+            item = QGraphicsPathItem()
+            item.setZValue(PREVIEW_Z)
+            item.setAcceptedMouseButtons(Qt.NoButton)
+            self.annotation_window.scene.addItem(item)
+            self._preview_item = item
+
+        # Restyled every call (Qt no-ops an unchanged pen/brush) so a label or
+        # transparency change mid-draw shows on the next move.
+        color = QColor(label.color)
+        fill = QColor(color)
+        fill.setAlpha(self.annotation_window.main_window.get_transparency_value())
+        item.setBrush(QBrush(fill))
+        item.setPen(create_pen(color, is_selected=False))
+        item.setPath(path)
 
     def update_cursor_annotation(self, scene_pos: QPointF = None):
-        """Update the cursor annotation position."""
-        # Clear previous preview first to avoid flickering or overlap
-        self.clear_cursor_annotation()
-        # Create the new preview at the current cursor position
+        """Update the preview in place."""
         self.create_cursor_annotation(scene_pos)
 
+    def clear_cursor_annotation(self):
+        """Remove the preview path item."""
+        super().clear_cursor_annotation()
+        item, self._preview_item = self._preview_item, None
+        if item is None:
+            return
+        try:
+            if item.scene() is not None:
+                item.scene().removeItem(item)
+        except RuntimeError:
+            pass  # Already deleted along with a cleared scene.

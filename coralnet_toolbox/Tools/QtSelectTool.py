@@ -984,9 +984,12 @@ class SelectTool(Tool):
         """
         Performs the cut operation on the currently selected annotation using a
         provided list of points. This method is called by the CutSubTool.
+
+        Returns True if the annotation was replaced by its pieces, False if
+        nothing changed (the caller tells the user and stays in cut mode).
         """
         if len(self.selected_annotations) != 1 or len(cutting_points) < 2:
-            return  # Not enough cutting points
+            return False  # Not enough cutting points
 
         annotation_to_cut = self.selected_annotations[0]
         
@@ -1001,11 +1004,22 @@ class SelectTool(Tool):
             new_annotations = annotation_to_cut.cut()
         else:
             self.cancel_cutting_mode()
-            return  # Unsupported annotation type
-        
+            return False  # Unsupported annotation type
+
         # If the cut operation failed or was not applicable, do nothing.
+        # Rectangle/PolygonAnnotation.cut return [annotation] -- the original
+        # object itself -- when the line misses, and a lone copy when it only
+        # dents the shape. Carrying on with the original re-added it and then
+        # deleted it by its own id, so a missed cut deleted the annotation; a
+        # lone copy silently swapped it for a new one (new id, fresh state).
+        # Neither divided anything. A MultiPolygon may legitimately come back
+        # as a single polygon, so only it is exempt from the two-piece rule.
         if not new_annotations:
-            return
+            return False
+        if any(new_anno is annotation_to_cut for new_anno in new_annotations):
+            return False
+        if len(new_annotations) < 2 and not isinstance(annotation_to_cut, MultiPolygonAnnotation):
+            return False
 
         # Remove the original annotation (without recording) and add newly created annotations (also without recording)
         try:
@@ -1031,7 +1045,9 @@ class SelectTool(Tool):
             self.annotation_window.delete_selected_annotations()
             for new_anno in new_annotations:
                 self.annotation_window.add_annotation_from_tool(new_anno)
-            
+
+        return True
+
     def cancel_cutting_mode(self):
         """Safely cancels cutting mode."""
         if self.active_subtool and isinstance(self.active_subtool, CutSubTool):
