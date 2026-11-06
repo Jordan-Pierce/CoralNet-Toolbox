@@ -33,8 +33,64 @@ class ImportImages:
                                                      "Open Image Files",
                                                      "",
                                                      "Image Files (*.png *.jpg *.jpeg *.jfif *.tif* *.bmp *.webp)")
+        file_names = self._check_merged_work_areas(file_names)
         if file_names:
             self._process_image_files(file_names)
+
+    def _check_merged_work_areas(self, file_names):
+        """Ask before importing images that were already merged back into the raster they came from.
+
+        Imported by hand they are ordinary images: they cannot be merged back,
+        and Active Learning and Export would see the same pixels twice. The way
+        back in is to extract the raster again, which reuses the files.
+
+        Returns:
+            list: the files to import (all, or without those images), or [] if canceled.
+        """
+        if not file_names:
+            return file_names
+        from coralnet_toolbox.Rasters import extracted_images
+        try:
+            merged = extracted_images.merged_work_area_files(file_names)
+        except Exception as e:
+            print(f"[ImportImages] Could not check for merged work area images: {e}")
+            return file_names
+        if not merged:
+            return file_names
+
+        flagged = {path for group in merged.values() for path in group['paths']}
+        names = ", ".join(os.path.basename(parent or "") for parent in merged)
+        dates = ", ".join(sorted({group['merged'][:10] for group in merged.values()}))
+        raster_manager = self.image_window.raster_manager
+        parents_here = [parent for parent in merged if parent and raster_manager.has_image_path(parent)]
+
+        box = QMessageBox(self.image_window)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Already Merged Back")
+        box.setText(f"{len(flagged)} of these images are Work Area Images of {names}, already merged back on "
+                    f"{dates}.")
+        box.setInformativeText(
+            "Imported this way they are ordinary images: they cannot be merged back, and Active Learning and "
+            "Export would see the same pixels twice.\n\n"
+            "To work on these areas again, extract them again from the Parent Image: the saved files are reused "
+            "and its annotations as they are now are copied onto them.")
+        extract_button = box.addButton("Extract Again", QMessageBox.AcceptRole) if parents_here else None
+        import_button = box.addButton("Import as Ordinary Images", QMessageBox.DestructiveRole)
+        cancel_button = box.addButton(QMessageBox.Cancel)
+        box.setDefaultButton(cancel_button)
+        box.exec_()
+
+        clicked = box.clickedButton()
+        if clicked is import_button:
+            return file_names
+        others = [path for path in file_names if path not in flagged]
+        if extract_button is not None and clicked is extract_button:
+            # The other files still come in; the flagged ones come back through extraction
+            if others:
+                self._process_image_files(others)
+            self.image_window._open_extract_work_areas_dialog(parents_here)
+            return []
+        return []
 
     def import_orthomosaics(self):
         """Import files as OrthoRaster instances (orthomosaics)."""
@@ -44,6 +100,7 @@ class ImportImages:
                                                      "Open Orthomosaic Files",
                                                      "",
                                                      "Image Files (*.png *.jpg *.jpeg *.jfif *.tif* *.bmp *.webp)")
+        file_names = self._check_merged_work_areas(file_names)
         if file_names:
             self._process_image_files(file_names, raster_type='OrthoRaster')
 
@@ -61,7 +118,9 @@ class ImportImages:
                       if url.isLocalFile() and self._is_supported_image_file(url.toLocalFile())]
 
         if file_names:
-            self._process_image_files(file_names, suppress_errors=True)
+            file_names = self._check_merged_work_areas(file_names)
+            if file_names:
+                self._process_image_files(file_names, suppress_errors=True)
         else:
             event.ignore()
 

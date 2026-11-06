@@ -28,6 +28,7 @@ from coralnet_toolbox.Rasters import extracted_images
 from coralnet_toolbox.Rasters.merge_back import mask_base_path, save_mask_base, stamp_copy
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Icons import get_window_icon
+from coralnet_toolbox import theme as app_theme
 from coralnet_toolbox.utilities import raster_display_max, read_window_rgb
 
 
@@ -49,6 +50,28 @@ ANNOTATION_CLASSES = {
 WRITTEN = 'written'
 REUSED = 'reused'
 EMPTY = 'empty'
+
+# How long the closing summary stays in the status bar
+SUMMARY_MS = 10000
+
+
+def _plural(count, one, many):
+    return f"{count} {one if count == 1 else many}"
+
+
+def _show_status(main_window, message, timeout=0):
+    """Say in the main window's status bar what is happening, painted at once.
+
+    The work it describes runs on the GUI thread, so without the repaint it
+    would only appear once that work is over. A timeout of 0 keeps it up
+    until the next message replaces it.
+    """
+    try:
+        status_bar = main_window.status_bar
+        status_bar.showMessage(message, timeout)
+        status_bar.repaint()
+    except Exception:
+        pass
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -201,7 +224,12 @@ class ExtractWorkAreas(QDialog):
         self.setWindowTitle("Extract Work Areas")
         self.resize(650, 650)
 
-        self.rows = self._build_rows(raster_paths)
+        # Measuring every raster's work areas and how they overlap can take a moment
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            self.rows = self._build_rows(raster_paths)
+        finally:
+            QApplication.restoreOverrideCursor()
         self.eligible_rows = [row for row in self.rows if row['reason'] is None]
 
         self.worker = None
@@ -259,8 +287,9 @@ class ExtractWorkAreas(QDialog):
         group_box = QGroupBox("Information")
         layout = QVBoxLayout()
         info_label = QLabel(
-            "Saves each work area as its own image. Extract writes the images to disk. "
-            "Extract and Import also adds them to this project, linked to the raster they came from."
+            "Saves each work area as a Work Area Image. Save and Import links the Work Area Images to their "
+            "Parent Image, the raster they come from, so they can be merged back; until then, the Parent Image "
+            "is left out of Active Learning and Export."
         )
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
@@ -272,7 +301,7 @@ class ExtractWorkAreas(QDialog):
         layout = QVBoxLayout()
 
         self.source_table = QTableWidget(len(self.rows), 4)
-        self.source_table.setHorizontalHeaderLabels(["Raster", "Type", "Work Areas", "Status"])
+        self.source_table.setHorizontalHeaderLabels(["Parent Image", "Type", "Work Areas", "Status"])
         self.source_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.source_table.setSelectionMode(QAbstractItemView.NoSelection)
         self.source_table.verticalHeader().setVisible(False)
@@ -291,7 +320,9 @@ class ExtractWorkAreas(QDialog):
             raster = row['raster']
             if row['reason'] is None:
                 count = len(row['rects'])
-                status = f"{count} image{'s' if count != 1 else ''}"
+                status = f"{count} Work Area Image{'s' if count != 1 else ''}"
+                if row['overlap_count']:
+                    status += f", overlap {row['max_overlap']} px"
             else:
                 status = f"Skipped: {row['reason']}"
             work_area_count = len(raster.get_work_areas()) if row['reason'] != extracted_images.REASON_NOT_IMAGE else 0
@@ -314,7 +345,8 @@ class ExtractWorkAreas(QDialog):
         self.output_dir_edit = QLineEdit()
         if self.eligible_rows:
             self.output_dir_edit.setText(os.path.dirname(self.eligible_rows[0]['path']))
-        self.output_dir_edit.setToolTip("Folder to save into. Each raster's images go in a subfolder named after it.")
+        self.output_dir_edit.setToolTip("Folder to save into. Each Parent Image's Work Area Images go in a "
+                                        "subfolder named after it.")
         self.output_dir_button = QPushButton("Browse...")
         self.output_dir_button.clicked.connect(self.browse_output_dir)
         self.output_dir_button.setToolTip("Browse for an output folder.")
@@ -329,14 +361,15 @@ class ExtractWorkAreas(QDialog):
             self.prefix_edit.setText(os.path.splitext(os.path.basename(self.eligible_rows[0]['path']))[0])
         else:
             self.prefix_edit.setEnabled(False)
-            self.prefix_edit.setPlaceholderText("Each raster's file name")
-        self.prefix_edit.setToolTip("Images are named prefix_x_y_width_height, from where each work area sits.")
+            self.prefix_edit.setPlaceholderText("Each Parent Image's file name")
+        self.prefix_edit.setToolTip("Work Area Images are named prefix_x_y_width_height, from where each work "
+                                    "area sits.")
         layout.addRow("Prefix:", self.prefix_edit)
 
         self.format_combo = QComboBox()
         self.format_combo.addItems(IMAGE_FORMATS)
         self.format_combo.setToolTip(
-            "tif keeps the georeference of a georeferenced raster.\n"
+            "tif keeps the georeference of a georeferenced Parent Image.\n"
             "png is lossless. jpg is smallest, with some loss of quality."
         )
         self.format_combo.currentIndexChanged.connect(self.update_georeference_note)
@@ -355,19 +388,30 @@ class ExtractWorkAreas(QDialog):
 
         self.skip_empty_combo = QComboBox()
         self.skip_empty_combo.addItems(["True", "False"])
-        self.skip_empty_combo.setToolTip(
-            "If True, leave out work areas with no data, such as the blank corners of an orthomosaic,\n"
-            "or that are a single flat color."
-        )
-        layout.addRow("Skip Empty Tiles:", self.skip_empty_combo)
+        self.skip_empty_combo.setToolTip("Leave out work areas with no data or a single flat color, "
+                                         "such as an orthomosaic's blank corners.")
+        layout.addRow("Skip Empty Work Areas:", self.skip_empty_combo)
 
         self.include_annotations_combo = QComboBox()
-        self.include_annotations_combo.addItems(["True", "False"])
-        self.include_annotations_combo.setToolTip(
-            "If True, Extract and Import copies the raster's annotations and mask onto the new\n"
-            "images, clipped to each work area. The originals are not changed."
-        )
-        layout.addRow("Include Annotations:", self.include_annotations_combo)
+        self.include_annotations_combo.addItem("Annotations and mask", True)
+        self.include_annotations_combo.addItem("Nothing, start empty", False)
+        layout.addRow("Copy onto Work Area Images:", self.include_annotations_combo)
+
+        copy_note = QLabel()
+        copy_note.setWordWrap(True)
+        copy_note.setStyleSheet(f"color: {app_theme.TEXT_SECONDARY_COLOR.name()};")
+
+        def describe_copy(_index=None):
+            if self.include_annotations_combo.currentData():
+                copy_note.setText("Copies the Parent Image's annotations and mask onto each Work Area Image. "
+                                  "The Parent Image is not changed. Save and Import only.")
+            else:
+                copy_note.setText("The Work Area Images start empty. When merged back, everything on them is "
+                                  "added as new.")
+
+        self.include_annotations_combo.currentIndexChanged.connect(describe_copy)
+        describe_copy()
+        layout.addRow("", copy_note)
 
         group_box.setLayout(layout)
         return group_box
@@ -375,14 +419,14 @@ class ExtractWorkAreas(QDialog):
     def create_buttons_layout(self):
         buttons_layout = QHBoxLayout()
 
-        self.extract_button = QPushButton("Extract")
-        self.extract_button.setToolTip("Save the images to the output folder without adding them to the project.")
+        self.extract_button = QPushButton("Save Only")
+        self.extract_button.setToolTip("Writes the Work Area Images to disk only. They are not linked to the "
+                                       "Parent Image and cannot be merged back.")
         self.extract_button.clicked.connect(lambda: self.extract(import_after=False))
 
-        self.extract_import_button = QPushButton("Extract and Import")
-        self.extract_import_button.setToolTip(
-            "Save the images and add them to this project, linked to the raster they came from."
-        )
+        self.extract_import_button = QPushButton("Save and Import")
+        self.extract_import_button.setToolTip("Writes the Work Area Images and adds them to this project, linked "
+                                              "to the Parent Image so they can be merged back.")
         self.extract_import_button.clicked.connect(lambda: self.extract(import_after=True))
 
         self.cancel_button = QPushButton("Cancel")
@@ -433,9 +477,18 @@ class ExtractWorkAreas(QDialog):
                                            extracted_images.tile_filename(job['prefix'], rect, image_format)))
         )
         raster_count = len(jobs)
-        message = f"Extract {total} images from {raster_count} raster{'s' if raster_count != 1 else ''}?\n\n"
+        message = (f"Extract {total} Work Area Image{'s' if total != 1 else ''} from {raster_count} "
+                   f"Parent Image{'s' if raster_count != 1 else ''}?\n\n")
         if existing:
             message += f"({existing} already exist on disk and will be reused.)\n\n"
+        # Extracting again after a merge is the intended way back in; say what it does
+        for job in jobs:
+            manifest = extracted_images.manifest_in(job['output_dir'])
+            if manifest and manifest.get('merged'):
+                name = os.path.basename(job['parent_path'])
+                message += (f"{name} was merged back on {manifest['merged'][:10]}. Its saved Work Area Images will be "
+                            "reused" + (f", and its annotations as they are now copied onto them" if import_after
+                                        and self.include_annotations_combo.currentData() else "") + ".\n\n")
         message += f"Files will be named: prefix_x_y_width_height.{image_format}"
         reply = QMessageBox.question(self, "Confirm Extraction", message,
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
@@ -446,6 +499,8 @@ class ExtractWorkAreas(QDialog):
         self.progress.show()
         self.progress.start_progress(total)
         QApplication.setOverrideCursor(Qt.WaitCursor)
+        _show_status(self.main_window, f"Extracting {_plural(total, 'Work Area Image', 'Work Area Images')} "
+                                       f"from {self._parents_text(jobs)}...")
 
         self.worker = WorkAreaExtractorThread(jobs, image_format, self.skip_empty_combo.currentText() == "True")
         self.worker.progress_updated.connect(self._on_progress)
@@ -467,9 +522,9 @@ class ExtractWorkAreas(QDialog):
         if overlapping:
             max_overlap = max(row['max_overlap'] for row in overlapping)
             message_box = QMessageBox(QMessageBox.Warning, "Overlapping Work Areas",
-                                      f"Some work areas overlap, by up to {max_overlap} px. Extracting works, "
-                                      "but merging these images back later will ask you about each annotation "
-                                      "in the overlapping strips. To avoid that, use Smaller edge tiles with no "
+                                      f"Work areas overlap by up to {max_overlap} px, so annotations there appear "
+                                      "on more than one Work Area Image. Merge Back asks how to settle "
+                                      "conflicts between them. To avoid overlap, use Smaller edge tiles with no "
                                       "overlap in the Work Area Manager.", parent=self)
             continue_button = message_box.addButton("Continue", QMessageBox.AcceptRole)
             message_box.addButton("Cancel", QMessageBox.RejectRole)
@@ -482,17 +537,29 @@ class ExtractWorkAreas(QDialog):
     def _build_jobs(self, output_root):
         single = len(self.eligible_rows) == 1
         jobs = []
+        taken = []
         for row in self.eligible_rows:
             stem = os.path.splitext(os.path.basename(row['path']))[0]
             prefix = (self.prefix_edit.text().strip() or stem) if single else stem
+            # Rasters sharing a file name get their own folders: reusing another
+            # raster's files would give this one the other's pixels
+            output_dir = extracted_images.output_dir_for(output_root, stem, row['path'], taken)
+            taken.append(output_dir)
             jobs.append({
                 'parent_path': row['path'],
-                'output_dir': extracted_images.normalize_path(os.path.join(output_root, stem)),
+                'output_dir': output_dir,
                 'prefix': prefix,
                 'rects': row['rects'],
                 'row': row,
             })
         return jobs
+
+    @staticmethod
+    def _parents_text(jobs):
+        """The Parent Image's file name, or how many there are."""
+        if len(jobs) == 1:
+            return os.path.basename(jobs[0]['parent_path'])
+        return _plural(len(jobs), 'Parent Image', 'Parent Images')
 
     def _on_progress(self, value):
         """Runs on the GUI thread. set_value does not pump events, so this stays safe as a queued slot."""
@@ -504,6 +571,7 @@ class ExtractWorkAreas(QDialog):
 
     def _on_error(self, message):
         self._close_progress()
+        _show_status(self.main_window, f"Extraction failed: {message}", SUMMARY_MS)
         QMessageBox.critical(self, "Extraction Error", f"An error occurred while extracting work areas:\n{message}")
 
     def _close_progress(self):
@@ -525,7 +593,7 @@ class ExtractWorkAreas(QDialog):
         for result in results:
             by_parent.setdefault(result['parent_path'], []).append(result)
 
-        include_annotations = import_after and not canceled and self.include_annotations_combo.currentText() == "True"
+        include_annotations = import_after and not canceled and bool(self.include_annotations_combo.currentData())
         set_ids = {job['parent_path']: extracted_images.new_set_id() for job in jobs} if import_after and not canceled else {}
 
         # Manifests next to the images, for every raster that produced any
@@ -549,27 +617,37 @@ class ExtractWorkAreas(QDialog):
             already_in_project = {path for path in all_paths if self.raster_manager.has_image_path(path)}
             self.accept()
             if all_paths:
+                _show_status(self.main_window,
+                             f"Importing {_plural(len(all_paths), 'Work Area Image', 'Work Area Images')}...")
+                # The import sets its own busy cursor, so a failure warning it
+                # shows is not under the hourglass
                 self.main_window.import_images._process_image_files(all_paths)
-                for job in jobs:
-                    tiles = [r for r in by_parent.get(job['parent_path'], []) if r['path']]
-                    linked = self._link_set(job, tiles, set_ids[job['parent_path']], include_annotations)
-                    imported += len(linked)
-                    to_copy = [(rect, path) for rect, path in linked if path not in already_in_project]
-                    if include_annotations and to_copy:
-                        count, copies = self._copy_annotations(job['parent_path'], to_copy)
-                        copied += count
-                        given, mask_bases, mask_codes = self._copy_masks(job['parent_path'], to_copy)
-                        masks_copied += given
-                        # Merge Back reads these: copies deleted on their image, and
-                        # each image's mask as extracted
-                        parent = self.raster_manager.get_raster(job['parent_path'])
-                        record = extracted_images.active_set(parent) if parent is not None else None
-                        if record is not None:
-                            record['copies'] = copies
-                            record['mask_bases'] = mask_bases
-                            record['mask_label_map'] = {str(k): v for k, v in mask_codes.items()}
+                # Linking and copying run on the GUI thread too
+                QApplication.setOverrideCursor(Qt.WaitCursor)
+                try:
+                    for job in jobs:
+                        tiles = [r for r in by_parent.get(job['parent_path'], []) if r['path']]
+                        linked = self._link_set(job, tiles, set_ids[job['parent_path']], include_annotations)
+                        imported += len(linked)
+                        to_copy = [(rect, path) for rect, path in linked if path not in already_in_project]
+                        if include_annotations and to_copy:
+                            count, copies = self._copy_annotations(job['parent_path'], to_copy)
+                            copied += count
+                            given, mask_bases, mask_codes = self._copy_masks(job['parent_path'], to_copy)
+                            masks_copied += given
+                            # Merge Back reads these: copies deleted on their image, and
+                            # each image's mask as extracted
+                            parent = self.raster_manager.get_raster(job['parent_path'])
+                            record = extracted_images.active_set(parent) if parent is not None else None
+                            if record is not None:
+                                record['copies'] = copies
+                                record['mask_bases'] = mask_bases
+                                record['mask_label_map'] = {str(k): v for k, v in mask_codes.items()}
+                finally:
+                    QApplication.restoreOverrideCursor()
 
-        self._show_summary(written, reused, empty, imported, copied, canceled, import_after, masks_copied)
+        self._show_summary(self._parents_text(jobs), written, reused, empty, imported, copied, canceled,
+                           import_after, masks_copied)
 
         if not import_after or canceled:
             self.accept()
@@ -670,6 +748,9 @@ class ExtractWorkAreas(QDialog):
         if not sources:
             return 0, {}
 
+        _show_status(self.main_window, f"Copying {_plural(len(sources), 'annotation', 'annotations')} of "
+                                       f"{os.path.basename(parent_path)} onto its Work Area Images...")
+
         # Only clip the annotations whose bounds touch each tile
         tree = STRtree(boxes)
         copies = []
@@ -732,6 +813,9 @@ class ExtractWorkAreas(QDialog):
         if parent_mask is None or not np.any(parent_mask.mask_data):
             return 0, {path: "" for _, path in linked}, {}
 
+        _show_status(self.main_window,
+                     f"Copying the mask of {os.path.basename(parent_path)} onto its Work Area Images...")
+
         label_codes = {int(cid): label.short_label_code for cid, label in parent_mask.class_id_to_label_map.items()}
         all_labels = list(self.label_window.labels)
         bases = {}
@@ -776,22 +860,26 @@ class ExtractWorkAreas(QDialog):
 
         return given, bases, label_codes
 
-    def _show_summary(self, written, reused, empty, imported, copied, canceled, import_after, masks_copied=0):
+    def _show_summary(self, source, written, reused, empty, imported, copied, canceled, import_after,
+                      masks_copied=0):
         """Report the extraction in the main window's status bar, e.g.
-        Extracted: 46 | Reused: 2 | Empty: 3 | Imported: 48 | Annotations: 312
+        Work Area Images from ortho.tif | Extracted: 46 | Reused: 2 | Skipped as empty: 3 | Imported: 48 |
+        Annotations copied: 312 | Masks copied: 48
         """
-        parts = [f"Extracted: {written}", f"Reused: {reused}"]
+        parts = [f"Work Area Images from {source}", f"Extracted: {written}", f"Reused: {reused}"]
         if empty:
-            parts.append(f"Empty: {empty}")
+            parts.append(f"Skipped as empty: {empty}")
         if import_after and not canceled:
             parts.append(f"Imported: {imported}")
-            parts.append(f"Annotations: {copied}")
+            parts.append(f"Annotations copied: {copied}")
             if masks_copied:
-                parts.append(f"Masks: {masks_copied}")
+                parts.append(f"Masks copied: {masks_copied}")
+        elif not canceled:
+            parts.append("Not imported")
         message = " | ".join(parts)
         if canceled:
             message = "Extraction canceled | " + message
-        self.main_window.status_bar.showMessage(message, 10000)
+        _show_status(self.main_window, message, SUMMARY_MS)
 
     # ------------------------------------------------------------------
     # Cleanup

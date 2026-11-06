@@ -193,7 +193,9 @@ class RasterTableModel(QAbstractTableModel):
                 # Extract Work Areas links
                 extracted_set = active_set(raster)
                 if extracted_set is not None:
-                    tooltip_parts.append(f"<b>Extracted:</b> {len(extracted_set['tile_paths'])} images")
+                    count = len(extracted_set['tile_paths'])
+                    tooltip_parts.append(f"<b>Extracted:</b> {count} Work Area Image{'s' if count != 1 else ''}, "
+                                         "not merged back yet")
                 tile_of = getattr(raster, 'tile_of', None)
                 if tile_of:
                     tooltip_parts.append(f"<b>Extracted from:</b> {os.path.basename(tile_of['parent_path'])}")

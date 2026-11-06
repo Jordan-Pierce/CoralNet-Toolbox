@@ -15,7 +15,8 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QMessageBox, QVBoxLayout, QApplication, QFileDialog,
                              QLabel, QDialog, QDialogButtonBox, QGroupBox, QLineEdit,
                              QFormLayout, QComboBox, QSpinBox, QPushButton, QTabWidget, QWidget,
-                             QHBoxLayout, QInputDialog, QSizePolicy)
+                             QHBoxLayout, QInputDialog, QSizePolicy, QTableWidget, QTableWidgetItem,
+                             QAbstractItemView)
 
 from coralnet_toolbox.QtImageWindow import ImageWindow
 
@@ -49,9 +50,23 @@ from coralnet_toolbox.SeeAnything.PromptSession import (KIND_BOXES,
                                                         ORIGIN_ANNOTATIONS,
                                                         PromptSession,
                                                         collapse_to_one_class,
+                                                        decoys_can_compete,
                                                         keep_positive_detections,
                                                         new_prototype,
+                                                        stack_classes,
                                                         stem_from_path)
+from coralnet_toolbox.SeeAnything.PromptCalibration import (DEFAULT_GOAL,
+                                                            DEFAULT_PER_TRY,
+                                                            DEFAULT_TRIES,
+                                                            GOALS,
+                                                            MIN_IMAGES,
+                                                            THRESHOLDS,
+                                                            Calibration,
+                                                            curve_for,
+                                                            draw_tries,
+                                                            match_image,
+                                                            new_rng,
+                                                            split_images)
 
 
 # Input-size granularity for YOLOE. Everything in the family is a stride-32
@@ -155,9 +170,8 @@ class DeployGeneratorDialog(QDialog):
         # examples meant saving the results as branching coral.
         self.output_label = None
         self.last_output_label_code = None
-        # Until the user picks an output label, it follows the annotation label,
-        # which is what the one combo used to do.
-        self._output_label_touched = False
+        # Choosing an annotation label sets the output label to match; one picked
+        # by hand holds until the annotation label changes again.
         self.last_annotation_label_code = None
 
         # The prompt. Every example is a row in it, wherever it came from.
@@ -169,6 +183,8 @@ class DeployGeneratorDialog(QDialog):
         self._last_action = ""
         # How many images the Add from annotations table lists for the chosen label.
         self._annotation_image_count = None
+        # The goal the last calibration was applied with, offered first next time.
+        self.calibration_goal = DEFAULT_GOAL
 
         self.device = None  # Will be set in showEvent
 
@@ -322,10 +338,16 @@ class DeployGeneratorDialog(QDialog):
         annotation_label = self.annotation_label_combo.currentData()
 
         if annotation_label is not None:
-            # Remembered for a better experience on re-opening.
-            self.last_annotation_label_code = annotation_label.short_label_code
-            if not self._output_label_touched:
+            code = annotation_label.short_label_code
+            # A different annotation label sets the output label. This used to stop
+            # for good once an output label was picked by hand, even the one
+            # already shown, so later label changes no longer reached it. Now a
+            # hand-picked output holds until the annotation label changes again,
+            # and re-opening on the same label keeps it.
+            if code != self.last_annotation_label_code or self.output_label is None:
                 self._follow_annotation_label(annotation_label)
+            # Remembered for a better experience on re-opening.
+            self.last_annotation_label_code = code
 
         table_model = self.image_selection_window.table_model
         previously_highlighted = table_model.get_highlighted_paths()
@@ -333,36 +355,17 @@ class DeployGeneratorDialog(QDialog):
         if not annotation_label:
             # If no label is selected (e.g., during initialization), show an empty list.
             table_model.set_filtered_paths([])
+            self.toggle_annotations_button.setEnabled(False)
             self._annotation_image_count = 0
             self.update_annotation_note()
+            self.update_calibrate_state()
             return
 
-        all_paths = self.image_selection_window.raster_manager.image_paths
-        final_filtered_paths = []
-
-        valid_types = {"RectangleAnnotation", "PolygonAnnotation"}
-        selected_label_code = annotation_label.short_label_code
-
-        # Loop through paths and check the pre-computed map on each raster
-        for path in all_paths:
-            raster = self.image_selection_window.raster_manager.get_raster(path)
-            if not raster:
-                continue
-
-            # Skip VideoRasters — VPE generation requires loading a static image
-            # from the path, which doesn't work for video files. Users should
-            # extract frames first if they want to use video content as references.
-            if getattr(raster, 'raster_type', None) == 'VideoRaster':
-                continue
-
-            # From the cache, get the set of annotation types for the selected label,
-            # and keep the image if any of them is a Polygon or Rectangle.
-            types_for_this_label = raster.label_to_types_map.get(selected_label_code, set())
-            if not valid_types.isdisjoint(types_for_this_label):
-                final_filtered_paths.append(path)
+        final_filtered_paths = self.paths_with_label_shapes(annotation_label.short_label_code)
 
         # Directly set the filtered list in the table model.
         table_model.set_filtered_paths(final_filtered_paths)
+        self.toggle_annotations_button.setEnabled(bool(final_filtered_paths))
 
         # Keep highlights that are still in the list
         valid_selections = [p for p in previously_highlighted if p in final_filtered_paths]
@@ -377,6 +380,25 @@ class DeployGeneratorDialog(QDialog):
 
         self._annotation_image_count = len(final_filtered_paths)
         self.update_annotation_note()
+        # Calibrating works on the chosen label, so whether it can run changes with it.
+        self.update_calibrate_state()
+
+    def paths_with_label_shapes(self, label_code):
+        """Images with at least one rectangle or polygon of this label, from the pre-computed cache.
+
+        Video rasters are left out: embedding reads a static image from the path,
+        which a video file is not. Extract frames first to use them.
+        """
+        manager = self.image_selection_window.raster_manager
+        valid_types = {"RectangleAnnotation", "PolygonAnnotation"}
+        paths = []
+        for path in manager.image_paths:
+            raster = manager.get_raster(path)
+            if not raster or getattr(raster, 'raster_type', None) == 'VideoRaster':
+                continue
+            if not valid_types.isdisjoint(raster.label_to_types_map.get(label_code, set())):
+                paths.append(path)
+        return paths
 
     def run_blocker(self):
         """Why the prompt cannot run yet, or None when it can.
@@ -600,8 +622,6 @@ class DeployGeneratorDialog(QDialog):
             "It need not be the label of the annotations used as examples: find Porites\n"
             "from branching-coral examples and save them as Porites.")
         self.output_label_combo.currentIndexChanged.connect(self._on_output_label_changed)
-        # `activated` fires for the user's own choices only, not for programmatic ones.
-        self.output_label_combo.activated.connect(self._on_output_label_chosen)
         layout.addRow("Save detections as:", self.output_label_combo)
 
         group_box.setLayout(layout)
@@ -669,6 +689,17 @@ class DeployGeneratorDialog(QDialog):
         add_phrase_button.clicked.connect(self.add_phrase_from_input)
         self.prompt_panel.add_host_widget(add_phrase_button)
 
+        self.calibrate_button = QPushButton("Calibrate...")
+        self._calibrate_tooltip = (
+            "Choose which of the label's images to keep in the prompt, and the confidence threshold.\n"
+            "Scores every image together and several random sets of a few, each on images none of\n"
+            "them came from, then lets you pick one, at the threshold that suits your goal.\n"
+            "Only verified annotations are used. Objects nobody annotated count as false positives,\n"
+            "so the threshold may come out a little high.")
+        self.calibrate_button.setToolTip(self._calibrate_tooltip)
+        self.calibrate_button.clicked.connect(self.calibrate_prompt)
+        self.prompt_panel.add_host_widget(self.calibrate_button)
+
         self.prompt_panel.edited.connect(self.refresh_prompt)
         self.prompt_panel.saveRequested.connect(self.save_session_file)
         self.prompt_panel.loadRequested.connect(self.load_session_file)
@@ -698,12 +729,21 @@ class DeployGeneratorDialog(QDialog):
         self.image_selection_window = ImageWindow(self.main_window)
         layout.addWidget(self.image_selection_window, 1)
 
+        self.toggle_annotations_button = QPushButton("Toggle highlighted")
+        self.toggle_annotations_button.setToolTip(
+            "Highlight every image in the table, or clear the highlights when all are highlighted.")
+        self.toggle_annotations_button.clicked.connect(self.toggle_highlighted_annotations)
+
         self.add_annotations_button = QPushButton("Add highlighted")
         self.add_annotations_button.setToolTip(
             "Embed the label's boxes on each highlighted image as one example per image.\n"
             "An image already in the prompt is only embedded again if its annotations changed.")
         self.add_annotations_button.clicked.connect(self.add_highlighted_annotations)
-        layout.addWidget(self.add_annotations_button)
+
+        highlighted_row = QHBoxLayout()
+        highlighted_row.addWidget(self.toggle_annotations_button)
+        highlighted_row.addWidget(self.add_annotations_button)
+        layout.addLayout(highlighted_row)
 
         self.remove_annotations_button = QPushButton("Remove all images from the prompt")
         self.remove_annotations_button.setToolTip(
@@ -838,10 +878,6 @@ class DeployGeneratorDialog(QDialog):
         index = self.output_label_combo.findText(label.short_label_code)
         if index != -1 and index != self.output_label_combo.currentIndex():
             self.output_label_combo.setCurrentIndex(index)
-
-    def _on_output_label_chosen(self, _index):
-        """The user picked an output label, so it stops following the annotation label."""
-        self._output_label_touched = True
 
     def _on_output_label_changed(self, _index=None):
         self.output_label = self.output_label_combo.currentData()
@@ -1004,6 +1040,16 @@ class DeployGeneratorDialog(QDialog):
 
         if report is not None:
             self.report(report.message(label.short_label_code))
+
+    def toggle_highlighted_annotations(self):
+        """The Toggle button: highlight every image in the table, or none when all already are.
+
+        The image table's own Toggle Highlighted, whose toolbar only the main
+        window shows; here it saves selecting every image by hand before Add.
+        """
+        window = self.image_selection_window
+        window.toggle_highlighted()
+        window.update_highlighted_count_label()
 
     def update_annotation_note(self):
         """Say, in one short line, how many of the chosen label's images the prompt already has."""
@@ -1614,7 +1660,15 @@ class DeployGeneratorDialog(QDialog):
         # that matches an object better than every positive takes it.
         names, stacked, n_positive = session.build_classes()
         self.n_positive_classes = n_positive if len(names) > n_positive else None
+        self._apply_classes(names, stacked)
+        return True
 
+    def _apply_classes(self, names, stacked):
+        """Give the loaded model these class embeddings; `stack_classes` output.
+
+        Calibration calls this once per try on the same model, which reproduces a
+        fresh model's detections exactly (checked in scripts/SeeAnything_Testbed.py).
+        """
         self.loaded_model.is_fused = lambda: False
         # Ensure underlying model.names is a dict mapping index->name
         mdl = getattr(self.loaded_model, 'model', None)
@@ -1633,8 +1687,6 @@ class DeployGeneratorDialog(QDialog):
                 self.loaded_model.names = {i: n for i, n in enumerate(names_attr)}
             except Exception:
                 pass
-
-        return True
 
     def get_imgsz(self):
         """Return the spinbox image size, rounded to a multiple of the model stride.
@@ -1748,6 +1800,403 @@ class DeployGeneratorDialog(QDialog):
         else:
             results_processor.process_detection_results(valid_results)
 
+    # --- Calibration --------------------------------------------------------------------------------------------------
+
+    def calibration_pool(self, label_code):
+        """The prompt's examples from this label's annotations, by image, ticked or not.
+
+        Calibrating decides which of these are ticked, so rows unticked by hand
+        are candidates again.
+
+        Returns:
+            dict[str, list[Prototype]]: Image path to its examples, in prompt order.
+        """
+        pool = {}
+        for prototype in self.session.positives:
+            if prototype.source == ORIGIN_ANNOTATIONS and prototype.origin.get("label") == label_code:
+                pool.setdefault(prototype.origin.get("image"), []).append(prototype)
+        return pool
+
+    def ask_calibration_options(self, label_code, in_prompt):
+        """One question and two choices. The goal is chosen afterwards, on the results.
+
+        Returns:
+            tuple[int, int] | None: Images per set and random sets; None if cancelled.
+        """
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Calibrate")
+        layout = QVBoxLayout(dialog)
+
+        question = QLabel(f"Find the best {label_code} images to prompt with, and the threshold to use?")
+        question.setWordWrap(True)
+        layout.addWidget(question)
+
+        form = QFormLayout()
+        per_try = QSpinBox()
+        per_try.setRange(1, max(1, in_prompt))
+        per_try.setValue(min(DEFAULT_PER_TRY, max(1, in_prompt)))
+        per_try.setToolTip("Images in each random set. About 10 was enough on the data tested.")
+        form.addRow("Images per set:", per_try)
+
+        tries = QSpinBox()
+        tries.setRange(0, 200)
+        tries.setValue(DEFAULT_TRIES)
+        tries.setToolTip("How many random sets to score, besides every image together.\n"
+                         "With 0, only the threshold is chosen.\n"
+                         "Each set costs one prediction per test image.")
+        form.addRow("Random sets:", tries)
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec_() != QDialog.Accepted:
+            return None
+        return per_try.value(), tries.value()
+
+    def label_annotation_boxes(self, image_path, label_code):
+        """One label's rectangle and polygon boxes on an image, split into verified and unverified.
+
+        Returns:
+            tuple[np.ndarray, np.ndarray]: (V, 4) verified and (U, 4) unverified xyxy boxes.
+        """
+        verified, unverified = [], []
+        for annotation in self.annotation_window.get_image_annotations(image_path):
+            if annotation.label.short_label_code != label_code:
+                continue
+            if isinstance(annotation, (PolygonAnnotation, RectangleAnnotation)):
+                (verified if annotation.verified else unverified).append(annotation.cropped_bbox)
+        return (np.asarray(verified, dtype=np.float64).reshape(-1, 4),
+                np.asarray(unverified, dtype=np.float64).reshape(-1, 4))
+
+    def calibration_blocker(self):
+        """Why Calibrate cannot run, or None when it can.
+
+        Calibrate is disabled while this says anything, so nobody picks options
+        only to be told afterwards there is too little to test on. Stops as soon
+        as enough images are found, so it stays cheap on every prompt refresh.
+        """
+        if self.loaded_model is None:
+            return "Load a model first."
+        label = self.annotation_label_combo.currentData()
+        if label is None:
+            return "Choose a label under Add from annotations."
+        code = label.short_label_code
+        pool = self.calibration_pool(code)
+        if not pool:
+            return f"Add {code} images to the prompt first."
+        try:
+            self.session.check_stem(self._prompt_embedding_stem())
+        except ValueError:
+            return "The prompt was made with another model."
+
+        # Candidates need only verified annotations of the label; anything with
+        # a verified one can be tested on.
+        eligible = usable = 0
+        for path in pool:
+            verified, unverified = self.label_annotation_boxes(path, code)
+            usable += bool(len(verified))
+            eligible += bool(len(verified) and not len(unverified))
+            if eligible and usable >= MIN_IMAGES:
+                return None
+        if not eligible:
+            return (f"Every {code} image in the prompt has unverified {code} annotations, "
+                    f"and calibrating uses verified ones only.")
+        for path in self.paths_with_label_shapes(code):
+            if path in pool:
+                continue
+            usable += bool(len(self.label_annotation_boxes(path, code)[0]))
+            if usable >= MIN_IMAGES:
+                return None
+        return (f"Calibrating needs at least {MIN_IMAGES} images with verified {code} annotations. "
+                f"There {'is' if usable == 1 else 'are'} {usable}.")
+
+    def update_calibrate_state(self):
+        """Enable Calibrate only when it can run; its tooltip says why not.
+
+        Returns:
+            str | None: The reason it cannot run, if any.
+        """
+        reason = self.calibration_blocker()
+        button = getattr(self, 'calibrate_button', None)
+        if button is not None:
+            button.setEnabled(reason is None)
+            button.setToolTip(self._calibrate_tooltip if reason is None
+                              else f"{reason}\n\n{self._calibrate_tooltip}")
+        return reason
+
+    def calibrate_prompt(self):
+        """The Calibrate button: choose the label's images to keep and the threshold, on held out annotations.
+
+        Only verified annotations are considered. An image whose label annotations
+        are not all verified is never a candidate, since its example was embedded
+        from them; it can still be tested on, where its verified boxes are the
+        answers and detections on its unverified ones are ignored.
+        """
+        # The button is disabled while this says anything; checked again in
+        # case it was pressed before a refresh caught up.
+        reason = self.update_calibrate_state()
+        if reason:
+            QMessageBox.information(self, "Cannot Calibrate", reason)
+            return
+        code = self.annotation_label_combo.currentData().short_label_code
+        pool = self.calibration_pool(code)
+        boxes = {path: self.label_annotation_boxes(path, code)
+                 for path in set(self.paths_with_label_shapes(code)) | set(pool)}
+        eligible = [path for path in pool if len(boxes[path][0]) and not len(boxes[path][1])]
+
+        options = self.ask_calibration_options(code, len(eligible))
+        if options is None:
+            return
+        per_try, tries = options
+
+        outside = [path for path, (verified, _) in boxes.items() if len(verified) and path not in eligible]
+        rng = new_rng(eligible + outside)
+        try:
+            candidates, validation = split_images(eligible, outside, rng)
+        except ValueError as e:
+            QMessageBox.warning(self, "Too Few Images", str(e))
+            return
+        sets = draw_tries(candidates, per_try, tries, rng)
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        progress_bar = ProgressBar(self, title="Calibrating")
+        progress_bar.show()
+        calibration, error = None, None
+        try:
+            calibration = self.run_calibration(pool, boxes, candidates, validation, sets, progress_bar)
+        except Exception as e:
+            error = e
+        finally:
+            QApplication.restoreOverrideCursor()
+            progress_bar.stop_progress()
+            progress_bar.close()
+
+        if error is not None:
+            QMessageBox.critical(self, "Could Not Calibrate", str(error))
+            return
+        if calibration is None:
+            return
+        if not calibration.found_anything():
+            QMessageBox.information(self, "Nothing Found",
+                                    f"No try found any of the verified {code} annotations on the "
+                                    f"{len(validation)} test images, so nothing was changed.")
+            return
+        choice = self.confirm_calibration(code, calibration)
+        if choice is not None:
+            self.apply_calibration(pool, choice)
+
+    def confirm_calibration(self, label_code, calibration):
+        """Show the results as a small table to choose from, with the goal to read them by.
+
+        The rows are every candidate image together and the best random set,
+        each at the threshold that suits the goal. The higher score starts
+        selected; a row clicked stays picked when the goal changes. The
+        detections do not depend on the goal, so changing it only re-reads
+        them: the table updates at once, nothing is predicted again.
+
+        Returns:
+            TryScore | None: The row to apply, or None if cancelled.
+        """
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Calibrate")
+        layout = QVBoxLayout(dialog)
+
+        known = calibration.known
+        layout.addWidget(QLabel("Choose the images and threshold to apply."))
+        caption = QLabel(f"Tested on {len(calibration.validation)} {label_code} images that no try used, "
+                         f"with {known} verified boxes.")
+        caption.setWordWrap(True)
+        layout.addWidget(caption)
+
+        goal_row = QFormLayout()
+        goal_combo = QComboBox()
+        goal_combo.addItems(list(GOALS))
+        goal_combo.setCurrentText(self.calibration_goal)
+        goal_combo.setToolTip("What each row's threshold, and the best set, are chosen for.\n"
+                              "Balanced: finding an object and avoiding a false positive count the same.\n"
+                              "Find more: finding counts more.\n"
+                              "Fewer false positives: avoiding them counts more.")
+        goal_row.addRow("Goal:", goal_combo)
+        layout.addLayout(goal_row)
+
+        headers = ["", "Images", "Confidence", "TP", "FP", "Score"]
+        table = QTableWidget(0, len(headers))
+        table.setHorizontalHeaderLabels(headers)
+        table.verticalHeader().setVisible(False)
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SingleSelection)
+        table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        table.horizontalHeaderItem(3).setToolTip(f"True positives: verified boxes found, of {known}.")
+        table.horizontalHeaderItem(4).setToolTip(
+            "False positives: detections that match no verified box.\n"
+            "Objects nobody annotated count here too. Detections on unverified annotations are left out.")
+        table.horizontalHeaderItem(5).setToolTip("How well each row meets the goal, from 0 to 1.")
+        layout.addWidget(table)
+
+        state = {"rows": [], "picked": None, "filling": False, "widths": None}
+
+        def fill():
+            goal = goal_combo.currentText()
+            rows = calibration.options(goal)
+            state["rows"], state["filling"] = rows, True
+            table.setRowCount(len(rows))
+            for r, (name, result) in enumerate(rows):
+                tip = ("Every candidate image." if r == 0 else
+                       "The random set that meets the goal best.") + " Click a row to choose it."
+                values = [name, str(len(result.keys)), f"{result.threshold:.2f}",
+                          str(result.true_positives), str(result.false_positives), f"{result.score:.2f}"]
+                for c, value in enumerate(values):
+                    item = QTableWidgetItem(value)
+                    item.setTextAlignment(Qt.AlignCenter)
+                    item.setToolTip(tip)
+                    table.setItem(r, c, item)
+            names = [name for name, _ in rows]
+            table.selectRow(names.index(state["picked"]) if state["picked"] in names
+                            else calibration.recommended(goal))
+            state["filling"] = False
+
+            # Widths from the contents and header text only, never from the
+            # current column widths: a stretched column read back and copied to
+            # the others widened the dialog on every goal change. Widths only
+            # ever grow to fit, and the table's width is fixed to their sum.
+            header = table.horizontalHeader()
+            fit = [max(table.sizeHintForColumn(c), header.sectionSizeHint(c)) for c in range(len(headers))]
+            fit[0] += 16  # Room around "Best set of 10"
+            # The number columns share one width, so TP and FP do not shrink to slivers.
+            widths = [fit[0]] + [max(fit[1:])] * (len(headers) - 1)
+            widths = [max(w, old) for w, old in zip(widths, state["widths"] or widths)]
+            state["widths"] = widths
+            for c, width in enumerate(widths):
+                table.setColumnWidth(c, width)
+            table.setFixedWidth(sum(widths) + 2 * table.frameWidth())
+            table.setFixedHeight(header.height() + sum(table.rowHeight(r) for r in range(len(rows)))
+                                 + 2 * table.frameWidth())
+            dialog.adjustSize()
+
+        def on_pick():
+            selected = table.selectionModel().selectedRows()
+            if selected and not state["filling"]:
+                state["picked"] = state["rows"][selected[0].row()][0]
+
+        goal_combo.currentIndexChanged.connect(lambda _index: fill())
+        table.itemSelectionChanged.connect(on_pick)
+        fill()
+
+        buttons = QDialogButtonBox()
+        buttons.addButton("Apply", QDialogButtonBox.AcceptRole)
+        buttons.addButton(QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec_() != QDialog.Accepted:
+            return None
+        goal = goal_combo.currentText()
+        self.calibration_goal = goal
+        selected = table.selectionModel().selectedRows()
+        row = selected[0].row() if selected else calibration.recommended(goal)
+        return state["rows"][row][1]
+
+    def run_calibration(self, pool, boxes, candidates, validation, sets, progress_bar):
+        """Score every try on the validation images.
+
+        A try is the prompt as it would run with only the try's images ticked:
+        the enabled examples from elsewhere stay in, and so do the decoys. Each
+        try predicts once per image at the lowest threshold tried, and every
+        higher threshold is read off those detections.
+
+        Args:
+            pool (dict): `calibration_pool(label_code)`; rows outside `candidates`
+                are in no try.
+            boxes (dict): Image path to `label_annotation_boxes`: verified boxes
+                are the answers, detections on unverified ones are ignored.
+            candidates (list): Pool images a try can use.
+            validation (list): Images to test on; in no try.
+            sets (list[tuple]): The tries, as image paths.
+            progress_bar (ProgressBar): Advanced per prediction; its cancel stops the run.
+
+        Returns:
+            Calibration | None: None if canceled.
+        """
+        progress_bar.set_busy_mode("Preparing the examples...")
+        # A run embeds off-size examples again before predicting; so must this,
+        # or the tries would not be the prompts that run.
+        self.reembed_off_size_examples()
+        self.refresh_prompt()
+        self.session.check_stem(self._prompt_embedding_stem())
+
+        pool_uids = {p.uid for group in pool.values() for p in group}
+        fixed = {p.uid for p in self.session.enabled_positives() if p.uid not in pool_uids}
+        decoys = self.session.enabled_negatives()
+
+        calibration = Calibration(candidates=list(candidates), validation=list(validation))
+        progress_bar.set_title(f"Scoring {len(sets)} {'try' if len(sets) == 1 else 'tries'} "
+                               f"on {len(validation)} images")
+        progress_bar.start_progress(len(sets) * len(validation))
+        for keys in sets:
+            chosen = fixed | {p.uid for key in keys for p in pool[key]}
+            # Prompt order, so a try builds the tensor the applied prompt will.
+            positives = [p for p in self.session.positives if p.uid in chosen]
+            negatives = decoys if decoys_can_compete(positives) else []
+            names, stacked, n_positive = stack_classes([p.embedding for p in positives],
+                                                       [n.embedding for n in negatives])
+            self._apply_classes(names, stacked)
+
+            matches = []
+            for path in validation:
+                if progress_bar.wasCanceled():
+                    return None
+                detected, confidence = self._calibration_detections(path, n_positive)
+                verified, unverified = boxes[path]
+                matches.append(match_image(detected, confidence, verified, ignore=unverified))
+                progress_bar.update_progress()
+            calibration.tries.append(curve_for(keys, matches))
+        return calibration
+
+    def _calibration_detections(self, image_path, n_positive):
+        """What the model, set up with a try's classes, finds on one whole image; decoys dropped.
+
+        As `_apply_model` predicts, but at the lowest threshold tried and
+        without work-area tiling, SAM or the area filter.
+
+        Returns:
+            tuple[np.ndarray, np.ndarray]: (N, 4) xyxy boxes in image pixels, and (N,) confidences.
+        """
+        results = self.loaded_model.predict(image_path,
+                                            visual_prompts=[],
+                                            imgsz=self.get_imgsz(),
+                                            rect=True,
+                                            conf=float(THRESHOLDS[0]),
+                                            iou=self.thresholds_widget.get_iou_thresh(),
+                                            max_det=self.thresholds_widget.get_max_detections(),
+                                            device=self.main_window.device,
+                                            quantize=self.get_quantize(),
+                                            retina_masks=False,
+                                            verbose=False)
+        result = keep_positive_detections(results[0], n_positive)
+        boxes = getattr(result, 'boxes', None)
+        if boxes is None or len(boxes) == 0:
+            return np.zeros((0, 4)), np.zeros(0)
+        return boxes.xyxy.cpu().numpy(), boxes.conf.cpu().numpy()
+
+    def apply_calibration(self, pool, choice):
+        """Tick the chosen images' examples, untick the label's others, and set the threshold.
+
+        The label's rows that were in no try, held out or not verified, are
+        unticked too, so the prompt that runs is the one that was tested.
+        """
+        chosen = set(choice.keys)
+        for path, group in pool.items():
+            for prototype in group:
+                prototype.enabled = path in chosen
+        self.main_window.update_uncertainty_thresh(choice.threshold)
+        self.refresh_prompt()
+
     # --- The prompt ---------------------------------------------------------------------------------------------------
 
     def refresh_prompt(self):
@@ -1760,6 +2209,7 @@ class DeployGeneratorDialog(QDialog):
             remove_button.setEnabled(bool(self.examples_from_annotations()))
         self.update_annotation_note()
         self.update_ok_state()
+        self.update_calibrate_state()
         self.update_status()
 
     def report(self, message):

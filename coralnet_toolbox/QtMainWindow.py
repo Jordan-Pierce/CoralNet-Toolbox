@@ -1151,7 +1151,8 @@ class MainWindow(QMainWindow):
         self.max_detections_spinbox.setValue(self.max_detections)
         self.max_detections_spinbox.valueChanged.connect(self.update_max_detections)
         self.max_detections_spinbox.setToolTip(
-            "Maximum number of detections kept after Ultralytics non-max suppression. Lower values "
+            "Maximum number of detections kept after Ultralytics non-max suppression.\n"
+            "Lower values "
             "reduce clutter and processing time; higher values allow more candidates to survive into "
             "annotation creation.")
         # No trailing stretch, for the same reason as the combos below: it pinned
@@ -1174,7 +1175,8 @@ class MainWindow(QMainWindow):
         self.boundary_tolerance_combo.setCurrentIndex(0 if self.boundary_tolerance else 1)
         self.boundary_tolerance_combo.currentIndexChanged.connect(self.update_boundary_tolerance)
         self.boundary_tolerance_combo.setToolTip(
-            "Choose whether detections that touch a work-area edge should be preserved. Keep retains "
+            "Choose whether detections that touch a work-area edge should be preserved.\n"
+            "Keep retains "
             "cut-off objects, while Ignore removes them to reduce seam duplicates across tiles.")
         # No trailing stretch: it pinned the combo at its sizeHint, which now
         # reads as a stub because the area row has widened the whole popup.
@@ -1190,13 +1192,13 @@ class MainWindow(QMainWindow):
         # Uncertainty threshold
         self.uncertainty_thresh_slider = QSlider(Qt.Horizontal)
         self.uncertainty_thresh_slider.setRange(0, 100)
-        self.uncertainty_thresh_slider.setValue(int(self.uncertainty_thresh * 100))
+        self.uncertainty_thresh_slider.setValue(int(round(self.uncertainty_thresh * 100)))
         self.uncertainty_thresh_slider.setTickPosition(QSlider.TicksBelow)
         self.uncertainty_thresh_slider.setTickInterval(10)
         self.uncertainty_value_label = QLabel(f"{self.uncertainty_thresh:.2f}")
         self.uncertainty_thresh_slider.valueChanged.connect(self.update_uncertainty_label)
         self.uncertainty_thresh_slider.setToolTip(
-            "Minimum confidence required before a prediction is accepted as a normal annotation. "
+            "Minimum confidence required before a prediction is accepted as a normal annotation.\n"
             "Predictions below this value are treated as Review and can be surfaced for manual "
             "inspection.")
         self.uncertainty_value_label.setToolTip(
@@ -1217,7 +1219,8 @@ class MainWindow(QMainWindow):
         self.iou_value_label = QLabel(f"{self.iou_thresh:.2f}")
         self.iou_thresh_slider.valueChanged.connect(self.update_iou_label)
         self.iou_thresh_slider.setToolTip(
-            "Intersection-over-Union threshold used by non-max suppression. Higher values keep more "
+            "Intersection-over-Union threshold used by non-max suppression.\n"
+            "Higher values keep more "
             "overlapping detections; lower values remove duplicates more aggressively.")
         self.iou_value_label.setToolTip(
             "Current IoU threshold value used for non-max suppression.")
@@ -1278,7 +1281,8 @@ class MainWindow(QMainWindow):
             "the image.")
         self.area_threshold_label = QLabel(format_area_label(min_val, max_val))
         self.area_threshold_label.setToolTip(
-            "Current area filter range. The equivalent bounds for the open image - in real-world "
+            "Current area filter range.\n"
+            "The equivalent bounds for the open image - in real-world "
             "units if that raster is scaled, otherwise in pixels - are reported in the status bar "
             "whenever the range changes.")
         # Selection churn is coalesced: a rubber-band drag emits a selection
@@ -1927,7 +1931,7 @@ class MainWindow(QMainWindow):
         """Update the uncertainty threshold value"""
         if self.uncertainty_thresh != value:
             self.uncertainty_thresh = value
-            self.uncertainty_thresh_slider.setValue(int(value * 100))  # Convert to slider range (0-100)
+            self.uncertainty_thresh_slider.setValue(int(round(value * 100)))  # round, not truncate: int(0.29 * 100) is 28
             self.uncertaintyChanged.emit(value)
 
     def update_uncertainty_label(self, value):

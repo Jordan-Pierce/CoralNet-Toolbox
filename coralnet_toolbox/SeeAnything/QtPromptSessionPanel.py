@@ -96,10 +96,11 @@ def section_counts(section, positives, negatives):
 
 
 def describe_sources(session):
-    """Where a prompt's examples came from, in one line.
+    """Where a prompt's ticked examples came from, in one line.
 
     E.g. "3 images from annotations, 2 examples and 1 negative from the tool,
-    1 phrase (1 switched off)".
+    1 phrase". Only ticked rows count: they are what a run uses, and the panel
+    shows the unticked ones.
     """
     if session.is_empty():
         return "empty"
@@ -108,18 +109,14 @@ def describe_sources(session):
              SECTION_PHRASES: "", SECTION_FILES: "from files", None: "from elsewhere"}
     parts = []
     for section, _title, _hint in SECTIONS:
-        positives = sum(1 for p in session.positives if section_of(p) == section)
-        negatives = sum(1 for p in session.negatives if section_of(p) == section)
+        positives = sum(1 for p in session.enabled_positives() if section_of(p) == section)
+        negatives = sum(1 for p in session.enabled_negatives() if section_of(p) == section)
         if not positives and not negatives:
             continue
         counts = section_counts(section, positives, negatives).replace(", ", " and ")
         parts.append(f"{counts} {where[section]}".strip())
 
-    off = sum(1 for p in session.positives + session.negatives if not p.enabled)
-    line = ", ".join(parts)
-    if off:
-        line += f" ({off} switched off)"
-    return line
+    return ", ".join(parts) if parts else "nothing ticked"
 
 
 def row_text(prototypes, negative, imgsz=None):

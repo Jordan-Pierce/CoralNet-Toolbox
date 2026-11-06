@@ -284,6 +284,14 @@ class SAMTool(Tool):
         if not self._pointer_over_window():
             return
 
+        # Cursor can be inside the annotation window but outside the work
+        # area; predicting there previews/updates the mask from a point SAM
+        # was never encoded for.
+        if not self.working_area.contains_point(self.hover_pos):
+            if not self.has_active_prompts:
+                self.clear_temp_annotation()
+            return
+
         if self.drawing_rectangle:
             if self.end_point is not None:
                 self.create_temp_annotation(self.end_point)
