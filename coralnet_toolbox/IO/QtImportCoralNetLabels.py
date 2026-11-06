@@ -1,3 +1,4 @@
+import os
 import uuid
 import random
 import pandas as pd
@@ -7,6 +8,8 @@ from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import QFileDialog, QMessageBox, QApplication
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
+
+from coralnet_toolbox.utilities import STATUS_SUMMARY_MS, plural, show_status
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -42,6 +45,7 @@ class ImportCoralNetLabels:
                     raise Exception("The selected CSV file does not contain 'Short Code' column.")
 
             except Exception as e:
+                show_status(self.main_window, f"CoralNet label import failed: {e}", STATUS_SUMMARY_MS)
                 QMessageBox.warning(self.label_window,
                                     "Error Loading Labels",
                                     f"An error occurred while loading Labels: {str(e)}")
@@ -50,6 +54,7 @@ class ImportCoralNetLabels:
             # Make cursor busy
             QApplication.setOverrideCursor(Qt.WaitCursor)
             total_labels = len(data)
+            show_status(self.main_window, f"Importing {plural(total_labels, 'CoralNet label')}...")
             progress_bar = ProgressBar(self.label_window, "Importing CoralNet Labels")
             progress_bar.show()
             progress_bar.start_progress(total_labels)
@@ -75,11 +80,15 @@ class ImportCoralNetLabels:
                     # Update the progress bar
                     progress_bar.update_progress()
 
+                show_status(self.main_window,
+                            f"Imported {plural(total_labels, 'CoralNet label')} from {os.path.basename(file_path)}.",
+                            STATUS_SUMMARY_MS)
                 QMessageBox.information(self.label_window,
                                         "Labels Imported",
                                         "CoralNet labels have been successfully imported.")
 
             except Exception as e:
+                show_status(self.main_window, f"CoralNet label import failed: {e}", STATUS_SUMMARY_MS)
                 QMessageBox.warning(self.label_window,
                                     "Error Importing Labels",
                                     f"An error occurred while importing CoralNet labels: {str(e)}")

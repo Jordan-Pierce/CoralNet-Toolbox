@@ -17,6 +17,7 @@ from coralnet_toolbox.Annotations.QtMaskAnnotation import build_mask_annotation,
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Icons import get_icon, get_window_icon
+from coralnet_toolbox.utilities import STATUS_SUMMARY_MS, plural, show_status
 
 
 # Pillow's colour count gives up past this many colours and the scan falls back to
@@ -413,6 +414,8 @@ class ImportMaskAnnotations(QDialog):
         skipped_dimension = 0
         all_unique_values = set()
 
+        show_status(self.main_window, f"Scanning {plural(len(mask_files), 'mask file')}...")
+
         try:
             QApplication.setOverrideCursor(Qt.WaitCursor)
             progress_bar = ProgressBar(self, title="Scanning Masks")
@@ -483,6 +486,10 @@ class ImportMaskAnnotations(QDialog):
             progress_bar.stop_progress()
             progress_bar.close()
 
+        except Exception as e:
+            show_status(self.main_window, f"Mask scan failed: {e}", STATUS_SUMMARY_MS)
+            raise
+
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -507,6 +514,7 @@ class ImportMaskAnnotations(QDialog):
 
         self.scan_status_text = " | ".join(status_parts)
         self.status_label.setText(self.scan_status_text)
+        show_status(self.main_window, f"Mask scan: {self.scan_status_text}", STATUS_SUMMARY_MS)
 
         # Populate the mapping table
         if self.valid_mask_pairs and self.unique_values:
@@ -857,6 +865,8 @@ class ImportMaskAnnotations(QDialog):
         imported_paths = []
         error_count = 0
 
+        show_status(self.main_window, f"Importing {plural(len(pairs_to_process), 'mask')}...")
+
         try:
             QApplication.setOverrideCursor(Qt.WaitCursor)
             progress_bar = ProgressBar(self, title="Importing Masks")
@@ -904,6 +914,10 @@ class ImportMaskAnnotations(QDialog):
             progress_bar.stop_progress()
             progress_bar.close()
 
+        except Exception as e:
+            show_status(self.main_window, f"Mask import failed: {e}", STATUS_SUMMARY_MS)
+            raise
+
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -914,6 +928,7 @@ class ImportMaskAnnotations(QDialog):
         if error_count > 0:
             summary_parts.append(f"{error_count} mask(s) failed to import.")
         
+        show_status(self.main_window, f"Masks: {' '.join(summary_parts)}", STATUS_SUMMARY_MS)
         QMessageBox.information(self, "Import Complete", "\n".join(summary_parts))
         
         # Close dialog on success

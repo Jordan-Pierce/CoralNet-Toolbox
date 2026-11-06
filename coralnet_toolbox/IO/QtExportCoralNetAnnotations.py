@@ -1,8 +1,11 @@
+import os
+
 import pandas as pd
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox)
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
+from coralnet_toolbox.utilities import STATUS_SUMMARY_MS, plural, show_status
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -33,6 +36,7 @@ class ExportCoralNetAnnotations:
             QApplication.setOverrideCursor(Qt.WaitCursor)
             
             total_annotations = len(self.annotation_window.annotations_dict)
+            show_status(self.main_window, f"Exporting {plural(total_annotations, 'CoralNet annotation')}...")
             progress_bar = ProgressBar(self.annotation_window, title="Exporting CoralNet Annotations")
             progress_bar.show()
             progress_bar.start_progress(total_annotations)
@@ -47,11 +51,16 @@ class ExportCoralNetAnnotations:
                 df = pd.DataFrame(df)
                 df.to_csv(file_path, index=False)
 
+                show_status(self.main_window,
+                            f"Exported {plural(len(df), 'CoralNet annotation')} to {os.path.basename(file_path)}.",
+                            STATUS_SUMMARY_MS)
+
                 QMessageBox.information(self.annotation_window,
                                         "Annotations Exported",
                                         "Annotations have been successfully exported.")
 
             except Exception as e:
+                show_status(self.main_window, f"CoralNet export failed: {e}", STATUS_SUMMARY_MS)
                 QMessageBox.warning(self.annotation_window,
                                     "Error Exporting Annotations",
                                     f"An error occurred while exporting annotations: {str(e)}")

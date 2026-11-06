@@ -15,6 +15,7 @@ from coralnet_toolbox.MetaData.QtMetrics import calculate_metrics_for_annotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Icons import get_window_icon
+from coralnet_toolbox.utilities import STATUS_SUMMARY_MS, plural, show_status
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -416,6 +417,9 @@ class ExportMetadataTable(QDialog):
                                     "No annotations match the selected filters.")
                 return
 
+            show_status(self.main_window,
+                        f"Exporting metadata for {plural(len(filtered_annotations), 'annotation')}...")
+
             # Start progress bar
             progress_bar = ProgressBar(self, "Exporting Metadata")
             progress_bar.show()
@@ -469,11 +473,8 @@ class ExportMetadataTable(QDialog):
 
             QApplication.restoreOverrideCursor()
 
-            message = f"Exported metadata for {len(rows)} annotations."
-            try:
-                self.main_window.status_bar.showMessage(message, 5000)
-            except Exception:
-                pass
+            message = f"Exported metadata for {plural(len(rows), 'annotation')} to {os.path.basename(file_path)}."
+            show_status(self.main_window, message, STATUS_SUMMARY_MS)
 
             QMessageBox.information(
                 self, "Export Complete",
@@ -483,4 +484,5 @@ class ExportMetadataTable(QDialog):
 
         except Exception as e:
             QApplication.restoreOverrideCursor()
+            show_status(self.main_window, f"Metadata export failed: {e}", STATUS_SUMMARY_MS)
             QMessageBox.critical(self, "Export Error", f"An error occurred during export:\n{str(e)}")

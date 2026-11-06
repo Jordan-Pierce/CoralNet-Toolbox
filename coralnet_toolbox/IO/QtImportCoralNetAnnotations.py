@@ -9,6 +9,7 @@ from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QInputDialo
 
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.QtProgressBar import ProgressBar
+from coralnet_toolbox.utilities import STATUS_SUMMARY_MS, plural, show_status
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -53,6 +54,8 @@ class ImportCoralNetAnnotations:
             if not ok:
                 return
 
+        show_status(self.main_window, f"Reading {plural(len(file_paths), 'CoralNet CSV file')}...")
+
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, title="Reading CSV Files")
@@ -86,6 +89,7 @@ class ImportCoralNetAnnotations:
                 raise Exception("No annotations found for loaded images.")
 
         except Exception as e:
+            show_status(self.main_window, f"CoralNet import failed: {e}", STATUS_SUMMARY_MS)
             QMessageBox.warning(self.annotation_window,
                                 "Error Importing Annotations",
                                 f"An error occurred while importing annotations: {str(e)}")
@@ -96,6 +100,8 @@ class ImportCoralNetAnnotations:
             progress_bar.stop_progress()
             progress_bar.close()
             
+        show_status(self.main_window, f"Importing {plural(len(df), 'CoralNet annotation')}...")
+
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, title="Importing CoralNet Annotations")
         progress_bar.start_progress(len(df)) # Progress per annotation row
@@ -158,11 +164,17 @@ class ImportCoralNetAnnotations:
             # Load the annotations for the currently visible image
             self.annotation_window.load_annotations()
 
+            show_status(self.main_window,
+                        f"CoralNet: Imported {plural(len(annotations_to_add), 'annotation')} "
+                        f"into {plural(len(images_to_update), 'image')}.",
+                        STATUS_SUMMARY_MS)
+
             QMessageBox.information(self.annotation_window,
                                     "Annotations Imported",
                                     "Annotations have been successfully imported.")
 
         except Exception as e:
+            show_status(self.main_window, f"CoralNet import failed: {e}", STATUS_SUMMARY_MS)
             QMessageBox.warning(self.annotation_window,
                                 "Error Importing Annotations",
                                 f"An error occurred while importing annotations: {str(e)}")

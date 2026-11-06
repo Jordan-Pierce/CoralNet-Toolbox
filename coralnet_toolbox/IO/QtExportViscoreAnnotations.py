@@ -12,6 +12,7 @@ from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QDialog,
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
+from coralnet_toolbox.utilities import STATUS_SUMMARY_MS, plural, show_status
 
 from coralnet_toolbox.Icons import get_icon, get_window_icon
 
@@ -251,6 +252,8 @@ class ExportViscoreAnnotations(QDialog):
                                 "Please select a save location.")
             return
 
+        show_status(self.main_window, "Exporting Viscore annotations...")
+
         try:
             # Make cursor busy
             QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -298,12 +301,17 @@ class ExportViscoreAnnotations(QDialog):
             df = pd.DataFrame(df)
             df.to_csv(file_path, index=False)
 
+            show_status(self.main_window,
+                        f"Viscore: Exported {plural(len(df), 'annotation')} to {os.path.basename(file_path)}.",
+                        STATUS_SUMMARY_MS)
+
             QMessageBox.information(self,
                                     "Success",
                                     "Annotations have been successfully exported.")
             self.accept()
 
         except Exception as e:
+            show_status(self.main_window, f"Viscore export failed: {e}", STATUS_SUMMARY_MS)
             QMessageBox.critical(self,
                                  "Critical Error",
                                  f"Failed to export annotations: {e}")
@@ -315,6 +323,7 @@ class ExportViscoreAnnotations(QDialog):
     def multiview_voting(self, dots_dict, progress_bar):
         """Calculate the multiview voting (consensus) for each dot."""
         try:
+            show_status(self.main_window, f"Calculating consensus for {plural(len(dots_dict), 'Viscore dot')}...")
             progress_bar.setWindowTitle("Calculating Consensus")
             progress_bar.start_progress(len(dots_dict))
 
@@ -410,6 +419,8 @@ class ExportViscoreAnnotations(QDialog):
                 user_file = json.load(f)
             output_file["cl"] = [int(x) for x in user_file['cl']]
 
+        show_status(self.main_window, "Reading annotations for the Viscore export...")
+
         try:
             # Make cursor busy
             QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -447,6 +458,7 @@ class ExportViscoreAnnotations(QDialog):
                 output_file["cl"] = [-1] * (max_dot_id + 1)
 
             # Update progress bar
+            show_status(self.main_window, f"Calculating consensus for {plural(len(dots_dict), 'Viscore dot')}...")
             progress_bar.setWindowTitle("Calculating Consensus")
             progress_bar.start_progress(len(dots_dict))
 
@@ -502,12 +514,19 @@ class ExportViscoreAnnotations(QDialog):
                                     "Warning",
                                     f"The following labels were not found in the classlist:\n{sorted_set}")
 
+            status = (f"Viscore: Exported consensus for {plural(len(dots_dict), 'dot')} "
+                      f"to {os.path.basename(output_path)}.")
+            if missing_labels:
+                status += f" {plural(len(missing_labels), 'label')} not in the classlist."
+            show_status(self.main_window, status, STATUS_SUMMARY_MS)
+
             QMessageBox.information(self,
                                     "Success",
                                     "Annotations have been successfully exported.")
             self.accept()
 
         except Exception as e:
+            show_status(self.main_window, f"Viscore export failed: {e}", STATUS_SUMMARY_MS)
             QMessageBox.critical(self,
                                 "Critical Error",
                                 f"Failed to export annotations: {e}")

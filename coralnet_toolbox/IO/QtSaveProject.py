@@ -16,6 +16,8 @@ from coralnet_toolbox.Annotations.QtMaskAnnotation import MaskAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
+from coralnet_toolbox.utilities import STATUS_SUMMARY_MS, plural, show_status
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Functions
@@ -139,6 +141,10 @@ class SaveProject(QDialog):
         # Untoggle all tools to ensure all annotations are finalized
         self.main_window.untoggle_all_tools()
         
+        # The steps below post their own messages without a timeout; every way
+        # out of this method posts the closing one that replaces them.
+        show_status(self.main_window, f"Saving {os.path.basename(file_path)}...")
+
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
         start_time = time.perf_counter()
@@ -166,15 +172,20 @@ class SaveProject(QDialog):
             elapsed = time.perf_counter() - start_time
             elapsed_msg = f"Project has been successfully saved ({elapsed:.2f}s)."
 
+            show_status(self.main_window,
+                        f"Saved {os.path.basename(file_path)}: "
+                        f"{plural(len(project_data['images']), 'image')}, "
+                        f"{plural(len(project_data['labels']), 'label')}, "
+                        f"{plural(sum(len(a) for a in project_data['annotations'].values()), 'annotation')} "
+                        f"({elapsed:.2f}s).",
+                        STATUS_SUMMARY_MS)
+
             QMessageBox.information(self.annotation_window,
                                     "Project Saved",
                                     elapsed_msg)
-            try:
-                self.main_window.status_bar.showMessage(elapsed_msg, 5000)
-            except Exception:
-                pass
 
         except Exception as e:
+            show_status(self.main_window, f"Saving the project failed: {e}", STATUS_SUMMARY_MS)
             QMessageBox.warning(self.annotation_window,
                                 "Error Saving Project",
                                 f"An error occurred while saving the project: {str(e)}")
@@ -188,13 +199,9 @@ class SaveProject(QDialog):
 
     def get_images(self):
         """Get the list of image objects, including paths, states, and work areas."""
-        # Show status message
-        try:
-            self.main_window.status_bar.showMessage("Exporting images...", 5000)
-        except Exception:
-            pass
         # Start the progress bar
         total_images = len(self.image_window.raster_manager.image_paths)
+        show_status(self.main_window, f"Saving {plural(total_images, 'image')}...")
         progress_bar = ProgressBar(self.label_window, "Exporting Image Data")
         progress_bar.show()
         progress_bar.start_progress(total_images)
@@ -219,21 +226,14 @@ class SaveProject(QDialog):
             # Stop the progress bar
             progress_bar.stop_progress()
             progress_bar.close()
-            try:
-                self.main_window.status_bar.showMessage("Export complete.", 3000)
-            except Exception:
-                pass
 
         return export_images
 
     def get_labels(self):
         """Get the list of labels to export."""
-        try:
-            self.main_window.status_bar.showMessage("Exporting labels...", 5000)
-        except Exception:
-            pass
         # Start the progress bar
         total_labels = len(self.label_window.labels)
+        show_status(self.main_window, f"Saving {plural(total_labels, 'label')}...")
         progress_bar = ProgressBar(self.label_window, "Exporting Labels")
         progress_bar.show()
         progress_bar.start_progress(total_labels)
@@ -254,19 +254,11 @@ class SaveProject(QDialog):
             # Stop the progress bar
             progress_bar.stop_progress()
             progress_bar.close()
-            try:
-                self.main_window.status_bar.showMessage("Export complete.", 3000)
-            except Exception:
-                pass
 
         return export_labels
 
     def get_annotations(self):
         """Get the annotations to export."""
-        try:
-            self.main_window.status_bar.showMessage("Exporting annotations...", 5000)
-        except Exception:
-            pass
         # Combine vector annotations with any existing mask annotations
         all_annotations = list(self.annotation_window.annotations_dict.values())
         for image_path in self.image_window.raster_manager.image_paths:
@@ -284,6 +276,7 @@ class SaveProject(QDialog):
         
         # Start progress bar with the count of all annotations
         total_annotations = len(all_annotations)
+        show_status(self.main_window, f"Saving {plural(total_annotations, 'annotation')}...")
         progress_bar = ProgressBar(self.annotation_window, title="Exporting Annotations")
         progress_bar.show()
         progress_bar.start_progress(total_annotations)
@@ -328,10 +321,6 @@ class SaveProject(QDialog):
             # Stop the progress bar
             progress_bar.stop_progress()
             progress_bar.close()
-            try:
-                self.main_window.status_bar.showMessage("Export complete.", 3000)
-            except Exception:
-                pass
 
         return export_annotations
 

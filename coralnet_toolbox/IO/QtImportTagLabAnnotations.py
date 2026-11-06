@@ -12,6 +12,7 @@ from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox, QInputDialo
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.QtProgressBar import ProgressBar
+from coralnet_toolbox.utilities import STATUS_SUMMARY_MS, plural, show_status
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -147,6 +148,8 @@ class ImportTagLabAnnotations:
         if not ok:
             return
 
+        show_status(self.main_window, f"Reading {plural(len(file_paths), 'TagLab file')}...")
+
         try:
             all_data = []
             for file_path in file_paths:
@@ -177,10 +180,13 @@ class ImportTagLabAnnotations:
             total_annotations = num_regions + num_points
 
         except Exception as e:
+            show_status(self.main_window, f"TagLab import failed: {e}", STATUS_SUMMARY_MS)
             QMessageBox.warning(self.annotation_window,
                                 "Error Loading Annotations",
                                 f"An error occurred while loading annotations: {str(e)}")
             return
+
+        show_status(self.main_window, f"Importing {plural(total_annotations, 'TagLab annotation')}...")
 
         # Make cursor busy
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -281,11 +287,18 @@ class ImportTagLabAnnotations:
             # Load the annotations for the currently visible image
             self.annotation_window.load_annotations()
 
+            imported = len(all_polygon_annotations) + len(all_patch_annotations)
+            show_status(self.main_window,
+                        f"TagLab: Imported {plural(imported, 'annotation')} "
+                        f"into {plural(len(images_to_update), 'image')}.",
+                        STATUS_SUMMARY_MS)
+
             QMessageBox.information(self.annotation_window,
                                     "Annotations Imported",
                                     "Annotations have been successfully imported.")
 
         except Exception as e:
+            show_status(self.main_window, f"TagLab import failed: {e}", STATUS_SUMMARY_MS)
             print(f"Error importing annotations: {str(e)}\n{traceback.print_exc()}")
             QMessageBox.warning(self.annotation_window,
                                 "Error Importing Annotations",

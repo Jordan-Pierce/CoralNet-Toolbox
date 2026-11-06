@@ -23,6 +23,8 @@ from coralnet_toolbox.MetaData import MetaDataSchema
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
+from coralnet_toolbox.utilities import STATUS_SUMMARY_MS, plural, show_status
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -139,6 +141,10 @@ class OpenProject(QDialog):
 
     def load_project(self, file_path):
         """Load a project from a JSON file."""
+        # The steps below post their own messages without a timeout; every way
+        # out of this method posts the closing one that replaces them.
+        show_status(self.main_window, f"Opening {os.path.basename(file_path)}...")
+
         try:
             # Make the cursor busy
             QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -180,13 +186,16 @@ class OpenProject(QDialog):
             # Update current project path
             self.current_project_path = file_path
             elapsed = time.perf_counter() - start_time
-            elapsed_msg = f"Import complete ({elapsed:.2f}s)."
-            try:
-                self.main_window.status_bar.showMessage(elapsed_msg, 5000)
-            except Exception:
-                pass
+            show_status(self.main_window,
+                        f"Opened {os.path.basename(file_path)}: "
+                        f"{plural(len(self.image_window.raster_manager.image_paths), 'image')}, "
+                        f"{plural(len(self.label_window.labels), 'label')}, "
+                        f"{plural(len(self.annotation_window.annotations_dict), 'annotation')} "
+                        f"({elapsed:.2f}s).",
+                        STATUS_SUMMARY_MS)
 
         except Exception as e:
+            show_status(self.main_window, f"Opening the project failed: {e}", STATUS_SUMMARY_MS)
             QMessageBox.warning(self.annotation_window, 
                                 "Error Loading Project", 
                                 f"An error occurred while loading the project: {str(e)}")
@@ -200,15 +209,9 @@ class OpenProject(QDialog):
 
     def import_images(self, images_data, legacy_workareas=None):
         """Import images, states, and work areas from the given data."""
-        try:
-            # Bounded: several early returns below (no image data, user cancelled
-            # the missing-path prompt) skip the "Import complete." in the finally,
-            # and a 0 timeout would leave this on screen permanently.
-            self.main_window.status_bar.showMessage("Importing images...", 5000)
-        except Exception:
-            pass
         if not images_data:
             return
+        show_status(self.main_window, f"Importing {plural(len(images_data), 'image')}...")
 
         is_new_format = isinstance(images_data[0], dict)
         image_paths = [img['path'] for img in images_data] if is_new_format else images_data
@@ -294,10 +297,6 @@ class OpenProject(QDialog):
             
             progress_bar.stop_progress()
             progress_bar.close()
-            try:
-                self.main_window.status_bar.showMessage("Import complete.", 3000)
-            except Exception:
-                pass
 
     def resolve_video_frame_masks(self):
         """Remap every video's restored per-frame masks into the live label space.
@@ -328,13 +327,9 @@ class OpenProject(QDialog):
 
     def import_labels(self, labels):
         """Import labels from the given list."""
-        try:
-            # Bounded: the `if not labels: return` below skips the completion message.
-            self.main_window.status_bar.showMessage("Importing labels...", 5000)
-        except Exception:
-            pass
         if not labels:
             return
+        show_status(self.main_window, f"Importing {plural(len(labels), 'label')}...")
         
         # Create a progress bar
         total_labels = len(labels)
@@ -376,11 +371,6 @@ class OpenProject(QDialog):
             except Exception:
                 pass
 
-            try:
-                self.main_window.status_bar.showMessage("Import complete.", 3000)
-            except Exception:
-                pass
-
     def import_metadata_schema(self, schema_data):
         """Restore the project's metadata field definitions.
 
@@ -396,16 +386,12 @@ class OpenProject(QDialog):
 
     def import_annotations(self, annotations):
         """Import annotations from the given dictionary."""
-        try:
-            # Bounded: the `if not annotations: return` below skips the completion message.
-            self.main_window.status_bar.showMessage("Importing annotations...", 5000)
-        except Exception:
-            pass
         if not annotations:
             return
 
         # Start the progress bar
         total_annotations = sum(len(image_annotations) for image_annotations in annotations.values())
+        show_status(self.main_window, f"Importing {plural(total_annotations, 'annotation')}...")
         progress_bar = ProgressBar(self.annotation_window, title="Importing Annotations")
         progress_bar.show()
         progress_bar.start_progress(total_annotations)
@@ -608,11 +594,6 @@ class OpenProject(QDialog):
             # Refresh video tick marks if a video is already active in the canvas.
             try:
                 self.annotation_window._update_video_annotation_marks()
-            except Exception:
-                pass
-
-            try:
-                self.main_window.status_bar.showMessage("Import complete.", 3000)
             except Exception:
                 pass
 

@@ -4,6 +4,7 @@ from PyQt5.QtCore import QObject, Qt
 from PyQt5.QtWidgets import QFileDialog, QMessageBox, QApplication
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
+from coralnet_toolbox.utilities import STATUS_SUMMARY_MS, plural, show_status
 
 
 # Video extensions accepted for drag/drop and dialogs
@@ -33,6 +34,8 @@ class ImportVideos(QObject):
         if not video_paths:
             return
 
+        show_status(self.main_window, f"Importing {plural(len(video_paths), 'video')}...")
+
         # Make cursor busy while importing multiple files
         QApplication.setOverrideCursor(Qt.WaitCursor)
         failed = []
@@ -51,6 +54,11 @@ class ImportVideos(QObject):
                     failed.append(video_path)
         finally:
             QApplication.restoreOverrideCursor()
+
+        status = f"Imported {plural(len(added), 'video')}."
+        if failed:
+            status += f" {plural(len(failed), 'file')} could not be opened."
+        show_status(self.main_window, status, STATUS_SUMMARY_MS)
 
         if not added:
             QMessageBox.warning(
@@ -108,6 +116,8 @@ class ImportVideos(QObject):
 
     def _process_video_files(self, file_names):
         """Process a list of video files with a progress dialog."""
+        show_status(self.main_window, f"Importing {plural(len(file_names), 'video')}...")
+
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
         progress_bar = ProgressBar(self.main_window.image_window, title="Importing Videos")
@@ -146,7 +156,13 @@ class ImportVideos(QObject):
             except Exception:
                 pass
 
+            status = f"Imported {plural(len(imported_paths), 'video')}."
+            if len(imported_paths) < len(file_names):
+                status += f" {plural(len(file_names) - len(imported_paths), 'file')} could not be opened."
+            show_status(self.main_window, status, STATUS_SUMMARY_MS)
+
         except Exception as e:
+            show_status(self.main_window, f"Video import failed: {e}", STATUS_SUMMARY_MS)
             QMessageBox.warning(self.main_window,
                                 "Error Importing Video(s)",
                                 f"An error occurred while importing video(s): {e}")

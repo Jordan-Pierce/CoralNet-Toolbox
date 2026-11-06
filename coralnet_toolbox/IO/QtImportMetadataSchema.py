@@ -2,6 +2,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QFileDialog, QMessageBox, QApplication)
 
 from coralnet_toolbox.MetaData import MetaDataSchema
+from coralnet_toolbox.utilities import STATUS_SUMMARY_MS, show_status
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -39,6 +40,7 @@ class ImportMetadataSchema:
         try:
             incoming = MetaDataSchema.from_yaml(file_path)
         except Exception as e:
+            show_status(self.main_window, f"Metadata schema import failed: {e}", STATUS_SUMMARY_MS)
             QMessageBox.warning(self.annotation_window,
                                 "Error Loading Schema",
                                 f"An error occurred while reading the metadata schema: {str(e)}")
@@ -101,14 +103,14 @@ class ImportMetadataSchema:
 
             metadata_window.set_schema(schema)
 
-            message = f"Schema imported ({len(added)} new fields)."
-            try:
-                self.main_window.status_bar.showMessage(message, 3000)
-            except Exception:
-                pass
+            message = f"Schema imported ({len(added)} new fields"
+            if replaced:
+                message += f", {len(replaced)} replaced"
+            show_status(self.main_window, message + ").", STATUS_SUMMARY_MS)
 
         except Exception as e:
             QApplication.restoreOverrideCursor()
+            show_status(self.main_window, f"Metadata schema import failed: {e}", STATUS_SUMMARY_MS)
             QMessageBox.warning(self.annotation_window,
                                 "Error Importing Schema",
                                 f"An error occurred while importing the metadata schema: {str(e)}")

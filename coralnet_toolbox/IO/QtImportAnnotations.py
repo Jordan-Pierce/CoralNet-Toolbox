@@ -12,6 +12,8 @@ from coralnet_toolbox.Annotations.QtMaskAnnotation import MaskAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
 
+from coralnet_toolbox.utilities import STATUS_SUMMARY_MS, plural, show_status
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -44,6 +46,8 @@ class ImportAnnotations:
         if not file_paths:
             return
 
+        show_status(self.main_window, f"Reading {plural(len(file_paths), 'annotation file')}...")
+
         try:
             # Make cursor busy
             QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -60,6 +64,7 @@ class ImportAnnotations:
                 progress_bar.update_progress()
 
         except Exception as e:
+            show_status(self.main_window, f"Annotation import failed: {e}", STATUS_SUMMARY_MS)
             QMessageBox.warning(self.annotation_window,
                                 "Error Loading Annotations",
                                 f"An error occurred while loading annotations: {str(e)}")
@@ -70,6 +75,8 @@ class ImportAnnotations:
             progress_bar.close()
 
         if not all_data:
+            show_status(self.main_window, "Annotation import: no annotations found in the selected files.",
+                        STATUS_SUMMARY_MS)
             QMessageBox.warning(self.annotation_window,
                                 "No Annotations Found",
                                 "No annotations were found in the selected files.")
@@ -81,6 +88,8 @@ class ImportAnnotations:
         # Reformat the data
         filtered_annotations = {p: a for p, a in all_data.items() if p in self.image_window.raster_manager.image_paths}
         total_annotations = sum(len(annotations) for annotations in filtered_annotations.values())
+
+        show_status(self.main_window, f"Importing {plural(total_annotations, 'annotation')}...")
 
         # --- This section for updating labels and colors can remain as is ---
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -188,11 +197,18 @@ class ImportAnnotations:
             # Load the annotations for the currently visible image
             self.annotation_window.load_annotations()
 
+            status = (f"Imported {plural(len(all_new_annotations), 'annotation')} "
+                      f"into {plural(len(images_to_update), 'image')}.")
+            if skipped_count or duplicate_count:
+                status += f" Skipped {skipped_count} incomplete and {duplicate_count} duplicate."
+            show_status(self.main_window, status, STATUS_SUMMARY_MS)
+
             QMessageBox.information(self.annotation_window,
                                     "Annotations Imported",
                                     "Annotations have been successfully imported.")
 
         except Exception as e:
+            show_status(self.main_window, f"Annotation import failed: {e}", STATUS_SUMMARY_MS)
             QMessageBox.warning(self.annotation_window,
                                 "Error Importing Annotations",
                                 f"An error occurred while importing annotations: {str(e)}")

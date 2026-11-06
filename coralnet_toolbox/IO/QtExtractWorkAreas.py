@@ -30,6 +30,7 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Icons import get_window_icon
 from coralnet_toolbox import theme as app_theme
 from coralnet_toolbox.utilities import raster_display_max, read_window_rgb
+from coralnet_toolbox.utilities import STATUS_SUMMARY_MS, plural as _plural, show_status as _show_status
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -52,26 +53,7 @@ REUSED = 'reused'
 EMPTY = 'empty'
 
 # How long the closing summary stays in the status bar
-SUMMARY_MS = 10000
-
-
-def _plural(count, one, many):
-    return f"{count} {one if count == 1 else many}"
-
-
-def _show_status(main_window, message, timeout=0):
-    """Say in the main window's status bar what is happening, painted at once.
-
-    The work it describes runs on the GUI thread, so without the repaint it
-    would only appear once that work is over. A timeout of 0 keeps it up
-    until the next message replaces it.
-    """
-    try:
-        status_bar = main_window.status_bar
-        status_bar.showMessage(message, timeout)
-        status_bar.repaint()
-    except Exception:
-        pass
+SUMMARY_MS = STATUS_SUMMARY_MS
 
 
 # ----------------------------------------------------------------------------------------------------------------------

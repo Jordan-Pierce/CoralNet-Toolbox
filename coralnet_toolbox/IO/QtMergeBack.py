@@ -21,6 +21,7 @@ from coralnet_toolbox.Rasters.merge_back import (DELETED_KINDS, EDITED_BOTH_KIND
                                                  masks_overlap, plan_merge_back, resolve, settle_mask_overlaps)
 from coralnet_toolbox.Icons import get_window_icon
 from coralnet_toolbox import theme as app_theme
+from coralnet_toolbox.utilities import STATUS_SUMMARY_MS, plural as _plural, show_status as _show_status
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -112,30 +113,6 @@ def _wrapped_label(text="", color=None):
     return label
 
 
-def _plural(count, one, many):
-    return f"{count} {one if count == 1 else many}"
-
-
-# How long the closing summary stays in the status bar, and how long it waits
-# to be shown again after a large Parent Image's full resolution arrives
-SUMMARY_MS = 10000
-REPOST_WINDOW_MS = 60000
-
-
-def _show_status(main_window, message, timeout=0):
-    """Say in the main window's status bar what is happening, painted at once.
-
-    The work it describes runs on the GUI thread, so without the repaint it
-    would only appear once that work is over. A timeout of 0 keeps it up
-    until the next message replaces it.
-    """
-    try:
-        status_bar = main_window.status_bar
-        status_bar.showMessage(message, timeout)
-        status_bar.repaint()
-    except Exception:
-        pass
-
 
 def _show_again_after_full_resolution(main_window, image_path, message):
     """Show message again once the image's full resolution arrives, if it is still on its way.
@@ -156,7 +133,7 @@ def _show_again_after_full_resolution(main_window, image_path, message):
         if text == loaded:
             stop()
             # After that message is up, not from inside its own signal
-            QTimer.singleShot(0, lambda: _show_status(main_window, message, SUMMARY_MS))
+            QTimer.singleShot(0, lambda: _show_status(main_window, message, STATUS_SUMMARY_MS))
 
     def stop():
         try:
@@ -165,7 +142,7 @@ def _show_again_after_full_resolution(main_window, image_path, message):
             pass  # already shown again
 
     status_bar.messageChanged.connect(on_change)
-    QTimer.singleShot(REPOST_WINDOW_MS, stop)
+    QTimer.singleShot(60000, stop)
 
 
 def _fit(array, height, width):
@@ -522,7 +499,7 @@ class MergeBack(QDialog):
 
         if error is not None:
             print(f"[MergeBack] Failed while {stage}: {error}")
-            _show_status(self.main_window, f"Merge Back failed while {stage}: {error}", SUMMARY_MS)
+            _show_status(self.main_window, f"Merge Back failed while {stage}: {error}", STATUS_SUMMARY_MS)
             QMessageBox.critical(self, "Merge Back Failed",
                                  f"Merge Back stopped while {stage}:\n{error}\n\n"
                                  f"Some changes may already be on {self.parent_name}. Check it before saving "
@@ -556,7 +533,7 @@ class MergeBack(QDialog):
         if after == DELETE_FILES:
             parts.append(f"Files deleted: {files_deleted}")
         summary = " | ".join(parts)
-        _show_status(self.main_window, summary, SUMMARY_MS)
+        _show_status(self.main_window, summary, STATUS_SUMMARY_MS)
         _show_again_after_full_resolution(self.main_window, self.parent_path, summary)
 
     def _apply(self, deletes, adds):

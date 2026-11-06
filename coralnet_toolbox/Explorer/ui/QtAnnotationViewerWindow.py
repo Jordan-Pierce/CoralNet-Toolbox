@@ -1,12 +1,3 @@
-# coralnet_toolbox/Explorer/QtAnnotationViewerWindow.py
-"""
-Standalone Annotation Gallery Window.
-
-This module provides a fully self-contained gallery viewer for annotations
-that integrates directly with MainWindow as a dockable widget. It combines
-the gallery display functionality with built-in filtering capabilities.
-"""
-
 import os
 
 from PyQt5 import QtCore, QtGui
@@ -27,6 +18,7 @@ from coralnet_toolbox.Explorer.models.AnnotationListModel import AnnotationItemD
 from coralnet_toolbox.Explorer.workers.QtCroppingWorker import CroppingWorker
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
+from coralnet_toolbox.utilities import show_status
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -272,10 +264,7 @@ class AnnotationViewerWindow(QWidget):
     # -------------------------------------------------------------------------
 
     def _show_status(self, message, timeout=5000):
-        try:
-            self.main_window.statusBar().showMessage(message, timeout)
-        except Exception:
-            pass
+        show_status(self.main_window, message, timeout)
 
     def open_filter_dialog(self):
         """Open the filter dialog. OK sets the filter; Apply Filter shows it."""

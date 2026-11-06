@@ -1,3 +1,4 @@
+import os
 import ujson as json
 
 from PyQt5.QtCore import Qt
@@ -10,6 +11,8 @@ from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAn
 from coralnet_toolbox.Annotations.QtMaskAnnotation import MaskAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
+
+from coralnet_toolbox.utilities import STATUS_SUMMARY_MS, plural, show_status
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -47,6 +50,7 @@ class ExportAnnotations:
                 all_annotations.append(raster.mask_annotation)
 
         total_annotations = len(all_annotations)
+        show_status(self.main_window, f"Exporting {plural(total_annotations, 'annotation')}...")
         progress_bar = ProgressBar(self.annotation_window, title="Exporting Annotations")
         progress_bar.show()
         progress_bar.start_progress(total_annotations)
@@ -85,11 +89,17 @@ class ExportAnnotations:
                 json.dump(export_dict, file, indent=4)
                 file.flush()
 
+            show_status(self.main_window,
+                        f"Exported {plural(total_annotations, 'annotation')} from "
+                        f"{plural(len(export_dict), 'image')} to {os.path.basename(file_path)}.",
+                        STATUS_SUMMARY_MS)
+
             QMessageBox.information(self.annotation_window,
                                     "Annotations Exported",
                                     "Annotations have been successfully exported.")
 
         except Exception as e:
+            show_status(self.main_window, f"Annotation export failed: {e}", STATUS_SUMMARY_MS)
             QMessageBox.warning(self.annotation_window,
                                 "Error Exporting Annotations",
                                 f"An error occurred while exporting annotations: {str(e)}")

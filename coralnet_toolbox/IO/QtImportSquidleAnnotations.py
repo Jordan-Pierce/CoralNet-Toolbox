@@ -8,6 +8,7 @@ from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 from coralnet_toolbox.QtProgressBar import ProgressBar
+from coralnet_toolbox.utilities import STATUS_SUMMARY_MS, plural, show_status
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -104,6 +105,8 @@ class ImportSquidleAnnotations:
         if not ok:
             return
 
+        show_status(self.main_window, f"Reading {plural(len(file_paths), 'Squidle+ file')}...")
+
         try:
             all_records = []
             for file_path in file_paths:
@@ -125,10 +128,13 @@ class ImportSquidleAnnotations:
             total_ops = len(all_records)
 
         except Exception as e:
+            show_status(self.main_window, f"Squidle+ import failed: {e}", STATUS_SUMMARY_MS)
             QMessageBox.warning(self.annotation_window,
                                 "Error Reading File",
                                 f"An error occurred while reading the file: {str(e)}")
             return
+
+        show_status(self.main_window, f"Importing {plural(total_ops, 'Squidle+ record')}...")
 
         # UI Setup
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -280,9 +286,16 @@ class ImportSquidleAnnotations:
             if skipped_count > 0:
                 msg += f"\n\nSkipped {skipped_count} records (images not found)."
             
+            status = (f"Squidle+: Imported {plural(len(new_annotations), 'annotation')} "
+                      f"into {plural(len(images_to_update), 'image')}.")
+            if skipped_count > 0:
+                status += f" Skipped {plural(skipped_count, 'record')}."
+            show_status(self.main_window, status, STATUS_SUMMARY_MS)
+
             QMessageBox.information(self.annotation_window, "Import Complete", msg)
 
         except Exception as e:
+            show_status(self.main_window, f"Squidle+ import failed: {e}", STATUS_SUMMARY_MS)
             QMessageBox.critical(self.annotation_window,
                                  "Critical Error",
                                  f"Failed during import process: {str(e)}")

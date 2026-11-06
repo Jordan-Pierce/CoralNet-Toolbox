@@ -10,6 +10,7 @@ from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
 from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
+from coralnet_toolbox.utilities import STATUS_SUMMARY_MS, plural, show_status
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -62,6 +63,7 @@ class ExportTagLabAnnotations:
                 QApplication.setOverrideCursor(Qt.WaitCursor)
 
                 total_annotations = len(list(self.annotation_window.annotations_dict.values()))
+                show_status(self.main_window, f"Exporting {plural(total_annotations, 'TagLab annotation')}...")
                 progress_bar = ProgressBar(self.annotation_window, title="Exporting TagLab Annotations")
                 progress_bar.show()
                 progress_bar.start_progress(total_annotations)
@@ -172,11 +174,17 @@ class ExportTagLabAnnotations:
                     json.dump(taglab_data, file, indent=4)
                     file.flush()
 
+                show_status(self.main_window,
+                            f"Exported {plural(total_annotations, 'TagLab annotation')} "
+                            f"to {os.path.basename(file_path)}.",
+                            STATUS_SUMMARY_MS)
+
                 QMessageBox.information(self.annotation_window,
                                         "Annotations Exported",
                                         "Annotations have been successfully exported.")
 
             except Exception as e:
+                show_status(self.main_window, f"TagLab export failed: {e}", STATUS_SUMMARY_MS)
                 QMessageBox.warning(self.annotation_window,
                                     "Error Exporting Annotations",
                                     f"An error occurred while exporting annotations: {str(e)}")

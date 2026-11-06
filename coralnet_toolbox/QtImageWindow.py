@@ -23,6 +23,7 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Icons import get_icon
 from coralnet_toolbox import theme as app_theme
+from coralnet_toolbox.utilities import show_status
 
 warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
@@ -1635,11 +1636,8 @@ class ImageWindow(QWidget):
         if not paths:
             return
         QApplication.clipboard().setText("\n".join(os.path.normpath(p) for p in paths))
-        try:
-            noun = "path" if len(paths) == 1 else f"{len(paths)} paths"
-            self.main_window.status_bar.showMessage(f"Copied {noun} to the clipboard.", 3000)
-        except Exception:
-            pass
+        noun = "path" if len(paths) == 1 else f"{len(paths)} paths"
+        self._show_status(f"Copied {noun} to the clipboard.")
 
     def unhighlight_all_rows(self):
         """Clear all highlights; the table's selection follows."""
@@ -2409,10 +2407,7 @@ class ImageWindow(QWidget):
 
     def _show_status(self, message: str, msecs: int = 3000):
         """Post to the status bar, tolerating a window that has none yet."""
-        try:
-            self.main_window.status_bar.showMessage(message, msecs)
-        except Exception:
-            pass
+        show_status(self.main_window, message, msecs)
 
     def delete_highlighted_images_annotations(self):
         """Delete annotations for the highlighted images."""

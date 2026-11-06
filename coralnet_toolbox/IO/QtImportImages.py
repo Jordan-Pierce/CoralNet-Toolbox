@@ -5,6 +5,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QFileDialog, QApplication, QMessageBox)
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
+from coralnet_toolbox.utilities import STATUS_SUMMARY_MS, plural, show_status
 
 
 SUPPORTED_IMAGE_EXTENSIONS = {'.bmp', '.jfif', '.jpeg', '.jpg', '.png', '.tif', '.tiff', '.webp'}
@@ -142,6 +143,9 @@ class ImportImages:
             file_names (list): list of file paths to import
             raster_type (str, optional): if 'OrthoRaster', create OrthoRaster instances
         """
+        kind = 'orthomosaic' if raster_type == 'OrthoRaster' else 'image'
+        show_status(self.main_window, f"Importing {plural(len(file_names), kind)}...")
+
         QApplication.setOverrideCursor(Qt.WaitCursor)
 
         progress_bar = ProgressBar(self.image_window, title="Importing Images")
@@ -154,9 +158,10 @@ class ImportImages:
         # looking like a clean import that was simply short. Declared outside the
         # try so the report below is reachable however the loop ends.
         failures = []
+        imported_paths = []
+        error = None
 
         try:
-            imported_paths = []
             progress_batch = 0
             PROGRESS_BATCH_SIZE = 50  # Update UI every 50 images instead of every image
 
@@ -200,12 +205,20 @@ class ImportImages:
             self.image_window.filter_images(use_threading=False)
 
         except Exception as e:
+            error = e
+            show_status(self.main_window, f"Image import failed: {e}", STATUS_SUMMARY_MS)
             if not suppress_errors:
                 self._show_error_message(str(e))
         finally:
             QApplication.restoreOverrideCursor()
             progress_bar.stop_progress()
             progress_bar.close()
+
+        if error is None:
+            status = f"Imported {plural(len(imported_paths), kind)}."
+            if failures:
+                status += f" {plural(len(failures), 'file')} could not be imported."
+            show_status(self.main_window, status, STATUS_SUMMARY_MS)
 
         # Reported after the progress bar is down, and reported even when
         # `suppress_errors` is set: that flag exists to keep a drag-and-drop
