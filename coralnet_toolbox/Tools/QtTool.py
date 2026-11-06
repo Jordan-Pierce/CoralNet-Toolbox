@@ -3,6 +3,25 @@ from PyQt5.QtGui import QMouseEvent, QColor, QPen, QCursor
 from PyQt5.QtWidgets import QGraphicsLineItem
 
 
+# Z for transient tool graphics on the main scene (cut line, brush and eraser
+# cursors, box select). Anything left at the default 0 is drawn beneath the
+# phantom annotation layer (10) and selected annotations (20), so it vanishes
+# exactly where the user is working. Level with the crosshair.
+TOOL_OVERLAY_Z = 1000
+
+
+def fine_dash_pen(color, width: float = 2.0) -> QPen:
+    """Cosmetic fine dashed pen for tool guide lines (cut line, scale line).
+
+    Cosmetic, so it stays the same on screen at any zoom. Dash pattern units
+    are multiples of the pen width: at width 2 that is a 6 px dash, 4 px gap.
+    """
+    pen = QPen(QColor(color), width)
+    pen.setDashPattern([3.0, 2.0])
+    pen.setCosmetic(True)
+    return pen
+
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
@@ -286,7 +305,7 @@ class Tool:
         pen = QPen(QColor(255, 255, 255, 180), 1, Qt.DashLine)
         pen.setCosmetic(True)
         self.h_crosshair_line.setPen(pen)
-        self.h_crosshair_line.setZValue(1000)
+        self.h_crosshair_line.setZValue(TOOL_OVERLAY_Z)
         self.annotation_window.scene.addItem(self.h_crosshair_line)
         
         # Create vertical line across the full height of the image
@@ -294,7 +313,7 @@ class Tool:
         pen = QPen(QColor(255, 255, 255, 180), 1, Qt.DashLine)
         pen.setCosmetic(True)
         self.v_crosshair_line.setPen(pen)
-        self.v_crosshair_line.setZValue(1000)
+        self.v_crosshair_line.setZValue(TOOL_OVERLAY_Z)
         self.annotation_window.scene.addItem(self.v_crosshair_line)
         
     def clear_crosshair(self):

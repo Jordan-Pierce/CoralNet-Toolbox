@@ -5,6 +5,7 @@ from PyQt5.QtWidgets import QGraphicsRectItem
 from coralnet_toolbox.Annotations.QtAnnotation import FloatingTagItem
 
 from coralnet_toolbox.Tools.QtSubTool import SubTool
+from coralnet_toolbox.Tools.QtTool import TOOL_OVERLAY_Z
 
 from coralnet_toolbox.utilities import convert_measurement
 from coralnet_toolbox.utilities import format_measurement
@@ -58,6 +59,9 @@ class SelectSubTool(SubTool):
         fill.setAlpha(30)  # Light blue transparent fill
         self.selection_rectangle.setBrush(QBrush(fill))
         self.selection_rectangle.setRect(QRectF(self.selection_start_pos, self.selection_start_pos))
+        # Above the annotation layers so the box reads over the fills it spans.
+        self.selection_rectangle.setZValue(TOOL_OVERLAY_Z)
+        self.selection_rectangle.setAcceptedMouseButtons(Qt.NoButton)
         self.annotation_window.scene.addItem(self.selection_rectangle)
         # Capture the set of annotation ids that were selected before starting the marquee
         try:

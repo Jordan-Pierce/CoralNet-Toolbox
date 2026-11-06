@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import QGraphicsEllipseItem, QGraphicsRectItem, QApplicatio
 
 from coralnet_toolbox.QtActions import MaskEditAction
 from coralnet_toolbox.Tools.QtBrushTool import BrushTool
+from coralnet_toolbox.Tools.QtTool import TOOL_OVERLAY_Z
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -90,7 +91,11 @@ class EraseTool(BrushTool):
         pen.setStyle(Qt.DashLine)
         pen.setCosmetic(True)
         self.cursor_annotation.setPen(pen)
-        
+        # Above the annotation layers: at Z 0 the eraser outline hid under the
+        # very annotations being erased.
+        self.cursor_annotation.setZValue(TOOL_OVERLAY_Z)
+        self.cursor_annotation.setAcceptedMouseButtons(Qt.NoButton)
+
         self.annotation_window.scene.addItem(self.cursor_annotation)
         self._last_brush_size = self.brush_size
         self._last_shape = self.shape

@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import (QDialog, QWidget, QVBoxLayout, QFormLayout,
                              QDialogButtonBox, QMessageBox, QGraphicsLineItem,
                              QGroupBox, QPushButton)
 
-from coralnet_toolbox.Tools.QtTool import Tool
+from coralnet_toolbox.Tools.QtTool import Tool, fine_dash_pen
 from coralnet_toolbox.Icons import get_icon, get_window_icon
 
 
@@ -237,9 +237,9 @@ class ScaleTool(Tool):
         # --- Graphics Items ---
         # Line for scale setting
         self.preview_line = QGraphicsLineItem()
-        pen = QPen(QColor(230, 62, 0), 3, Qt.DashLine)  # Blood red dashed line
-        pen.setCosmetic(True)
-        self.preview_line.setPen(pen)
+        # Fine dashed line, same as the cut line, so short lengths drawn at
+        # high zoom are not swallowed by one coarse dash.
+        self.preview_line.setPen(fine_dash_pen(QColor(230, 62, 0)))
         self.preview_line.setZValue(100)
         
         self.show_crosshair = True

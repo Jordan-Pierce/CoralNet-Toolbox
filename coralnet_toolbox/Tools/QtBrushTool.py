@@ -5,7 +5,7 @@ from PyQt5.QtCore import Qt, QPointF, QRectF, QTimer, QObject, pyqtSignal, QRunn
 from PyQt5.QtWidgets import QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPathItem
 
 from coralnet_toolbox.QtActions import MaskEditAction
-from coralnet_toolbox.Tools.QtTool import Tool
+from coralnet_toolbox.Tools.QtTool import Tool, TOOL_OVERLAY_Z
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -410,8 +410,14 @@ class BrushTool(Tool):
         border_color = QColor(label_color).darker(150)
         pen = QPen(border_color)
         pen.setWidth(2)
+        # Cosmetic: a 2 scene px border was 40 screen px thick at 20x zoom and
+        # invisible when zoomed out.
+        pen.setCosmetic(True)
         self.cursor_annotation.setPen(pen)
-        
+        # Above the annotation layers, or the cursor hides under existing fills.
+        self.cursor_annotation.setZValue(TOOL_OVERLAY_Z)
+        self.cursor_annotation.setAcceptedMouseButtons(Qt.NoButton)
+
         self.annotation_window.scene.addItem(self.cursor_annotation)
         
         self._last_brush_size = self.brush_size

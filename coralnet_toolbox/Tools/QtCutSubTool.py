@@ -1,11 +1,20 @@
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QPen, QPainterPath, QColor
+from PyQt5.QtGui import QPainterPath, QColor
 from PyQt5.QtWidgets import QGraphicsPathItem
 
 from coralnet_toolbox.Tools.QtSubTool import SubTool
+from coralnet_toolbox.Tools.QtTool import TOOL_OVERLAY_Z, fine_dash_pen
 
 from coralnet_toolbox.Annotations import MultiPolygonAnnotation
 from coralnet_toolbox.QtActions import SplitAnnotationAction
+from coralnet_toolbox.utilities import get_view_scale
+
+
+# Minimum on-screen spacing between free-hand samples, in screen pixels.
+CUT_SAMPLE_SCREEN_PX = 3.0
+CUT_LINE_COLOR = QColor(230, 62, 0)
+CUT_FAILED_MESSAGE = ("Nothing was cut: the line has to cross the annotation from one edge to the other"
+                      "  |  Draw it again  |  Ctrl+X: leave cut mode")
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -89,10 +98,17 @@ class CutSubTool(SubTool):
                 # Add a straight segment from last_click_point to position
                 self.cutting_points.append(position)
                 self.last_click_point = position
+                self._redraw_cut_line(position)
                 # Continue drawing (don't finish yet)
             else:
-                self._finish_and_perform_cut()
-                self.parent_tool.report_state()
+                # The finishing click is part of the line: without it the cut
+                # stopped at the last sample, up to a sample spacing short.
+                if self.cutting_points and position != self.cutting_points[-1]:
+                    self.cutting_points.append(position)
+                # On failure the outcome message stays up; report_state would
+                # replace it with the hint straight away.
+                if self._finish_and_perform_cut():
+                    self.parent_tool.report_state()
 
     def mouseMoveEvent(self, event):
         """Handle mouse move events to update the cut line."""
@@ -101,12 +117,7 @@ class CutSubTool(SubTool):
         position = self.annotation_window.mapToScene(event.pos())
         if self.ctrl_pressed and self.last_click_point:
             # Preview a straight line from last_click_point to cursor
-            preview_points = self.cutting_points + [position]
-            path = QPainterPath(preview_points[0])
-            for point in preview_points[1:]:
-                path.lineTo(point)
-            if self.cutting_path_item:
-                self.cutting_path_item.setPath(path)
+            self._redraw_cut_line(position)
         else:
             self._update_cut_line_path(position)
 
@@ -160,22 +171,38 @@ class CutSubTool(SubTool):
         path = QPainterPath()
         path.moveTo(position)
         self.cutting_path_item = QGraphicsPathItem(path)
-        pen = QPen(QColor(230, 62, 0), 3, Qt.DashLine)
-        pen.setCosmetic(True)
-        self.cutting_path_item.setPen(pen)
+        self.cutting_path_item.setPen(fine_dash_pen(CUT_LINE_COLOR))
+        # Without a Z the line sat at 0, beneath the semi-transparent fill of
+        # the very annotation being cut (20) -- zoomed in, that fill covers the
+        # whole view and the line could not be seen at all.
+        self.cutting_path_item.setZValue(TOOL_OVERLAY_Z)
+        self.cutting_path_item.setAcceptedMouseButtons(Qt.NoButton)
         self.annotation_window.scene.addItem(self.cutting_path_item)
+
+    def _redraw_cut_line(self, cursor_pos=None):
+        """Rebuild the path from the committed points plus a live tail to the cursor."""
+        if not self.cutting_path_item or not self.cutting_points:
+            return
+        path = QPainterPath(self.cutting_points[0])
+        for point in self.cutting_points[1:]:
+            path.lineTo(point)
+        if cursor_pos is not None and cursor_pos != self.cutting_points[-1]:
+            path.lineTo(cursor_pos)
+        self.cutting_path_item.setPath(path)
 
     def _update_cut_line_path(self, position):
         """Update the cut line path as the mouse moves."""
         if not self.cutting_path_item:
             return
-        # Only add point if it's sufficiently far from the last point
-        if not self.cutting_points or (position - self.cutting_points[-1]).manhattanLength() > 5:
+        # Sample spacing is measured on screen, not in scene pixels: a fixed
+        # 5 scene px needed 100+ px of hand movement at high zoom before any
+        # point was added, so the line lagged far behind the cursor.
+        scale = get_view_scale(self.annotation_window.transform()) or 1.0
+        min_scene_dist = CUT_SAMPLE_SCREEN_PX / scale
+        if not self.cutting_points or (position - self.cutting_points[-1]).manhattanLength() > min_scene_dist:
             self.cutting_points.append(position)
-            path = QPainterPath(self.cutting_points[0])
-            for point in self.cutting_points[1:]:
-                path.lineTo(point)
-            self.cutting_path_item.setPath(path)
+        # Always draw through to the cursor so the line never trails it.
+        self._redraw_cut_line(position)
             
     def _clear_cutting_line(self):
         """Clear the current cutting line but remain in cutting mode."""
@@ -214,14 +241,17 @@ class CutSubTool(SubTool):
     def _finish_and_perform_cut(self):
         """
         Finalize the line drawing and tell the parent SelectTool to perform the cut.
+
+        Returns True when the annotation was cut and cut mode has ended. A line
+        that did not divide the annotation is cleared and cut mode stays on, so
+        the user can simply draw again; the annotation is left untouched.
         """
-        if not self.drawing_in_progress or len(self.cutting_points) < 2:
-            # Not a valid cut, just cancel
-            self.parent_tool.deactivate_subtool()
-            return
+        if self.drawing_in_progress and len(self.cutting_points) >= 2:
+            if self.parent_tool.cut_selected_annotation(self.cutting_points):
+                # The operation is complete, so deactivate the tool.
+                self.parent_tool.deactivate_subtool()
+                return True
 
-        # Call back to the parent tool to execute the cut.
-        self.parent_tool.cut_selected_annotation(self.cutting_points)
-
-        # The operation is complete, so deactivate the tool.
-        self.parent_tool.deactivate_subtool()
+        self._clear_cutting_line()
+        self.annotation_window.main_window.status_bar.showMessage(CUT_FAILED_MESSAGE, 6000)
+        return False
