@@ -10,7 +10,7 @@ from PyQt5.QtGui import (QColor, QPainter, QPen, QBrush, QFontMetrics, QLinearGr
 from PyQt5.QtWidgets import (QSizePolicy, QMessageBox, QCheckBox, QToolButton, QWidget, QHBoxLayout,
                              QVBoxLayout, QColorDialog, QLineEdit, QDialog,
                              QPushButton, QApplication, QScrollArea,
-                             QGraphicsDropShadowEffect, QToolBar,
+                             QGraphicsDropShadowEffect, QGraphicsOpacityEffect, QToolBar,
                              QListWidget, QListWidgetItem, QComboBox, QLabel,
                              QMenu, QActionGroup, QToolTip, QFrame, QGridLayout)
 
@@ -38,6 +38,16 @@ LABEL_HEIGHT = 34
 SWATCH_SIZE = 14
 SWATCH_RADIUS = 4
 LABEL_SPACING = 6
+
+# Active-label emphasis: while a label is active it glows, sits a little wider
+# with a gap above and below, and every other label fades back
+EMPHASIS_NORMAL = "normal"
+EMPHASIS_ACTIVE = "active"
+EMPHASIS_DIMMED = "dimmed"
+ACTIVE_GLOW_BLUR = 22
+ACTIVE_GLOW_ALPHA = 230
+ACTIVE_GAP = 4
+DIMMED_OPACITY = 0.55
 
 # Count bars: the Label rows double as a per-label histogram
 COUNT_SCOPE_IMAGE = "image"
@@ -99,6 +109,19 @@ def busy_cursor():
         QApplication.restoreOverrideCursor()
 
 
+def _paint_selection_ring(painter, rect):
+    """Outline a selected label: a dark outer line and a white inner one, so it reads on any label colour."""
+    painter.setBrush(Qt.NoBrush)
+    pen = QPen(QColor(0, 0, 0, 200))
+    pen.setWidthF(1.0)
+    painter.setPen(pen)
+    painter.drawRect(rect.adjusted(0.5, 0.5, -0.5, -0.5))
+    pen = QPen(QColor(app_theme.TEXT_BRIGHT_COLOR))
+    pen.setWidthF(2.0)
+    painter.setPen(pen)
+    painter.drawRect(rect.adjusted(2, 2, -2, -2))
+
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
@@ -146,10 +169,15 @@ class LabelDisplay(QWidget):
             self._paint_count_bar(painter, rect)
             return
 
-        # --- 1. Background Gradient ---
+        selected = self.label.is_selected
+
+        # --- 1. Background Gradient (lifted when selected) ---
         gradient = QLinearGradient(rect.topLeft(), rect.bottomLeft())
         base_color = QColor(self.label.color)
-        if self.label.is_hovered:
+        if selected:
+            gradient.setColorAt(0, base_color.lighter(135))
+            gradient.setColorAt(1, base_color.lighter(115))
+        elif self.label.is_hovered:
             gradient.setColorAt(0, base_color.lighter(130))
             gradient.setColorAt(1, base_color.lighter(110))
         else:
@@ -159,28 +187,17 @@ class LabelDisplay(QWidget):
         painter.setPen(Qt.NoPen)
         painter.drawRect(rect)
 
-        # --- 1.5 Left accent bar for selection / identity ---
+        # --- 1.5 Left accent bar for identity (the lifted fill replaces it when selected) ---
         accent_width = 6
-        accent_rect = QRectF(rect.left(), rect.top(), accent_width, rect.height())
-        try:
-            accent_color = QColor(self.label.color)
-        except Exception:
-            accent_color = QColor(BORDER)
-        if self.label.is_selected:
-            # Make accent slightly brighter when selected
-            accent_color = accent_color.lighter(110)
-        painter.setBrush(QBrush(accent_color))
-        painter.setPen(Qt.NoPen)
-        painter.drawRoundedRect(accent_rect, 3, 3)
+        if not selected:
+            accent_rect = QRectF(rect.left(), rect.top(), accent_width, rect.height())
+            painter.setBrush(QBrush(QColor(self.label.color)))
+            painter.setPen(Qt.NoPen)
+            painter.drawRoundedRect(accent_rect, 3, 3)
 
-        # --- 2. Animated Selection Indicator ---
-        if self.label.is_selected:
-            pen_color = QColor(self.label.color).darker(300)
-            pen = QPen(pen_color)
-            pen.setWidthF(2.5)
-            pen.setStyle(Qt.DotLine)
-            painter.setPen(pen)
-            painter.drawRect(rect.adjusted(1, 1, -1, -1))
+        # --- 2. Selection ring ---
+        if selected:
+            _paint_selection_ring(painter, rect)
 
         # --- 3. Dynamic Text Color ---
         r, g, b, _ = base_color.getRgb()
@@ -188,7 +205,10 @@ class LabelDisplay(QWidget):
         text_color = Qt.black if luminance > 0.5 else Qt.white
         painter.setPen(QPen(text_color))
 
-        # --- 4. Draw Text (avoid the accent area) ---
+        # --- 4. Draw Text (avoid the accent area; bold when selected) ---
+        font = painter.font()
+        font.setBold(selected)
+        painter.setFont(font)
         font_metrics = QFontMetrics(painter.font())
         text_rect = rect.adjusted(accent_width + 6, 0, -6, 0)
         truncated_text = font_metrics.elidedText(self.label.short_label_code, Qt.ElideRight, int(text_rect.width() - 10))
@@ -239,13 +259,12 @@ class LabelDisplay(QWidget):
         painter.drawRect(fill_rect)
 
         if self.label.is_selected:
-            pen = QPen(base_color.lighter(130))
-            pen.setWidthF(1.5)
-            painter.setPen(pen)
-            painter.setBrush(Qt.NoBrush)
-            painter.drawRect(rect.adjusted(0.75, 0.75, -0.75, -0.75))
+            _paint_selection_ring(painter, rect)
 
-        # --- 3. Name on the left, count on the right ---
+        # --- 3. Name on the left, count on the right (bold when selected) ---
+        font = painter.font()
+        font.setBold(self.label.is_selected)
+        painter.setFont(font)
         font_metrics = QFontMetrics(painter.font())
         padding = 6
         count_text = f"{count:,}"
@@ -297,6 +316,8 @@ class Label(QWidget):
         # (count, fraction of the largest count) while the Label Window shows
         # count bars; None paints the plain label
         self.count_bar = None
+        # One of EMPHASIS_*; the Label Window sets it as the active label changes
+        self.emphasis = EMPHASIS_NORMAL
 
         # --- Layout and Child Widgets ---
         self.main_layout = QHBoxLayout(self)
@@ -352,12 +373,6 @@ class Label(QWidget):
 
     def refresh_scaling(self):
         """Refresh the label widget after a UI scale change."""
-        self.main_layout.setContentsMargins(
-            app_theme.scale_int(5),
-            app_theme.scale_int(2),
-            app_theme.scale_int(5),
-            app_theme.scale_int(2),
-        )
         self.main_layout.setSpacing(app_theme.scale_int(LABEL_SPACING))
         self.color_swatch.setFixedSize(app_theme.scale_int(SWATCH_SIZE), app_theme.scale_int(SWATCH_SIZE))
         self.color_swatch.setStyleSheet(
@@ -366,16 +381,55 @@ class Label(QWidget):
             )
         )
         self.visibility_checkbox.setIconSize(app_theme.scale_size(16))
-        self.setFixedHeight(app_theme.scale_int(LABEL_HEIGHT))
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setToolTip(self.long_label_code)
-        # Apply subtle elevation only when necessary (keeps rendering cheap)
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(app_theme.scale_int(ELEVATION_BLUR))
-        shadow.setColor(SHADOW_COLOR)
-        shadow.setOffset(app_theme.scale_int(ELEVATION_OFFSET[0]), app_theme.scale_int(ELEVATION_OFFSET[1]))
-        self.setGraphicsEffect(shadow)
+        # Margins, height and graphics effect all depend on the emphasis
+        self._apply_emphasis()
         self.display_widget.update()
+
+    def set_emphasis(self, emphasis):
+        """Switch between EMPHASIS_NORMAL, EMPHASIS_ACTIVE and EMPHASIS_DIMMED; a no-op if unchanged."""
+        if emphasis != self.emphasis:
+            self.emphasis = emphasis
+            self._apply_emphasis()
+
+    def _apply_emphasis(self):
+        """Size the row and pick its graphics effect for the current emphasis.
+
+        Active: no side margins, so it sits wider than its neighbours, a gap
+        above and below, and a glow in the label colour. Dimmed: faded back so
+        the active row stands out. Normal: the subtle drop shadow.
+
+        A widget holds a single graphics effect, and setGraphicsEffect deletes
+        the one it replaces, so each switch builds a fresh effect.
+        """
+        active = self.emphasis == EMPHASIS_ACTIVE
+        side = 0 if active else 5
+        gap = ACTIVE_GAP if active else 0
+        self.main_layout.setContentsMargins(
+            app_theme.scale_int(side),
+            app_theme.scale_int(2 + gap),
+            app_theme.scale_int(side),
+            app_theme.scale_int(2 + gap),
+        )
+        self.setFixedHeight(app_theme.scale_int(LABEL_HEIGHT + 2 * gap))
+
+        if active:
+            effect = QGraphicsDropShadowEffect(self)
+            glow = QColor(self.color)
+            glow.setAlpha(ACTIVE_GLOW_ALPHA)
+            effect.setColor(glow)
+            effect.setBlurRadius(app_theme.scale_int(ACTIVE_GLOW_BLUR))
+            effect.setOffset(0, 0)
+        elif self.emphasis == EMPHASIS_DIMMED:
+            effect = QGraphicsOpacityEffect(self)
+            effect.setOpacity(DIMMED_OPACITY)
+        else:
+            effect = QGraphicsDropShadowEffect(self)
+            effect.setBlurRadius(app_theme.scale_int(ELEVATION_BLUR))
+            effect.setColor(SHADOW_COLOR)
+            effect.setOffset(app_theme.scale_int(ELEVATION_OFFSET[0]), app_theme.scale_int(ELEVATION_OFFSET[1]))
+        self.setGraphicsEffect(effect)
 
     def _handle_selection(self):
         """Internal slot to handle clicks from the display widget."""
@@ -477,6 +531,9 @@ class Label(QWidget):
             self.color_swatch.setStyleSheet(f"background-color: {self.color.name()}; border-radius: {SWATCH_RADIUS}px; border: 1px solid {BORDER.name()};")
         except Exception:
             pass
+        if self.emphasis == EMPHASIS_ACTIVE:
+            # The glow is the label colour
+            self._apply_emphasis()
         self.display_widget.update()
 
     def update_selection(self):
@@ -1292,6 +1349,23 @@ class LabelWindow(QWidget):
         # Add a stretch to push all labels to the top
         self.labels_layout.addStretch()
 
+        self._refresh_label_emphasis()
+
+    def _refresh_label_emphasis(self):
+        """Glow the active label and fade the rest; every label is plain when none is active.
+
+        Label.set_emphasis is a no-op when nothing changes, so switching from
+        one active label to another only rebuilds those two rows.
+        """
+        active = self.active_label
+        for label in self.labels:
+            if active is None:
+                label.set_emphasis(EMPHASIS_NORMAL)
+            elif label is active:
+                label.set_emphasis(EMPHASIS_ACTIVE)
+            else:
+                label.set_emphasis(EMPHASIS_DIMMED)
+
     def refresh_after_batch_add(self):
         """Refresh the label dock ONCE after a batch of labels was added with refresh_ui=False.
 
@@ -1359,6 +1433,9 @@ class LabelWindow(QWidget):
         """Add a new label to the window."""
         # Create the label
         label = Label(short_label_code, long_label_code, color, label_id)
+        if self.active_label is not None:
+            # Join the faded rows; bulk imports (refresh_ui=False) skip the refresh below
+            label.emphasis = EMPHASIS_DIMMED
         # Animate
         label.refresh_scaling()
         # Connect
@@ -1526,6 +1603,7 @@ class LabelWindow(QWidget):
             return
             
         self.active_label.select()
+        self._refresh_label_emphasis()
 
         if emit_selection_signal:
             self.labelSelected.emit(selected_label)
@@ -1579,6 +1657,7 @@ class LabelWindow(QWidget):
             self.active_label.deselect()
             # Clear the active label reference
             self.active_label = None
+            self._refresh_label_emphasis()
             # Emit signal to clear the selected label in annotation window
             self.labelSelected.emit(None)
             self.label_lock_button.setEnabled(False)
@@ -1958,7 +2037,8 @@ class LabelWindow(QWidget):
                             f"Short code: {label.short_label_code}\n"
                             f"Long code: {label.long_label_code}\n"
                             f"ID: {label.id}\n\n"
-                            "This will delete all associated annotations.")
+                            "This will delete all associated annotations.\n"
+                            "This cannot be undone.")
             msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
 
             checkbox = QCheckBox("Do not show this message again")
@@ -2024,6 +2104,14 @@ class LabelWindow(QWidget):
 
             # Delete annotations associated with the label
             self.annotation_window.delete_label_annotations(label)
+
+            # Deleting a label cannot be undone, and older history can't be
+            # kept either: entries hold annotations pointing at this Label
+            # widget, which is now deleted. Undoing one would bring back
+            # annotations carrying a dead label, and Qt raises RuntimeError on
+            # its first use. Label merges get the same reset from set_image.
+            self.annotation_window.action_stack.undo_stack.clear()
+            self.annotation_window.action_stack.redo_stack.clear()
 
             # Reset active label if it was deleted
             if self.active_label == label:
