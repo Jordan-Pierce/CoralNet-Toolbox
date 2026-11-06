@@ -46,9 +46,11 @@ from coralnet_toolbox.IO import (
     ImportFrames,
     ImportVideos,
     ImportLabels,
+    ImportCPCeLabels,
     ImportCoralNetLabels,
     ImportTagLabLabels,
     ImportAnnotations,
+    ImportCPCeAnnotations,
     ImportCoralNetAnnotations,
     ImportViscoreAnnotations,
     ImportTagLabAnnotations,
@@ -278,9 +280,11 @@ class MainWindow(QMainWindow):
         # Create dialogs (I/O)
         self.import_images = ImportImages(self)
         self.import_labels = ImportLabels(self)
+        self.import_cpce_labels = ImportCPCeLabels(self)
         self.import_coralnet_labels = ImportCoralNetLabels(self)
         self.import_taglab_labels = ImportTagLabLabels(self)
         self.import_annotations = ImportAnnotations(self)
+        self.import_cpce_annotations_dialog = ImportCPCeAnnotations(self)
         self.import_coralnet_annotations = ImportCoralNetAnnotations(self)
         self.import_viscore_annotations_dialog = ImportViscoreAnnotations(self)
         self.import_taglab_annotations = ImportTagLabAnnotations(self)
@@ -404,10 +408,16 @@ class MainWindow(QMainWindow):
         self.import_labels_action.setToolTip("Import label definitions from a JSON file")
         self.import_labels_action.triggered.connect(self.import_labels.import_labels)
         self.import_labels_menu.addAction(self.import_labels_action)
+        # Import CPCe Labels
+        self.import_cpce_labels_action = QAction("CPCe (TXT)", self)
+        self.import_cpce_labels_action.setToolTip("Import labels from a CPCe code file")
+        self.import_cpce_labels_action.triggered.connect(lambda: self.import_cpce_labels.import_cpce_labels())
+        self.import_labels_menu.addAction(self.import_cpce_labels_action)
         # Import CoralNet Labels
         self.import_coralnet_labels_action = QAction("CoralNet (CSV)", self)
         self.import_coralnet_labels_action.setToolTip("Import labels from a CoralNet CSV export")
-        self.import_coralnet_labels_action.triggered.connect(self.import_coralnet_labels.import_coralnet_labels)
+        # Lambda so triggered(bool) is not passed in as file_path
+        self.import_coralnet_labels_action.triggered.connect(lambda: self.import_coralnet_labels.import_coralnet_labels())
         self.import_labels_menu.addAction(self.import_coralnet_labels_action)
         # Import TagLab Labels
         self.import_taglab_labels_action = QAction("TagLab (JSON)", self)
@@ -422,6 +432,11 @@ class MainWindow(QMainWindow):
         self.import_annotations_action.setToolTip("Import annotations from a JSON file")
         self.import_annotations_action.triggered.connect(self.import_annotations.import_annotations)
         self.import_annotations_menu.addAction(self.import_annotations_action)
+        # Import CPCe Annotations
+        self.import_cpce_annotations_action = QAction("CPCe (CPC)", self)
+        self.import_cpce_annotations_action.setToolTip("Import annotations from CPCe .cpc files")
+        self.import_cpce_annotations_action.triggered.connect(self.open_import_cpce_annotations_dialog)
+        self.import_annotations_menu.addAction(self.import_cpce_annotations_action)
         # Import CoralNet Annotations
         self.import_coralnet_annotations_action = QAction("CoralNet (CSV)", self)
         self.import_coralnet_annotations_action.setToolTip("Import annotations from CoralNet CSV export")
@@ -2947,6 +2962,20 @@ class MainWindow(QMainWindow):
         try:
             self.untoggle_all_tools()
             self.import_frames_dialog.exec_()
+        except Exception as e:
+            QMessageBox.critical(self, "Critical Error", f"{e}")
+
+    def open_import_cpce_annotations_dialog(self):
+        """Open the Import CPCe Annotations dialog to import annotations"""
+        if not self.image_window.raster_manager.image_paths:
+            QMessageBox.warning(self,
+                                "No Images Loaded",
+                                "Please load images into the project before importing annotations.")
+            return
+
+        try:
+            self.untoggle_all_tools()
+            self.import_cpce_annotations_dialog.exec_()
         except Exception as e:
             QMessageBox.critical(self, "Critical Error", f"{e}")
 

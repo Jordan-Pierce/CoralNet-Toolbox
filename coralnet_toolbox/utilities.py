@@ -1566,6 +1566,32 @@ def polygonize_mask_with_holes(mask_tensor, epsilon=1.0):
     return exterior, holes
 
 
+# How long a message that reports how an operation ended stays in the status bar
+STATUS_SUMMARY_MS = 10000
+
+
+def show_status(main_window, message, timeout=0):
+    """Say in the main window's status bar what is happening, painted at once.
+
+    The work it describes runs on the GUI thread, so without the repaint it
+    would only appear once that work is over. A timeout of 0 keeps it up
+    until the next message replaces it, so every operation that posts one
+    must post a closing message (STATUS_SUMMARY_MS) on each way out.
+    """
+    try:
+        status_bar = main_window.status_bar
+        status_bar.showMessage(message, timeout)
+        status_bar.repaint()
+    except Exception:
+        pass  # A status message must never be the reason an operation fails
+
+
+def plural(count, singular, plural_form=None):
+    """'1 image', '3 images'."""
+    word = singular if count == 1 else (plural_form or singular + "s")
+    return f"{count} {word}"
+
+
 def console_user(error_msg, parent=None):
     """
     Display an error message to the user via both terminal and GUI dialog.
