@@ -297,11 +297,15 @@ class TransformerExtractor(BaseExtractor):
 
         Only when the processor's resize is disabled (an input size is set) and
         the patch size is known; None otherwise, or when the token count leaves
-        an implausible number of special tokens.
+        an implausible number of special tokens. A CNN that emits a token
+        sequence (DINOv3 ConvNeXt) has no patch size but a stride of 32, the
+        multiple _model_input snaps it to; without that, a non-square input fell
+        through to the square-grid guess and failed.
         """
-        if not self._input_size or not self._patch:
+        patch = self._patch or (32 if self._keeps_aspect() else None)
+        if not self._input_size or not patch:
             return None
-        h, w = model_input.shape[0] // self._patch, model_input.shape[1] // self._patch
+        h, w = model_input.shape[0] // patch, model_input.shape[1] // patch
         return (h, w) if 0 <= n_tokens - h * w <= 8 else None
 
     @staticmethod

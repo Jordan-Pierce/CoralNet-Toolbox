@@ -258,3 +258,48 @@ def pool_backbone_output(output, prefix_tokens=None):
         patches = a[prefix_tokens:] if a.shape[0] > prefix_tokens else a
         return patches.mean(axis=0)
     return a.ravel()
+
+
+def pool_region_tokens(feature_map, image_hw, rings, holes=(), supersample=4):
+    """Mean of a whole-image dense map's tokens under a region (Image tokens PoC).
+
+    `feature_map` [h, w, C] covers the whole image of size `image_hw` (H, W), so
+    image pixels map to grid cells by w / W and h / H (the grid need not be
+    square or share one stride). `rings` and `holes` are (N, 2) x/y arrays in
+    image pixels. Each cell is weighted by the share of it the region covers,
+    rendered `supersample` times finer and area averaged, so a region smaller
+    than one token still takes the token(s) it sits on.
+
+    Returns a float32 [C] vector, or None when no ring has three points.
+    """
+    h, w = feature_map.shape[:2]
+    H, W = image_hw
+    scale = np.array([w / float(W), h / float(H)])
+    rings = [np.asarray(r, np.float64) * scale for r in rings if len(r) >= 3]
+    if not rings:
+        return None
+    holes = [np.asarray(r, np.float64) * scale for r in holes if len(r) >= 3]
+
+    # Work only on the cells under the region's bounding box.
+    pts = np.vstack(rings)
+    x0 = int(np.clip(np.floor(pts[:, 0].min()), 0, w - 1))
+    y0 = int(np.clip(np.floor(pts[:, 1].min()), 0, h - 1))
+    x1 = int(np.clip(np.ceil(pts[:, 0].max()), x0 + 1, w))
+    y1 = int(np.clip(np.ceil(pts[:, 1].max()), y0 + 1, h))
+
+    s = int(supersample)
+    canvas = np.zeros(((y1 - y0) * s, (x1 - x0) * s), np.uint8)
+    origin = np.array([x0, y0])
+    # One ring per call: fillPoly with several contours fills even-odd.
+    for ring in rings:
+        cv2.fillPoly(canvas, [np.round((ring - origin) * s).astype(np.int32)], 255)
+    for hole in holes:
+        cv2.fillPoly(canvas, [np.round((hole - origin) * s).astype(np.int32)], 0)
+    weights = cv2.resize(canvas.astype(np.float32) / 255.0, (x1 - x0, y1 - y0),
+                         interpolation=cv2.INTER_AREA)
+
+    cells = feature_map[y0:y1, x0:x1].astype(np.float32)
+    total = float(weights.sum())
+    if total <= 0:  # Fully cut out by holes: fall back to the bounding box.
+        return cells.reshape(-1, cells.shape[-1]).mean(axis=0)
+    return (cells * weights[..., None]).sum(axis=(0, 1)) / total
