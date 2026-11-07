@@ -1,5 +1,5 @@
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import (QLineEdit, QHBoxLayout, QPushButton, QFormLayout, QGroupBox)
+from PyQt5.QtWidgets import (QLineEdit, QHBoxLayout, QPushButton, QFormLayout, QGroupBox, QComboBox)
 
 from coralnet_toolbox.MachineLearning.TrainModel.QtBase import Base
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
@@ -25,21 +25,22 @@ class Classify(Base):
         super().__init__(main_window, parent)
         self.setWindowTitle("Train Classification Model")
 
+    def point_safe_enabled(self):
+        """True when Point Safe Augmentations is "True" (the default)."""
+        combo = getattr(self, 'point_safe_combo', None)
+        return True if combo is None else combo.currentText() == "True"
+
     def get_parameters(self):
-        """Training parameters, minus augmentations that can cut away the label.
+        """Training parameters; with Point Safe on, minus augmentations that can cut away the label.
 
-        A patch is labeled by the one point at its centre. Random erasing, on at
-        0.4 for classification in Ultralytics, blanks a box of up to a third of
-        the patch anywhere in it, so it regularly paints over that point and
-        trains on a label the model cannot see. A random resized crop that is
-        too aggressive crops the centre out. Flips, colour jitter and
-        RandAugment's small shifts and rotations all keep the centre in view.
-
-        Forced rather than defaulted: importing an earlier run's args.yaml
-        brings `erasing: 0.4` back as a custom parameter, so leaving explicit
-        values alone would quietly restore the problem.
+        A patch is labeled by its center point. Random erasing can blank it, and
+        a strong random crop (`scale`) can crop it out, so erasing is zeroed and
+        scale capped. Forced, since an imported args.yaml brings erasing back.
         """
         params = super().get_parameters()
+
+        if not self.point_safe_enabled():
+            return params
 
         erasing = params.get('erasing')
         if isinstance(erasing, (int, float)) and erasing > 0:
@@ -92,6 +93,18 @@ class Classify(Base):
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
+
+        # Point Safe Augmentations
+        aug_box = QGroupBox("Augmentation")
+        aug_layout = QFormLayout()
+        self.point_safe_combo = QComboBox()
+        self.point_safe_combo.addItems(["True", "False"])
+        self.point_safe_combo.setToolTip(
+            "Keep the patch's center point, which is its label, in view.\n"
+            f"Turns off random erasing and caps random crop at scale {self.MAX_CROP_SCALE}.")
+        aug_layout.addRow("Point Safe Augmentations:", self.point_safe_combo)
+        aug_box.setLayout(aug_layout)
+        self.layout.addWidget(aug_box)
 
     def load_model_combobox(self):
         """Load the model combobox with the available models."""
