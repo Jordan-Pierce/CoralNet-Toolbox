@@ -1,7 +1,10 @@
+from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QLineEdit, QHBoxLayout, QPushButton, QFormLayout, QGroupBox)
 
 from coralnet_toolbox.MachineLearning.TrainModel.QtBase import Base
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
+from coralnet_toolbox.paths import find_weights
+from coralnet_toolbox.pyspacer import CORALNET_WEIGHTS_NAME
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -111,13 +114,24 @@ class Classify(Base):
                            'yolo26l-cls.pt',
                            'yolo26x-cls.pt']
         
+        # CoralNet's weights are not distributed, so they are offered only when
+        # the user has put a copy in the weights folder, and are then the default.
+        # The bare name is resolved to that copy when training starts.
+        if find_weights(CORALNET_WEIGHTS_NAME):
+            self.model_combo.addItem(CORALNET_WEIGHTS_NAME)
+            self.model_combo.setItemData(
+                0, "CoralNet's EfficientNet-B0, trained on CoralNet's patches.\n"
+                   "Trained here as a new classifier on your labels.", Qt.ToolTipRole)
+            self.model_combo.insertSeparator(1)
+
+        coralnet_first = self.model_combo.count() > 0
         self.model_combo.addItems(standard_models)
 
         # Add community models
         community_configs = get_available_configs(task=self.task)
         if community_configs:
-            self.model_combo.insertSeparator(len(standard_models))
+            self.model_combo.insertSeparator(self.model_combo.count())
             self.model_combo.addItems(list(community_configs.keys()))
-            
+
         # Set the default model
-        self.model_combo.setCurrentIndex(standard_models.index('yolo11n-cls.pt'))
+        self.model_combo.setCurrentIndex(0 if coralnet_first else standard_models.index('yolo11n-cls.pt'))

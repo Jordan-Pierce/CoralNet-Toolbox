@@ -142,10 +142,9 @@ TRAINING_DEFAULTS = {
     'mask_ratio': 4,
     'dropout': 0.0,
     'freeze_layers': 0.0,
-    # True to match Train Model. The in-place dataset folds weighted sampling in
-    # through WeightedInMemoryDataset, which is what the MRO composition test
-    # covers, so this costs nothing here.
-    'weighted': True,
+    # False to match Train Model. Turned on, the in-place dataset folds weighted
+    # sampling in through WeightedInMemoryDataset (the MRO composition test).
+    'weighted': False,
     # Off. An Active Learning project is positive unlabeled by construction, but
     # at this dialog's defaults -- a nano model, imgsz 640, 30 epochs -- PU
     # measured level with plain training (scripts/PU_Testbed.py: -0.010 and
@@ -1021,8 +1020,8 @@ class Base(QDialog):
         self.weighted_combo = bool_combo(
             TRAINING_DEFAULTS['weighted'],
             "Weighted sampling, to balance an uneven label distribution.\n"
-            "On by default here: an Active Learning project is uneven almost by\n"
-            "definition early on, when one label has been drawn far more than the rest.")
+            "Off by default: it repeats the few images of a rare class many times\n"
+            "per epoch, which can cost overall accuracy.")
         layout.addRow("Weighted Sampling:", self.weighted_combo)
 
         # Detection and instance segmentation: the ignore band masks anchors of

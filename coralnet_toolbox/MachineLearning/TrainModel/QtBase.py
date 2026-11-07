@@ -34,6 +34,10 @@ from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedPolygonSema
 from coralnet_toolbox.MachineLearning.EvaluateModel.QtBase import EvaluateModelWorker
 from coralnet_toolbox.MachineLearning.RunLog import capture_run_log
 from coralnet_toolbox.paths import resolve_weights
+
+from coralnet_toolbox.pyspacer import (CORALNET_WEIGHTS_NAME, convert_coralnet_weights,
+                                       is_coralnet_weights, restore_pyspacer_architecture)
+
 from coralnet_toolbox.MachineLearning.PUDetection import (
     IGNORE_CONF, IGNORE_CONF_MAX, IGNORE_CONF_MIN, PU_MODELS_NOTE, PU_THRESHOLD_NOTE,
     PU_TRAINERS, install_union_stopping, pu_close_mosaic, pu_supported_model,
@@ -285,12 +289,26 @@ class TrainModelWorker(QThread):
             self.pu_dataset = bool(self.params.pop('pu_dataset', False))
             self.pu_ignore_conf = self.params.pop('pu_ignore_conf', None)
             self.union_stopping = bool(self.params.pop('union_stopping', False))
+            # The dropdown names a community model by its yaml's file name, which
+            # ultralytics cannot find on its own; hand it the full path.
+            community_configs = get_available_configs(task=self.params['task'])
+            if self.model_path in community_configs:
+                self.model_path = community_configs[self.model_path]
             self.weighted = self.set_weighted_dataset()
             if self.in_place_dataset is not None:
                 # Swaps in the dataset class that reads from the project. Done
                 # after set_weighted_dataset so it wins the shared patch slot,
                 # which its own class folds weighted sampling into.
                 self.in_place_dataset.install(weighted=bool(self.weighted))
+            if is_coralnet_weights(self.model_path):
+                if self.params['task'] != 'classify':
+                    raise ValueError(f"{os.path.basename(self.model_path)} is CoralNet's EfficientNet-B0, "
+                                     f"a classification backbone. Train it from Train Classification Model.")
+                # PySpacer's checkpoint is not an Ultralytics model. The converted one
+                # is written into the run folder, so args.yaml names a file that exists.
+                # The dropdown names it bare; resolve_weights finds the weights folder copy.
+                self.model_path = convert_coralnet_weights(
+                    resolve_weights(self.model_path), os.path.join(self.params['project'], self.params['name']))
             # Load the model (8.3.141) YOLO handles RTDETR
             self.model = YOLO(resolve_weights(self.model_path))
             # Set the task in the model itself
@@ -454,12 +472,6 @@ class TrainModelWorker(QThread):
         if not weighted:
             return False
 
-        # Determine if ultralytics or community
-        if self.model_path in get_available_configs(task=self.params['task']):
-            self.model_path = get_available_configs(task=self.params['task'])[self.model_path]
-            # Cannot use weighted sampling with community models
-            self.weighted = False
-
         # Use the custom dataset class for weighted sampling
         if self.params['task'] == 'classify':
             train_build.ClassificationDataset = WeightedClassificationDataset
@@ -512,6 +524,11 @@ class TrainModelWorker(QThread):
             # gets a results.csv row, it just carries a partial train loss.
             self.model.add_callback('on_train_batch_end', self._stop_if_requested)
             self.model.add_callback('on_train_epoch_end', self._stop_if_requested)
+
+            # Model.train rebuilds the model from its yaml, which drops the PySpacer
+            # padding and eps a CoralNet backbone needs. Puts them back on the model
+            # and its EMA before the first batch; any other model is left alone.
+            self.model.add_callback('on_pretrain_routine_end', restore_pyspacer_architecture)
 
             # Fired once the trainer has made its stock stopper, so this
             # replaces it before the first epoch.
@@ -809,7 +826,9 @@ class Base(QDialog):
             "Path to a previously trained model file (.pt or .onnx).\n"
             "Useful for fine-tuning or continuing interrupted training.\n"
             "Used only while this tab is the one selected, and training from it\n"
-            "lowers the learning rate and skips warmup.")
+            "lowers the learning rate and skips warmup.\n"
+            f"A file named {CORALNET_WEIGHTS_NAME} is read as CoralNet's EfficientNet-B0\n"
+            "weights and trained as a new classifier (classification only).")
         self.model_button.setToolTip("Open file browser to select a model file.")
         model_layout = QHBoxLayout()
         model_layout.addWidget(self.model_edit)
@@ -945,6 +964,7 @@ class Base(QDialog):
 
         # Weighted Dataset
         self.weighted_combo = create_bool_combo()
+        self.weighted_combo.setCurrentText("False")
         self.weighted_combo.setToolTip(
             "If True, training images are drawn by how rare their classes are,\n"
             "instead of each image once per epoch.\n"
@@ -968,7 +988,10 @@ class Base(QDialog):
             "mistake on it costs more, which can tip the model into overpredicting\n"
             "it. Start with one; if you combine them, keep cls_pw low (0.25 to 0.5).\n"
             "\n"
-            "Recommended: True if your dataset has class imbalance."
+            "Off by default. Resampling repeats the few images of a rare class many\n"
+            "times per epoch and shows the common ones less often. On a CoralNet\n"
+            "patch dataset it lowered accuracy. Try True when rare classes matter\n"
+            "more to you than overall accuracy, and compare on the test split."
         )
         form_layout.addRow("Weighted Sampling:", self.weighted_combo)
 
@@ -1730,7 +1753,11 @@ class Base(QDialog):
 
         # Continuing from trained weights wants a gentler schedule than starting
         # from a pretrained checkpoint: no warmup, a small learning rate.
-        if from_existing:
+        # CoralNet's weights are a pretrained backbone with a new, untrained
+        # head, so they get the pretrained schedule.
+        if is_coralnet_weights(params['model']):
+            print(f"Note: training from CoralNet's EfficientNet-B0 weights ({params['model']}).")
+        elif from_existing:
             params['warmup_epochs'] = 0
             params['lr0'] = 0.0005
             # Only when the optimizer was left on 'auto'. Overriding an explicit

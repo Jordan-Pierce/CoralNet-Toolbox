@@ -1,5 +1,4 @@
 import os
-import gc
 import math
 import errno
 import sys
@@ -1751,33 +1750,5 @@ def _show_exception_dialog(error_msg, main_window):
             sys.__excepthook__(*sys.exc_info())
         except Exception:
             pass
-
-def convert_to_ultralytics(ultralytics_model, weights, output_path="converted_model.pt"):
-    """Convert a PyTorch model to Ultralytics format"""
-    src_state_dict = ultralytics_model.model.model.state_dict()
-
-    temp_model = torch.load(weights, map_location='cpu')
-    dst_state_dict = temp_model['net']
-
-    try:
-        for (src_key, src_val), (dst_key, dst_val) in zip(src_state_dict.items(), dst_state_dict.items()):
-            if src_val.shape == dst_val.shape:
-                src_state_dict[src_key] = dst_val
-            else:
-                print("Warning: Skipping mismatched layer ", src_key, src_val.shape, dst_key, dst_val.shape)
-
-    except Exception as e:
-        print(f"Error converting model: {e}")
-        return
-
-    ultralytics_model.model.model.load_state_dict(src_state_dict)
-    ultralytics_model.model.model.eval()
-
-    ultralytics_model.task = 'classify'
-    ultralytics_model.save(output_path)
-    print(f"Model saved to {output_path}")
-
-    del dst_state_dict
-    gc.collect()
 
 
