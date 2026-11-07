@@ -10,9 +10,48 @@ from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 
 
 class Classify(Base):
+    # Largest Ultralytics `scale` that keeps the patch centre, where the point
+    # label sits, inside every training crop. RandomResizedCrop takes an area of
+    # (1 - scale, 1) of the patch at an aspect ratio of 3/4 to 4/3, so at 0.5 the
+    # shortest crop side is sqrt(0.5 * 3/4) = 0.61 of the patch and the centre
+    # stays at least 18% in from the crop edge, enough to survive a RandAugment
+    # translate (about 14%). It is also the Ultralytics default.
+    MAX_CROP_SCALE = 0.5
+
     def __init__(self, main_window, parent=None):
         super().__init__(main_window, parent)
         self.setWindowTitle("Train Classification Model")
+
+    def get_parameters(self):
+        """Training parameters, minus augmentations that can cut away the label.
+
+        A patch is labeled by the one point at its centre. Random erasing, on at
+        0.4 for classification in Ultralytics, blanks a box of up to a third of
+        the patch anywhere in it, so it regularly paints over that point and
+        trains on a label the model cannot see. A random resized crop that is
+        too aggressive crops the centre out. Flips, colour jitter and
+        RandAugment's small shifts and rotations all keep the centre in view.
+
+        Forced rather than defaulted: importing an earlier run's args.yaml
+        brings `erasing: 0.4` back as a custom parameter, so leaving explicit
+        values alone would quietly restore the problem.
+        """
+        params = super().get_parameters()
+
+        erasing = params.get('erasing')
+        if isinstance(erasing, (int, float)) and erasing > 0:
+            print(f"Note: erasing={erasing} ignored; random erasing can cover "
+                  f"the point each patch is labeled by.")
+        params['erasing'] = 0.0
+
+        scale = params.get('scale', self.MAX_CROP_SCALE)
+        if not isinstance(scale, (int, float)) or scale > self.MAX_CROP_SCALE:
+            print(f"Note: scale={scale} capped at {self.MAX_CROP_SCALE}; a "
+                  f"stronger random crop can cut the labeled point out of the patch.")
+            scale = self.MAX_CROP_SCALE
+        params['scale'] = scale
+
+        return params
 
     def setup_dataset_layout(self):
         """Setup the dataset layout."""
