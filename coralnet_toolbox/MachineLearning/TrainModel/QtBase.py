@@ -193,6 +193,51 @@ def open_train_model_dialog_later(main_window, task, dataset_dir):
     QTimer.singleShot(0, lambda: open_train_model_dialog(main_window, task, dataset_dir))
 
 
+def encoder_freeze_list(model, fraction):
+    """
+    Get Ultralytics' `freeze` entries for the bottom `fraction` of a model's encoder.
+
+    The encoder is every top-level layer but the head, and the fraction is taken
+    of its layers, bottom first. Ultralytics freezes a parameter when its name
+    contains 'model.<entry>.', so an entry can name a top-level layer ('3') or a
+    module inside one ('0.m.5').
+
+    A Community classification model wraps its whole backbone in one TorchVision
+    layer, so at the top level there is nothing to take a fraction of:
+    int(1 * 0.75) is 0, and any fraction under 1.0 froze nothing. When the encoder
+    is a single layer, the fraction is taken of the modules inside it instead. For
+    EfficientNet-B0, CoralNet's weights included, those are the stem, the seven
+    stages and the head convolution.
+
+    Args:
+        model (nn.Module): The Ultralytics model, e.g. YOLO(...).model.
+        fraction (float): Fraction of encoder layers to freeze, 0 to 1.
+
+    Returns:
+        tuple: (list of str entries for Ultralytics' `freeze`, number of layers the
+            fraction was taken of, share of encoder parameters frozen).
+    """
+    encoder = model.model[:-1]
+    units = [str(i) for i in range(len(encoder))]
+    if len(encoder) == 1:
+        # Step through single-child wrappers: TorchVision keeps the network in .m
+        prefix, children = '0', list(encoder[0].named_children())
+        while len(children) == 1:
+            name, module = children[0]
+            prefix, children = f'{prefix}.{name}', list(module.named_children())
+        inner = [f'{prefix}.{name}' for name, child in children if any(True for _ in child.parameters())]
+        if len(inner) > 1:
+            units = inner
+
+    entries = units[:int(len(units) * fraction)]
+    total = frozen = 0
+    for name, p in encoder.named_parameters():
+        total += p.numel()
+        if any(name.startswith(f'{e}.') for e in entries):
+            frozen += p.numel()
+    return entries, len(units), frozen / max(total, 1)
+
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
 # ----------------------------------------------------------------------------------------------------------------------
@@ -319,11 +364,9 @@ class TrainModelWorker(QThread):
             freeze_layers = self.params.pop('freeze_layers', None)
 
             if freeze_layers:
-                # Calculate the number of layers to freeze
-                num_layers = len(self.model.model.model[0:-1])
-                num_layers = int(num_layers * freeze_layers)
-                freeze_layers = [_ for _ in range(0, num_layers)]
-                print(f"Encoder layers frozen ({len(freeze_layers)})")
+                freeze_layers, num_layers, share = encoder_freeze_list(self.model.model, freeze_layers)
+                print(f"Encoder layers frozen ({len(freeze_layers)} of {num_layers}, "
+                      f"{share:.0%} of encoder weights)")
             else:
                 freeze_layers = []
 
@@ -1061,7 +1104,7 @@ class Base(QDialog):
         self.freeze_layers_spinbox.setMaximum(1.0)
         self.freeze_layers_spinbox.setSingleStep(0.01)
         self.freeze_layers_spinbox.setValue(0.0)
-        self.freeze_layers_spinbox.setToolTip("Fraction of encoder layers to freeze for transfer learning (0.0 to 1.0).\n0.0 = train all layers, 0.5 = freeze bottom 50%, 1.0 = freeze all.\nUseful when training on small datasets.")
+        self.freeze_layers_spinbox.setToolTip("Fraction of encoder layers to freeze for transfer learning (0.0 to 1.0).\n0.0 = train all layers, 0.5 = freeze bottom 50%, 1.0 = freeze all.\nA torchvision backbone (EfficientNet-B0, CoralNet's weights) counts its own stages.\nUseful when training on small datasets.")
         form_layout.addRow("Freeze Layers:", self.freeze_layers_spinbox)
 
         # Dropout
