@@ -15,6 +15,8 @@ from coralnet_toolbox.QtProgressBar import ProgressBar
 
 from coralnet_toolbox.Icons import get_icon, get_window_icon
 
+from coralnet_toolbox.utilities import STATUS_SUMMARY_MS, plural, show_status
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -147,6 +149,8 @@ class ImportViscoreAnnotations(QDialog):
                                 "Please select a valid CSV file.")
             return
 
+        show_status(self.main_window, f"Reading {os.path.basename(csv_path)}...")
+
         try:
             # Make cursor busy
             QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -156,18 +160,25 @@ class ImportViscoreAnnotations(QDialog):
             # Read and validate CSV
             df = self.read_and_validate_csv(csv_path)
             if df is None:
+                show_status(self.main_window, "Viscore import failed: the CSV file could not be read.",
+                            STATUS_SUMMARY_MS)
                 return
 
             # Filter annotations
+            show_status(self.main_window, f"Filtering {plural(df['Dot'].nunique(), 'Viscore dot')}...")
             df = self.filter_annotations(df, progress_bar)
             if df is None:
+                show_status(self.main_window, "Viscore import failed while filtering annotations.",
+                            STATUS_SUMMARY_MS)
                 return
 
             # Import the annotations
+            show_status(self.main_window, f"Importing {plural(len(df), 'Viscore annotation')}...")
             self.process_annotations(df, progress_bar)
 
         except Exception as e:
-            QMessageBox.critical(self, 
+            show_status(self.main_window, f"Viscore import failed: {e}", STATUS_SUMMARY_MS)
+            QMessageBox.critical(self,
                                  "Critical Error",
                                  f"Failed to import annotations: {e}")
         finally:
@@ -326,7 +337,13 @@ class ImportViscoreAnnotations(QDialog):
             # Load annotations for current image
             self.annotation_window.load_annotations()
 
+            show_status(self.main_window,
+                        f"Viscore: Imported {plural(len(all_new_annotations), 'annotation')} "
+                        f"into {plural(len(images_to_update), 'image')}.",
+                        STATUS_SUMMARY_MS)
+
         except Exception as e:
-            QMessageBox.critical(self, 
+            show_status(self.main_window, f"Viscore import failed: {e}", STATUS_SUMMARY_MS)
+            QMessageBox.critical(self,
                                 "Critical Error",
                                 f"Failed to process annotations: {str(e)}")

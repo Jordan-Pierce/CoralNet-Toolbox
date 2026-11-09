@@ -24,6 +24,7 @@ from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotati
 from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAnnotation
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
+from coralnet_toolbox.utilities import STATUS_SUMMARY_MS, plural, show_status
 from coralnet_toolbox.Icons import get_window_icon
 
 
@@ -695,6 +696,8 @@ class ExportGeoJSONAnnotations(QDialog):
                 if resp != QMessageBox.Yes:
                     return
 
+        show_status(self.main_window, f"Exporting {fmt_label} from {plural(len(all_images), 'image')}...")
+
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, "Exporting Geospatial Vector")
         progress_bar.show()
@@ -752,6 +755,7 @@ class ExportGeoJSONAnnotations(QDialog):
                 combined = self.combine_gdfs(combined_gdfs, coord_mode)
                 if combined is None or len(combined) == 0:
                     QApplication.restoreOverrideCursor()
+                    show_status(self.main_window, f"{fmt_label} export: no features to export.", STATUS_SUMMARY_MS)
                     QMessageBox.warning(self, "Export", "No features to export.")
                     return
                 feature_count = len(combined)
@@ -769,6 +773,9 @@ class ExportGeoJSONAnnotations(QDialog):
                 )
 
             feature_summary = f"{feature_count} features" if mode == "single" else "individual files"
+            show_status(self.main_window,
+                        f"Exported {plural(exported_count, 'image')} ({feature_summary}) as {fmt_label}.",
+                        STATUS_SUMMARY_MS)
             QMessageBox.information(
                 self, "Export Completed",
                 f"Exported {exported_count} images ({feature_summary}) as {fmt_label}.\n"
@@ -779,6 +786,7 @@ class ExportGeoJSONAnnotations(QDialog):
 
         except Exception as e:
             QApplication.restoreOverrideCursor()
+            show_status(self.main_window, f"{fmt_label} export failed: {e}", STATUS_SUMMARY_MS)
             QMessageBox.critical(self, "Error", f"An error occurred during export: {str(e)}")
             import traceback
             traceback.print_exc()

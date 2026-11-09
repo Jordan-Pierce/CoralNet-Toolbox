@@ -12,6 +12,7 @@ from PyQt5.QtWidgets import (QFileDialog, QVBoxLayout, QPushButton, QLabel, QLin
                              QStyle, QTabWidget, QWidget)
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Icons import get_window_icon
+from coralnet_toolbox.utilities import STATUS_SUMMARY_MS, plural, show_status
 
 from coralnet_toolbox.Rasters.VideoRaster import VideoRaster
 from coralnet_toolbox.Annotations.QtPatchAnnotation import PatchAnnotation
@@ -808,6 +809,9 @@ class ImportFrames(QDialog):
             self.extraction_completed([], import_after)
             return
 
+        show_status(self.main_window,
+                    f"Extracting {plural(len(indices_to_extract), 'frame')} from {os.path.basename(video_file)}...")
+
         # Show progress and start worker thread
         self.progress = ProgressBar(self.main_window.annotation_window, "Extracting Frames")
         self.progress.show()
@@ -843,6 +847,8 @@ class ImportFrames(QDialog):
             # annotations on the newly imported still images.
             if (self.video_raster is not None and
                     self.include_annotations_combo.currentText() == "True"):
+                show_status(self.main_window,
+                            f"Cloning annotations onto {plural(len(self.last_frame_indices), 'frame')}...")
                 QApplication.setOverrideCursor(Qt.WaitCursor)
                 try:
                     cloned_count = self._clone_annotations_to_frames(self.last_frame_indices)
@@ -857,6 +863,7 @@ class ImportFrames(QDialog):
         message += "."
         if cloned_count:
             message += f"\nRe-created {cloned_count} annotation(s) on the imported frames."
+        show_status(self.main_window, " ".join(message.splitlines()), STATUS_SUMMARY_MS)
         QMessageBox.information(self, "Extraction Complete", message)
 
     def _clone_annotations_to_frames(self, frame_indices):
@@ -980,6 +987,7 @@ class ImportFrames(QDialog):
     def on_extraction_error(self, error_msg):
         self._close_progress()
         QApplication.restoreOverrideCursor()
+        show_status(self.main_window, f"Frame extraction failed: {error_msg}", STATUS_SUMMARY_MS)
         QMessageBox.critical(
             self, "Extraction Error",
             f"An error occurred during frame extraction:\n{error_msg}"

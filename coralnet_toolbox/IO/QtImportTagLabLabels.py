@@ -1,3 +1,4 @@
+import os
 import ujson as json
 
 from PyQt5.QtCore import Qt
@@ -5,6 +6,8 @@ from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import QFileDialog, QMessageBox, QApplication
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
+
+from coralnet_toolbox.utilities import STATUS_SUMMARY_MS, plural, show_status
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -48,6 +51,7 @@ class ImportTagLabLabels:
                     data['labels'] = list(data['labels'].values())
 
             except Exception as e:
+                show_status(self.main_window, f"TagLab label import failed: {e}", STATUS_SUMMARY_MS)
                 QMessageBox.warning(self.label_window,
                                     "Error Loading Labels",
                                     f"An error occurred while loading Labels: {str(e)}")
@@ -56,6 +60,7 @@ class ImportTagLabLabels:
             # Make cursor busy
             QApplication.setOverrideCursor(Qt.WaitCursor)
             total_labels = len(data['labels'])
+            show_status(self.main_window, f"Importing {plural(total_labels, 'TagLab label')}...")
             progress_bar = ProgressBar(self.label_window, "Importing TagLab Labels")
             progress_bar.show()
             progress_bar.start_progress(total_labels)
@@ -87,11 +92,15 @@ class ImportTagLabLabels:
                     # Update the progress bar
                     progress_bar.update_progress()
 
+                show_status(self.main_window,
+                            f"Imported {plural(total_labels, 'TagLab label')} from {os.path.basename(file_path)}.",
+                            STATUS_SUMMARY_MS)
                 QMessageBox.information(self.label_window,
                                         "Labels Imported",
                                         "TagLab labels have been successfully imported.")
 
             except Exception as e:
+                show_status(self.main_window, f"TagLab label import failed: {e}", STATUS_SUMMARY_MS)
                 QMessageBox.warning(self.label_window,
                                     "Error Importing Labels",
                                     f"An error occurred while importing TagLab labels: {str(e)}")

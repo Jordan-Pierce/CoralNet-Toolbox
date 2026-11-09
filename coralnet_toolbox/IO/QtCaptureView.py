@@ -9,6 +9,7 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QForm
 
 from coralnet_toolbox.Icons import get_window_icon
 from coralnet_toolbox.paths import app_home
+from coralnet_toolbox.utilities import STATUS_SUMMARY_MS, show_status
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -465,13 +466,15 @@ class CaptureView(QDialog):
         # Hide the dialog so it does not appear in its own capture
         self.hide()
         try:
+            # No "Capturing..." message beforehand: it would be in the capture
             message = self.capture_to_destination(output_path)
-            self.main_window.status_bar.showMessage(message, 5000)
+            show_status(self.main_window, message, STATUS_SUMMARY_MS)
             self.accept()
 
         except Exception as e:
             # Bring the dialog back so the user is not left with a vanished window
             self.show()
+            show_status(self.main_window, f"Capture failed: {e}", STATUS_SUMMARY_MS)
             QMessageBox.critical(self, "Error", f"An error occurred during capture: {e}")
 
     def closeEvent(self, event):

@@ -1,3 +1,4 @@
+import os
 import ujson as json
 
 from PyQt5.QtWidgets import (QApplication, QFileDialog, QMessageBox)
@@ -5,6 +6,8 @@ from PyQt5.QtWidgets import (QApplication, QFileDialog, QMessageBox)
 from coralnet_toolbox.QtLabelWindow import Label
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
+
+from coralnet_toolbox.utilities import STATUS_SUMMARY_MS, plural, show_status
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -35,6 +38,7 @@ class ImportLabels:
                     labels = json.load(file)
 
             except Exception as e:
+                show_status(self.main_window, f"Label import failed: {e}", STATUS_SUMMARY_MS)
                 QMessageBox.warning(self.label_window,
                                     "Error Loading Labels",
                                     f"An error occurred while loading Labels: {str(e)}")
@@ -42,6 +46,7 @@ class ImportLabels:
 
             # Create a progress bar
             total_labels = len(labels)
+            show_status(self.main_window, f"Importing {plural(total_labels, 'label')}...")
             progress_bar = ProgressBar(self.label_window, "Importing Labels")
             progress_bar.show()
             progress_bar.start_progress(total_labels)
@@ -62,11 +67,15 @@ class ImportLabels:
                     # Update the progress bar
                     progress_bar.update_progress()
 
+                show_status(self.main_window,
+                            f"Imported {plural(total_labels, 'label')} from {os.path.basename(file_path)}.",
+                            STATUS_SUMMARY_MS)
                 QMessageBox.information(self.label_window,
                                         "Labels Imported",
                                         "Annotations have been successfully imported.")
 
             except Exception as e:
+                show_status(self.main_window, f"Label import failed: {e}", STATUS_SUMMARY_MS)
                 QMessageBox.warning(self.label_window,
                                     "Error Importing Labels",
                                     f"An error occurred while importing Labels: {str(e)}")

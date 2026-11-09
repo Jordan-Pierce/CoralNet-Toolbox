@@ -24,6 +24,7 @@ from coralnet_toolbox.Annotations.QtMultiPolygonAnnotation import MultiPolygonAn
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Icons import get_window_icon
 from coralnet_toolbox.utilities import rasterio_to_numpy
+from coralnet_toolbox.utilities import STATUS_SUMMARY_MS, plural, show_status
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -752,6 +753,7 @@ class ExportMaskAnnotations(QDialog):
             self.annotation_types.append(MultiPolygonAnnotation)
 
         # --- Run Export Loop ---
+        show_status(self.main_window, f"Exporting masks for {plural(len(images), 'image')}...")
         QApplication.setOverrideCursor(Qt.WaitCursor)
         progress_bar = ProgressBar(self.annotation_window, "Exporting Masks")
         progress_bar.show()
@@ -787,12 +789,13 @@ class ExportMaskAnnotations(QDialog):
             status = (f"Exported {self.exported_count} {mode_names.get(self.mask_mode, self.mask_mode)} "
                       f"mask(s) to {output_path}")
             if self.skipped_images:
-                status += f" — {len(self.skipped_images)} skipped"
-            self.main_window.status_bar.showMessage(status, 5000)
+                status += f", {len(self.skipped_images)} skipped"
+            show_status(self.main_window, status, STATUS_SUMMARY_MS)
 
             QMessageBox.information(self, "Export Complete", message)
             self.accept()
         except Exception as e:
+            show_status(self.main_window, f"Mask export failed: {e}", STATUS_SUMMARY_MS)
             QMessageBox.critical(self, "Error", f"An error occurred during export: {e}")
         finally:
             QApplication.restoreOverrideCursor()

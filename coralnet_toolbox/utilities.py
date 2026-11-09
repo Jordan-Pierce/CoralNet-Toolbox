@@ -1,5 +1,4 @@
 import os
-import gc
 import math
 import errno
 import sys
@@ -1566,6 +1565,32 @@ def polygonize_mask_with_holes(mask_tensor, epsilon=1.0):
     return exterior, holes
 
 
+# How long a message that reports how an operation ended stays in the status bar
+STATUS_SUMMARY_MS = 10000
+
+
+def show_status(main_window, message, timeout=0):
+    """Say in the main window's status bar what is happening, painted at once.
+
+    The work it describes runs on the GUI thread, so without the repaint it
+    would only appear once that work is over. A timeout of 0 keeps it up
+    until the next message replaces it, so every operation that posts one
+    must post a closing message (STATUS_SUMMARY_MS) on each way out.
+    """
+    try:
+        status_bar = main_window.status_bar
+        status_bar.showMessage(message, timeout)
+        status_bar.repaint()
+    except Exception:
+        pass  # A status message must never be the reason an operation fails
+
+
+def plural(count, singular, plural_form=None):
+    """'1 image', '3 images'."""
+    word = singular if count == 1 else (plural_form or singular + "s")
+    return f"{count} {word}"
+
+
 def console_user(error_msg, parent=None):
     """
     Display an error message to the user via both terminal and GUI dialog.
@@ -1725,33 +1750,5 @@ def _show_exception_dialog(error_msg, main_window):
             sys.__excepthook__(*sys.exc_info())
         except Exception:
             pass
-
-def convert_to_ultralytics(ultralytics_model, weights, output_path="converted_model.pt"):
-    """Convert a PyTorch model to Ultralytics format"""
-    src_state_dict = ultralytics_model.model.model.state_dict()
-
-    temp_model = torch.load(weights, map_location='cpu')
-    dst_state_dict = temp_model['net']
-
-    try:
-        for (src_key, src_val), (dst_key, dst_val) in zip(src_state_dict.items(), dst_state_dict.items()):
-            if src_val.shape == dst_val.shape:
-                src_state_dict[src_key] = dst_val
-            else:
-                print("Warning: Skipping mismatched layer ", src_key, src_val.shape, dst_key, dst_val.shape)
-
-    except Exception as e:
-        print(f"Error converting model: {e}")
-        return
-
-    ultralytics_model.model.model.load_state_dict(src_state_dict)
-    ultralytics_model.model.model.eval()
-
-    ultralytics_model.task = 'classify'
-    ultralytics_model.save(output_path)
-    print(f"Model saved to {output_path}")
-
-    del dst_state_dict
-    gc.collect()
 
 

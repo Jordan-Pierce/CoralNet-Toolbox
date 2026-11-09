@@ -37,8 +37,8 @@ SURFACE_COLOR = QColor("#1e2130")
 SURFACE_ELEVATED_COLOR = QColor("#252a3d")
 SURFACE_BORDER_COLOR = QColor("#2a2d3a")
 DOCK_BORDER_COLOR = QColor("#3d4358")     # dock-area outline — brighter than SURFACE_BORDER
-DOCK_SPLITTER_COLOR = QColor("#4a5270")   # the draggable line BETWEEN adjacent docks
-DOCK_SPLITTER_WIDTH = 6                    # px grab-zone; visible line is a thin gradient core
+DOCK_SPLITTER_COLOR = QColor("#6b7aa8")   # the draggable line BETWEEN adjacent docks
+DOCK_SPLITTER_WIDTH = 8                    # px grab-zone; visible line is a solid core in its middle third
 # Toolbar separator hairline. Fusion draws QToolBar separators from palette.window()
 # (#0f1117) shaded +/-10%, which is indistinguishable from the toolbar's own
 # background — so the separators read as blank space. This token drives an explicit
@@ -774,50 +774,64 @@ ads--CDockWidgetTab:focus {{
     outline: none;
 }}
 
-ads--CDockArea {{
+/* The ADS class is ads::CDockAreaWidget; a bare "ads--CDockArea"
+   selector matches nothing and the outline never paints. */
+ads--CDockAreaWidget {{
     background-color: {BACKGROUND_COLOR.name()};
     border: 1px solid {DOCK_BORDER_COLOR.name()};
 }}
 
+/* Focused panel (needs the FocusHighlighting config flag, set in
+   QtMainWindow before the dock manager is built). ADS toggles the
+   "focused" property and repolishes, so plain property selectors work. */
+ads--CDockAreaWidget[focused="true"] {{
+    border: 1px solid {ACCENT_COLOR.name()};
+}}
+
 /* ── Splitter between docks ────────────────────────────────────
    The handle is the real boundary line when two docks sit side by
-   side or stacked. The handle itself is a wide (~6px) grab zone, but
-   we only paint a thin hairline down its centre via a gradient with
-   transparent margins — crisp core, soft edges, no fat bar. Handle
-   width is set in code via CDockSplitter; colour only lives here. */
+   side or stacked. The whole handle is the grab zone; a solid line
+   fills its middle third. Hard stops (0.32/0.33, 0.67/0.68) keep the
+   core at full colour: a triangular ramp peaking at 0.5 never lands
+   a pixel centre on the peak, so at 6px no pixel got past ~44%.
+   Handle width is set in code via CDockSplitter; colour lives here. */
 ads--CDockSplitter::handle {{
     background-color: transparent;
 }}
 ads--CDockSplitter::handle:horizontal {{
     background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
         stop:0    transparent,
-        stop:0.35 transparent,
-        stop:0.5  {DOCK_SPLITTER_COLOR.name()},
-        stop:0.65 transparent,
+        stop:0.32 transparent,
+        stop:0.33 {DOCK_SPLITTER_COLOR.name()},
+        stop:0.67 {DOCK_SPLITTER_COLOR.name()},
+        stop:0.68 transparent,
         stop:1    transparent);
 }}
 ads--CDockSplitter::handle:vertical {{
     background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
         stop:0    transparent,
-        stop:0.35 transparent,
-        stop:0.5  {DOCK_SPLITTER_COLOR.name()},
-        stop:0.65 transparent,
+        stop:0.32 transparent,
+        stop:0.33 {DOCK_SPLITTER_COLOR.name()},
+        stop:0.67 {DOCK_SPLITTER_COLOR.name()},
+        stop:0.68 transparent,
         stop:1    transparent);
 }}
 ads--CDockSplitter::handle:horizontal:hover {{
     background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
         stop:0    transparent,
-        stop:0.3  transparent,
-        stop:0.5  {ACCENT_HOVER_COLOR.name()},
-        stop:0.7  transparent,
+        stop:0.24 transparent,
+        stop:0.25 {ACCENT_HOVER_COLOR.name()},
+        stop:0.75 {ACCENT_HOVER_COLOR.name()},
+        stop:0.76 transparent,
         stop:1    transparent);
 }}
 ads--CDockSplitter::handle:vertical:hover {{
     background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
         stop:0    transparent,
-        stop:0.3  transparent,
-        stop:0.5  {ACCENT_HOVER_COLOR.name()},
-        stop:0.7  transparent,
+        stop:0.24 transparent,
+        stop:0.25 {ACCENT_HOVER_COLOR.name()},
+        stop:0.75 {ACCENT_HOVER_COLOR.name()},
+        stop:0.76 transparent,
         stop:1    transparent);
 }}
 

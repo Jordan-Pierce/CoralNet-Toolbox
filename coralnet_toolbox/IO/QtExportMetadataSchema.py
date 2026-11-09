@@ -1,6 +1,8 @@
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QFileDialog, QMessageBox, QApplication)
 
+from coralnet_toolbox.utilities import STATUS_SUMMARY_MS, show_status
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Classes
@@ -51,15 +53,13 @@ class ExportMetadataSchema:
             schema.to_yaml(file_path)
 
             message = f"Schema exported ({len(schema)} fields)."
+            show_status(self.main_window, message, STATUS_SUMMARY_MS)
             QMessageBox.information(self.annotation_window,
                                     "Schema Exported",
                                     f"{len(schema)} metadata field(s) have been exported.")
-            try:
-                self.main_window.status_bar.showMessage(message, 3000)
-            except Exception:
-                pass
 
         except Exception as e:
+            show_status(self.main_window, f"Metadata schema export failed: {e}", STATUS_SUMMARY_MS)
             QMessageBox.warning(self.annotation_window,
                                 "Error Exporting Schema",
                                 f"An error occurred while exporting the metadata schema: {str(e)}")

@@ -10,6 +10,7 @@ from torch.cuda import empty_cache
 from ultralytics import YOLO
 
 from coralnet_toolbox.MachineLearning.DeployModel.QtBase import Base
+from coralnet_toolbox.pyspacer import PYSPACER_MARKER
 
 from coralnet_toolbox.Results import ResultsProcessor
 
@@ -89,7 +90,15 @@ class Classify(Base):
                 self.BATCH_SIZE = 0
 
             # Load the model (8.3.141) YOLO handles RTDETR too
-            self.loaded_model = YOLO(self.model_path, task=self.task)
+            model = YOLO(self.model_path, task=self.task)
+            # Training from CoralNet's weights writes a converted copy into the run
+            # folder: CoralNet's encoder under the yaml's one class placeholder head.
+            # It loads like any model and gives every patch class "0" at 1.00.
+            if (getattr(model.model, 'yaml', None) or {}).get(PYSPACER_MARKER) and len(model.names) == 1:
+                raise ValueError(f"{os.path.basename(self.model_path)} is CoralNet's EfficientNet-B0 "
+                                 f"as converted for training, and its classifier is untrained.\n\n"
+                                 f"Load weights/best.pt from the same run folder instead.")
+            self.loaded_model = model
 
             try:
                 imgsz = self.loaded_model.__dict__['overrides']['imgsz']

@@ -1,9 +1,12 @@
+import os
 import ujson as json
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (QFileDialog, QMessageBox, QApplication)
 
 from coralnet_toolbox.QtProgressBar import ProgressBar
+
+from coralnet_toolbox.utilities import STATUS_SUMMARY_MS, plural, show_status
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -33,6 +36,7 @@ class ExportLabels:
 
             # Create a progress bar
             total_labels = len(self.label_window.labels)
+            show_status(self.main_window, f"Exporting {plural(total_labels, 'label')}...")
             progress_bar = ProgressBar(self.label_window, "Exporting Labels")
             progress_bar.show()
             progress_bar.start_progress(total_labels)
@@ -46,11 +50,15 @@ class ExportLabels:
                 with open(file_path, 'w') as file:
                     json.dump(labels_data, file, indent=4)
 
+                show_status(self.main_window,
+                            f"Exported {plural(total_labels, 'label')} to {os.path.basename(file_path)}.",
+                            STATUS_SUMMARY_MS)
                 QMessageBox.information(self.label_window,
                                         "Labels Exported",
                                         "Labels have been successfully exported.")
 
             except Exception as e:
+                show_status(self.main_window, f"Label export failed: {e}", STATUS_SUMMARY_MS)
                 QMessageBox.warning(self.label_window,
                                     "Error Importing Labels",
                                     f"An error occurred while importing labels: {str(e)}")

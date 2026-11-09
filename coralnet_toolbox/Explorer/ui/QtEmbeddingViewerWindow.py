@@ -47,7 +47,7 @@ from coralnet_toolbox.Explorer.core.feature_binning import (
 )
 from coralnet_toolbox.Explorer.core.feature_vectors import (
     color_features, color_texture_features, fill_background, mean_of_groups,
-    pool_backbone_output, prefix_token_count, rotations,
+    pool_backbone_output, pool_region_tokens, prefix_token_count, rotations,
 )
 from coralnet_toolbox.Explorer.managers.CacheManager import CacheManager
 from coralnet_toolbox.Explorer.workers import EmbeddingPipelineWorker
@@ -55,6 +55,7 @@ from coralnet_toolbox.Features.ModelRegistry import YOLO_MODELS, is_yolo_model, 
 from coralnet_toolbox.Features.ModelRegistry import TRANSFORMER_MODELS, is_transformer_model
 from coralnet_toolbox.Features.ModelRegistry import TIMM_MODELS, is_timm_model, strip_timm_prefix
 from coralnet_toolbox.Features.ModelRegistry import OPENCLIP_MODELS, is_openclip_model, strip_openclip_prefix
+from coralnet_toolbox.Features.Extractor import model_supports_dense
 
 from coralnet_toolbox.Icons import get_icon
 from coralnet_toolbox.utilities import pixmap_to_numpy, pixmap_to_numpy_bgr, pixmap_to_pil
@@ -80,6 +81,7 @@ HANDCRAFTED_MODELS = (COLOR_MODEL, COLOR_TEXTURE_MODEL)
 MEAN_POOL_KEY_SUFFIX = "__meanpool"      # HF transformers: mean of patch tokens
 MASKED_KEY_SUFFIX = "__masked"           # polygon background filled before a deep model
 ROTATIONS_KEY_SUFFIX = "__rot4"          # deep features averaged over 4 rotations
+IMAGE_TOKENS_KEY_SUFFIX = "__imgtok"     # dense-model tokens pooled from a whole-image pass
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -175,6 +177,7 @@ class EmbeddingViewerWindow(QWidget):
         self._cached_openclip_preprocess = None
         self._cached_timm_extractor = None
         self._cached_timm_extractor_name = None
+        self._cached_dense_extractor = None  # Image tokens source (FeatureExtractor)
 
         # Dimensionality reduction result cache (in-memory, last result only)
         self._cached_reduction_fingerprint = None
@@ -191,6 +194,7 @@ class EmbeddingViewerWindow(QWidget):
         self.pca_components_spin = None
         self.mask_background_combo = None
         self.rotation_average_combo = None
+        self.feature_source_combo = None
         self.technique_settings_stack = None
         self.umap_n_neighbors_row = None
         self.umap_n_neighbors_slider = None
@@ -609,6 +613,19 @@ class EmbeddingViewerWindow(QWidget):
             "Four times slower. Color features are already rotation-invariant."
         )
         general_form.addRow("Rotation-invariant:", self.rotation_average_combo)
+
+        self.feature_source_combo = QComboBox()
+        self.feature_source_combo.addItems(["Crop", "Image tokens"])
+        self.feature_source_combo.setCurrentText("Crop")
+        self.feature_source_combo.setToolTip(
+            "Crop: embed each annotation's crop on its own.\n"
+            "Image tokens: run each whole image through the model once and average the tokens\n"
+            "under the annotation, so its features carry the context around it.\n"
+            "Dense models only (DINO, ConvNeXt, EVA, CLIP); YOLO and Color always use the crop.\n"
+            "Uses the Feature Extractor dialog's Input Resolution and Upsample settings.\n"
+            "Mask background and Rotation-invariant do not apply."
+        )
+        general_form.addRow("Feature source:", self.feature_source_combo)
 
         advanced_layout.addWidget(general_group)
 
@@ -1473,7 +1490,26 @@ class EmbeddingViewerWindow(QWidget):
                 and self.mask_background_combo.currentText() == "True")
         rotate = (deep and self.rotation_average_combo is not None
                   and self.rotation_average_combo.currentText() == "True")
-        return {'mask_background': bool(mask), 'rotations': 4 if rotate else 1}
+        options = {'mask_background': bool(mask), 'rotations': 4 if rotate else 1}
+
+        # PoC: a dense backbone (the ones the Feature Extractor dialog offers) can
+        # pool its tokens from one whole-image pass instead of embedding crops.
+        # The crop options do not apply then, and the token grid follows that
+        # dialog's resolution and upsampling (read here, on the GUI thread).
+        if (self.feature_source_combo is not None
+                and self.feature_source_combo.currentText() == "Image tokens"
+                and model_supports_dense(model_name)):
+            dialog = getattr(self.main_window, 'feature_deploy_model_dialog', None)
+            size = dialog.resolution_combo.currentData() if dialog is not None else 1024
+            upsample = dialog.upsample_combo.currentText() if dialog is not None else "Off"
+            options = {
+                'mask_background': False,
+                'rotations': 1,
+                'image_tokens': True,
+                'token_input_size': int(size),
+                'token_upsample': None if upsample == "Off" else int(upsample[:-1]),
+            }
+        return options
 
     def _get_model_cache_key(self, model_name, options=None):
         """Build a stable cache key for the selected model source.
@@ -1505,6 +1541,9 @@ class EmbeddingViewerWindow(QWidget):
         if (not live_source and not is_openclip_model(model_name) and not is_timm_model(model_name)
                 and not is_yolo_model(model_name) and is_transformer_model(model_name)):
             key += MEAN_POOL_KEY_SUFFIX
+        if options.get('image_tokens'):
+            key += (f"{IMAGE_TOKENS_KEY_SUFFIX}{options['token_input_size']}"
+                    f"x{options.get('token_upsample') or 1}")
         if options.get('mask_background'):
             key += MASKED_KEY_SUFFIX
         if int(options.get('rotations', 1)) > 1:
@@ -1562,6 +1601,9 @@ class EmbeddingViewerWindow(QWidget):
             status_callback: Optional callback fn() for per-item status updates.
             cancel_check: Optional callable () -> bool to abort extraction early.
         """
+        # First: image tokens applies to every dense backbone (HF, timm, OpenCLIP).
+        if self._extraction_options.get('image_tokens'):
+            return self._extract_image_token_features(data_items, model_name, on_batch=on_batch, status_callback=status_callback, cancel_check=cancel_check)
         if model_name == COLOR_MODEL:
             return self._extract_color_features(data_items, progress_bar, status_callback=status_callback, on_batch=on_batch, cancel_check=cancel_check)
         elif model_name == COLOR_TEXTURE_MODEL:
@@ -1866,6 +1908,131 @@ class EmbeddingViewerWindow(QWidget):
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
     
+    def _extract_image_token_features(self, data_items, model_name, on_batch=None,
+                                      status_callback=None, cancel_check=None):
+        """One vector per annotation from its image's dense token map (PoC).
+
+        Each image goes through the backbone once, whole, at the Feature
+        Extractor dialog's input resolution and upsampling. An annotation's
+        vector is the mean of the tokens under its polygon, weighted by how much
+        of each token it covers, so it carries the context around it. Runs on
+        the worker thread.
+        """
+        options = self._extraction_options
+        try:
+            extractor = self._load_dense_extractor(
+                model_name, options['token_input_size'], options['token_upsample'])
+        except Exception as e:
+            self.worker_error.emit("Error", f"Failed to load {model_name}: {e}")
+            return np.array([]), []
+
+        by_image = {}
+        for item in data_items:
+            by_image.setdefault(item.annotation.image_path, []).append(item)
+
+        features, valid_items = [], []
+        buffer_items, buffer_vectors = [], []
+        try:
+            for image_path, items in by_image.items():
+                if cancel_check is not None and cancel_check():
+                    break
+                try:
+                    feature_map, image_hw = self._image_token_map(image_path, extractor)
+                except Exception as e:
+                    print(f"Image tokens: skipped {image_path}: {e}")
+                    continue
+
+                for item in items:
+                    try:
+                        rings, holes = self._annotation_rings(item.annotation)
+                        vector = pool_region_tokens(feature_map, image_hw, rings, holes)
+                    except Exception:
+                        vector = None
+                    if vector is None:
+                        continue
+                    features.append(vector)
+                    valid_items.append(item)
+                    buffer_items.append(item)
+                    buffer_vectors.append(vector)
+                    if status_callback:
+                        status_callback()
+
+                if on_batch and len(buffer_items) >= self.batch_size:
+                    on_batch(buffer_items, np.array(buffer_vectors))
+                    buffer_items, buffer_vectors = [], []
+
+            if on_batch and buffer_items:
+                on_batch(buffer_items, np.array(buffer_vectors))
+            return np.array(features), valid_items
+        finally:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+    def _load_dense_extractor(self, model_name, input_size, upsample):
+        """A FeatureExtractor for whole-image token maps.
+
+        Reuses the Feature Extractor dialog's loaded model when it is this model
+        with these settings; otherwise builds one and keeps it for the next run.
+        """
+        deployed = getattr(getattr(self.main_window, 'feature_deploy_model_dialog', None),
+                           'loaded_model', None)
+        wanted = (model_name, input_size, upsample)
+        for extractor in (deployed, self._cached_dense_extractor):
+            if (extractor is not None and
+                    (extractor.model_id, extractor.input_size, extractor.upsample_factor) == wanted):
+                return extractor
+
+        from coralnet_toolbox.Features.Extractor import FeatureExtractor
+        self._cached_dense_extractor = FeatureExtractor(
+            model_name, device=self.device, input_size=input_size, upsample_factor=upsample)
+        return self._cached_dense_extractor
+
+    @staticmethod
+    def _image_token_map(image_path, extractor):
+        """The whole image's dense map [h, w, C] and the image's (H, W).
+
+        Reuses a map the batch Feature task cached with these exact settings;
+        otherwise extracts one, unsaved (a 4x AnyUp map is tens of MB). The image
+        is read through a private rasterio handle: this runs on the worker
+        thread, and the Raster's shared handle is not thread safe.
+        """
+        import rasterio
+        from coralnet_toolbox.Features.FeatureMapCodec import extractor_variant, read_feature_metadata
+        from coralnet_toolbox.paths import feature_cache_path
+        from coralnet_toolbox.utilities import rasterio_to_numpy
+
+        with rasterio.open(image_path) as src:
+            image_hw = (src.height, src.width)
+
+            variant = extractor_variant(extractor)
+            npy_path = feature_cache_path(image_path, variant)
+            meta = read_feature_metadata(npy_path)
+            if meta is not None and meta.get('variant') == variant and meta.get('complete', True):
+                return np.load(npy_path, allow_pickle=False), image_hw
+
+            # The model resizes to about input_size² pixels anyway, so a read
+            # at twice that edge keeps a large ortho from loading at full size.
+            longest = min(max(image_hw), 2 * int(extractor.input_size or 1024))
+            image = rasterio_to_numpy(src, longest_edge=longest)
+
+        if image.ndim == 2:
+            image = np.stack([image] * 3, axis=-1)
+        feature_map = extractor.extract_dense(np.ascontiguousarray(image[..., :3]))
+        # extract_dense swallows its errors and returns a 1x1 map of zeros.
+        if feature_map.shape[0] * feature_map.shape[1] <= 1:
+            raise RuntimeError("dense extraction failed")
+        return feature_map, image_hw
+
+    @staticmethod
+    def _annotation_rings(ann):
+        """Outer rings and holes of an annotation, as (N, 2) arrays in image pixels."""
+        rings, holes = [], []
+        for part in getattr(ann, 'polygons', None) or [ann]:  # MultiPolygon holds several
+            rings.append(np.array([(p.x(), p.y()) for p in part.get_polygon()], dtype=np.float64))
+            for hole in getattr(part, 'holes', None) or []:
+                holes.append(np.array([(p.x(), p.y()) for p in hole], dtype=np.float64))
+        return rings, holes
+
     def _load_timm_extractor(self, model_name):
         """Load and cache a TimmExtractor for pooled feature extraction."""
         bare_name = strip_timm_prefix(model_name)

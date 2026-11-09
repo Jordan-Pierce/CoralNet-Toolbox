@@ -2,9 +2,11 @@ from .QtImportImages import ImportImages
 from .QtImportFrames import ImportFrames
 from .QtImportVideos import ImportVideos
 from .QtImportLabels import ImportLabels
+from .QtImportCPCeLabels import ImportCPCeLabels
 from .QtImportCoralNetLabels import ImportCoralNetLabels
 from .QtImportTagLabLabels import ImportTagLabLabels
 from .QtImportAnnotations import ImportAnnotations
+from .QtImportCPCeAnnotations import ImportCPCeAnnotations
 from .QtImportCoralNetAnnotations import ImportCoralNetAnnotations
 from .QtImportViscoreAnnotations import ImportViscoreAnnotations
 from .QtImportTagLabAnnotations import ImportTagLabAnnotations
@@ -30,9 +32,11 @@ __all__ = [
     'ImportFrames',
     'ImportVideos',
     'ImportLabels',
+    'ImportCPCeLabels',
     'ImportCoralNetLabels',
     'ImportTagLabLabels',
-    'ImportAnnotations', 
+    'ImportAnnotations',
+    'ImportCPCeAnnotations',
     'ImportCoralNetAnnotations',
     'ImportViscoreAnnotations',
     'ImportTagLabAnnotations',
