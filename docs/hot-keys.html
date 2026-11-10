@@ -220,7 +220,16 @@
             <div class="main-keys">
                 <div class="key-row">
                     <kbd class="hotkey">Esc
-                        <span class="tooltiptext"><ul><li><b>Escape</b>: Exit the program.</li></ul></span>
+                        <span class="tooltiptext">
+                            <b>Drawing</b>
+                            <ul>
+                                <li><b>Esc</b>: Same as Backspace. Cancel drawing (rectangle, polygon, scale line, work area).</li>
+                                <li><b>Esc</b>: Discard unfinalized predictions (SAM/YOLOE).</li>
+                                <li><b>Esc</b>: Cancel the current cutting line.</li>
+                            </ul>
+                            <b>Feature Select Tool</b>
+                            <ul><li><b>Esc</b>: Clear all points and start over.</li></ul>
+                        </span>
                     </kbd>
                     <kbd>F1</kbd>
                     <kbd>F2</kbd>
@@ -310,12 +319,12 @@
                             <ul><li><b>Alt + Backspace</b>, <b>Backspace</b> (Image table): Same as Delete.</li></ul>
                             <b>Drawing</b>
                             <ul>
-                                <li><b>Backspace</b>: Cancel drawing (rectangle, polygon, work area).</li>
-                                <li><b>Backspace</b>: Discard unfinalized predictions (SAM/YOLOE).</li>
-                                <li><b>Backspace</b>: Cancel the current cutting line.</li>
+                                <li><b>Backspace</b> / <b>Esc</b>: Cancel drawing (rectangle, polygon, scale line, work area).</li>
+                                <li><b>Backspace</b> / <b>Esc</b>: Discard unfinalized predictions (SAM/YOLOE).</li>
+                                <li><b>Backspace</b> / <b>Esc</b>: Cancel the current cutting line.</li>
                             </ul>
                              <b>Feature Select Tool</b>
-                             <ul><li><b>Backspace</b>: Clear all points and start over.</li></ul>
+                             <ul><li><b>Backspace</b> / <b>Esc</b>: Clear all points and start over.</li></ul>
                              <b>See Anything Tool</b>
                              <ul><li><b>Ctrl + Shift + Backspace</b>: Clear the whole prompt session.</li></ul>
                              <b>Work Areas</b>

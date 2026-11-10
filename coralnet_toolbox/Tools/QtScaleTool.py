@@ -325,11 +325,11 @@ class ScaleTool(Tool):
     def status_hint(self):
         """Say whether the next click starts or ends the measuring line."""
         if self.is_drawing:
-            return "Left click to end the line  |  Backspace: cancel it"
+            return "Left click to end the line  |  Backspace or Esc: cancel it"
         if self.calculated_scale_value is not None:
             return ("Set the known length in the dialog, then Apply"
                     "  |  Left click to draw a new line"
-                    "  |  Backspace: clear it")
+                    "  |  Backspace or Esc: clear it")
         return "Left click, move, left click to draw a line across a known distance"
 
     def mouseMoveEvent(self, event: QMouseEvent):
@@ -357,7 +357,7 @@ class ScaleTool(Tool):
         pass
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Backspace:
+        if event.key() in (Qt.Key_Backspace, Qt.Key_Escape):
             self.stop_current_drawing()
             self.dialog.reset_fields()
             self.report_state()

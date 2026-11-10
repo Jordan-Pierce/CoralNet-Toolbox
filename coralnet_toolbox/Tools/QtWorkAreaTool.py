@@ -60,11 +60,11 @@ class WorkAreaTool(Tool):
         if self.placement_mode:
             return ("Ctrl+left click: drop a copy here and keep placing"
                     "  |  Left click: drop it and stop"
-                    "  |  Release Ctrl or Backspace: stop placing")
+                    "  |  Release Ctrl, or Backspace or Esc: stop placing")
         if self.drawing:
             return ("Left click or Space to finish the work area"
                     "  |  Hold Ctrl to lock its size and place copies"
-                    "  |  Backspace: cancel it")
+                    "  |  Backspace or Esc: cancel it")
         return ("Left click, move, left click to draw a work area"
                 "  |  Space: use the current view"
                 "  |  Hold Ctrl+Shift to remove one"
@@ -172,8 +172,8 @@ class WorkAreaTool(Tool):
             self.finish_drawing(self.hover_pos)
             return
 
-        # Exit placement mode with Backspace
-        if key == Qt.Key_Backspace and self.placement_mode:
+        # Exit placement mode with Backspace or Escape
+        if key in (Qt.Key_Backspace, Qt.Key_Escape) and self.placement_mode:
             self.cancel_drawing()
             self.report_state()
             return

@@ -946,7 +946,7 @@ class MainWindow(QMainWindow):
                           "Create rectangular annotations by clicking and dragging.\n"
                           "• Left-click to set the first corner, then move the mouse to size the rectangle.\n"
                           "• Left-click again to place the rectangle.\n"
-                          "• Press Backspace to cancel drawing the current rectangle.\n"
+                          "• Press Backspace or Esc to cancel drawing the current rectangle.\n"
                           "• A semi-transparent preview shows the rectangle while drawing."),
             
             "polygon": ("Polygon Tool\n\n"
@@ -954,7 +954,7 @@ class MainWindow(QMainWindow):
                         "• Left-click to set the first vertex, then move the mouse to draw the polygon\n"
                         "• Hold Ctrl while left-clicking to draw straight-line segments.\n"
                         "• Left-click again to complete the polygon.\n"
-                        "• Press Backspace to cancel the current polygon.\n"
+                        "• Press Backspace or Esc to cancel the current polygon.\n"
                         "• A semi-transparent preview shows the polygon while drawing."),
             
             "brush": ("Brush Tool\n\n"
@@ -988,7 +988,7 @@ class MainWindow(QMainWindow):
                     "• Ctrl+Right-click to add negative points (background).\n"
                     "• Left-click, move, then left-click again to draw a bounding box for prompting.\n"
                     "• Press Spacebar to generate and confirm the segmentation.\n"
-                    "• Press Backspace to cancel the current operation.\n"
+                    "• Press Backspace or Esc to cancel the current operation.\n"
                     "• Uncertainty can be adjusted in Parameters section.\n"
                     "• A SAM predictor must be deployed first."),
             
@@ -1003,7 +1003,7 @@ class MainWindow(QMainWindow):
                              "• Ctrl+Shift+Right-click a detection to drop / restore it (hold Ctrl+Shift to reveal dropped ones).\n"
                              "• Ctrl+Mouse Wheel adjusts the confidence threshold (add Shift for finer steps).\n"
                              "• Press Spacebar again to confirm annotations or apply SAM refinement.\n"
-                             "• Press Backspace to cancel current operation or clear annotations.\n"
+                             "• Press Backspace or Esc to cancel current operation or clear annotations.\n"
                              "• Ctrl+Shift+Backspace clears the whole prompt session.\n"
                              "• A See Anything (YOLOE) predictor must be deployed first."),
 
@@ -1025,7 +1025,7 @@ class MainWindow(QMainWindow):
                                 "\n"
                                 "• A yellow crosshair suggests the most informative next point to\n"
                                 "  label; it updates after each click (or press N to refresh).\n"
-                                "• Space finalizes: creates a Polygon/Mask annotation; Backspace clears.\n"
+                                "• Space finalizes: creates a Polygon/Mask annotation; Backspace or Esc clears.\n"
                                 "• Shift+Space finalizes to the Mask and deletes the patches it agrees\n"
                                 "  with (same label at the patch center), so the mask fills them in.\n"
                                 "• A Feature model must be deployed first.\n"),

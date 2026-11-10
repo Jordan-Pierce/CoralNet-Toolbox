@@ -18,7 +18,7 @@ The interaction mirrors SAMTool:
       * Ctrl + wheel       : adjust the selection threshold (live thresholded view).
       * Space              : finalize → create a Polygon or Mask annotation.
       * Shift + Space      : finalize to Mask, replacing the patches it agrees with.
-      * Backspace          : clear prompts / cancel the work area.
+      * Backspace / Esc    : clear prompts / cancel the work area.
 
 The cosine / linear-head scoring is reused as-is from the shared
 ``QueryEngine`` (coralnet_toolbox/Features/QueryEngine.py); the tool owns the
@@ -190,7 +190,7 @@ class FeatureSelectTool(Tool):
         """Say what Space, Backspace and Ctrl+click do from here, per mode."""
         other_mode = "binary" if self.mode == "multiclass" else "multi-class"
         if self.creating_working_area:
-            return "Left click or Space to finish the work area  |  Backspace: cancel it"
+            return "Left click or Space to finish the work area  |  Backspace or Esc: cancel it"
         if self.working_area is None:
             return ("Space: use the current view as the work area, or left click, move, "
                     "left click to draw one"
@@ -203,7 +203,7 @@ class FeatureSelectTool(Tool):
             else:
                 start = "Binary mode: Ctrl+click a patch for a positive, Ctrl+right-click a negative"
             return (f"{start}  |  Ctrl+Alt: {other_mode} mode"
-                    "  |  Space or Backspace: close the work area")
+                    "  |  Space, Backspace or Esc: close the work area")
 
         absorb = ("  |  Shift+Space: commit to the mask and absorb matching patches"
                   if self.output_type == "Mask" else "")
@@ -213,13 +213,13 @@ class FeatureSelectTool(Tool):
                     "  |  Ctrl+click: add to the selected label, Ctrl+right-click: undo its last point"
                     f"  |  Ctrl+wheel: reject threshold {self._reject_text()}"
                     "  |  N: suggest a point"
-                    "  |  Backspace: clear the prompts")
+                    "  |  Backspace or Esc: clear the prompts")
         positive, negative = len(self.positive_ids), len(self.negative_ids)
         return (f"Space: commit ({positive} positive, {negative} negative){absorb}"
                 "  |  Ctrl+click: positive, Ctrl+right-click: negative"
                 f"  |  Ctrl+wheel: threshold {self._active_threshold():.2f}"
                 "  |  N: suggest a point"
-                "  |  Backspace: clear the prompts")
+                "  |  Backspace or Esc: clear the prompts")
 
     def _engage_colormap_controls(self):
         """Hand the colormap dropdown + opacity slider to the feature overlay.
@@ -950,7 +950,7 @@ class FeatureSelectTool(Tool):
                 self._status(
                     f"Feature Select: seeded {seeded_cells} prototype(s) from "
                     f"{len(seeded_labels)} existing class(es). Space commits, Shift+Space "
-                    "also replaces matching patches, Backspace clears.", 6000)
+                    "also replaces matching patches, Backspace or Esc clears.", 6000)
         finally:
             QApplication.restoreOverrideCursor()
 
@@ -1315,7 +1315,7 @@ class FeatureSelectTool(Tool):
                 self.cancel_working_area()
                 self.report_state()
             self.annotation_window.scene.update()
-        elif event.key() == Qt.Key_Backspace:
+        elif event.key() in (Qt.Key_Backspace, Qt.Key_Escape):
             if self.creating_working_area:
                 self.cancel_working_area_creation()
             elif self._has_prompts():

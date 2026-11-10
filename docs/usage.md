@@ -752,7 +752,7 @@ The Explorer automatically caches extracted features to accelerate re-loading th
          - Only a single annotation can be selected
          - Press <kbd>Ctrl</kbd>-<kbd>X</kbd> to enter cutting mode, <kbd>Left-Click</kbd> to start, draw line, <kbd>Left-Click</kbd> to end
           - Hold <kbd>Ctrl</kbd> to create straight line segments
-         - Press <kbd>Backspace</kbd> or <kbd>Delete</kbd> to cancel the current cutting line without making changes
+         - Press <kbd>Backspace</kbd>, <kbd>Delete</kbd> or <kbd>Esc</kbd> to cancel the current cutting line without making changes
      - **Exploding Rules**:
          - Select a MultiPolygonAnnotation, press <kbd>Ctrl</kbd> + <kbd>X</kbd> to explode it into multiple PolygonAnnotations
      - **Subtraction Rules**:
@@ -771,7 +771,7 @@ The Explorer automatically caches extracted features to accelerate re-loading th
 - **Scale Tool**: Provide scale to the image(s), and measure distances on the current image.
   - <kbd>Left-Click</kbd> to set the starting point.
   - Drag to draw a line, then <kbd>Left-Click</kbd> again to set the endpoint.
-  - Press <kbd>Backspace</kbd> to cancel drawing the scale line.
+  - Press <kbd>Backspace</kbd> or <kbd>Esc</kbd> to cancel drawing the scale line.
   - The scale will be calculated based on the known provided length and pixel length.
   - Area and Perimeter for an annotation can be viewed when hovering over the Confidence Window.
   - Preferred units can be set in the Status Bar.
@@ -786,14 +786,14 @@ The Explorer automatically caches extracted features to accelerate re-loading th
 - **Rectangle Tool**: After selecting the tool
   - <kbd>Left-Click</kbd>: Start drawing a rectangle click again to finish
   - <kbd>Mouse Movement</kbd>: Shows a preview of the rectangle while drawing
-  - <kbd>Backspace</kbd>: Cancel the current rectangle annotation
+  - <kbd>Backspace</kbd> / <kbd>Esc</kbd>: Cancel the current rectangle annotation
 
 - **Polygon Tool**: After selecting the tool
   - <kbd>Left-Click</kbd> (first): Start drawing a polygon
   - <kbd>Left-Click</kbd> (subsequent): Add points to the polygon click near the first point to close
   - <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Enable straight line mode click to add straight line segments
   - <kbd>Mouse Movement</kbd>: Shows a preview of the polygon as you draw
-  - <kbd>Backspace</kbd>: Cancel the current polygon annotation
+  - <kbd>Backspace</kbd> / <kbd>Esc</kbd>: Cancel the current polygon annotation
 
 - **Brush Tool**: After selecting the tool
   - <kbd>Left-click</kbd> and drag to paint brush strokes on the canvas.
@@ -816,17 +816,17 @@ The Explorer automatically caches extracted features to accelerate re-loading th
 
 - **SAM Tool**: After a model is loaded
   - <kbd>Left-Click</kbd>: Start drawing a work area click again to finish drawing
-  - <kbd>Backspace</kbd>: Cancel drawing the current work area
+  - <kbd>Backspace</kbd> / <kbd>Esc</kbd>: Cancel drawing the current work area
   - <kbd>Space</kbd>: Create a work area from the current view
     - <kbd>Space</kbd>: Set working area confirm prediction finalize predictions and exit working area
     - <kbd>Left-Click</kbd>: Start a box press again to end a box
     - <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add positive point
     - <kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Add negative point
-    - <kbd>Backspace</kbd>: Discard unfinalized predictions
+    - <kbd>Backspace</kbd> / <kbd>Esc</kbd>: Discard unfinalized predictions
 
 - **See Anything (YOLOE) Tool**: After a model is loaded
   - <kbd>Left-Click</kbd>: Start drawing a work area click again to finish drawing
-  - <kbd>Backspace</kbd>: Cancel drawing the current work area
+  - <kbd>Backspace</kbd> / <kbd>Esc</kbd>: Cancel drawing the current work area
   - <kbd>Space</kbd>: Create a work area from the current view
     - <kbd>Space</kbd>: Set working area run prediction finalize predictions and exit working area
     - <kbd>Left-Click</kbd>: Start a box press again to end a box
@@ -836,7 +836,7 @@ The Explorer automatically caches extracted features to accelerate re-loading th
     - <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Right-Click</kbd>: Drop / restore a single detection (hold <kbd>Ctrl</kbd> + <kbd>Shift</kbd> to reveal dropped ones)
     - <kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd>: Adjust the confidence threshold (add <kbd>Shift</kbd> for finer steps)
     - <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Backspace</kbd>: Clear the prompt session
-    - <kbd>Backspace</kbd>: Discard unfinalized predictions
+    - <kbd>Backspace</kbd> / <kbd>Esc</kbd>: Discard unfinalized predictions
 
 - **Feature Select Tool**: After a feature model is deployed
   - <kbd>Space</kbd> (or <kbd>Left-Click</kbd>, <kbd>Left-Click</kbd>): Define a work area first
@@ -855,11 +855,11 @@ The Explorer automatically caches extracted features to accelerate re-loading th
     - <kbd>N</kbd>: Refresh the yellow crosshair point suggestion (the patch the current points are least sure about)
     - <kbd>Space</kbd>: Finalize and create a Polygon / Mask annotation
     - <kbd>Shift</kbd> + <kbd>Space</kbd>: Finalize to the Mask and delete the patches it agrees with (same label at the patch center), so the mask fills them in. Undo restores both.
-    - <kbd>Backspace</kbd>: Clear all points and start over
+    - <kbd>Backspace</kbd> / <kbd>Esc</kbd>: Clear all points and start over
 
 - **Work Area Tool**: For creating restricted areas for model prediction
   - <kbd>Left-Click</kbd>: Start drawing a work area click again to finish drawing
-  - <kbd>Backspace</kbd>: Cancel drawing the current work area
+  - <kbd>Backspace</kbd> / <kbd>Esc</kbd>: Cancel drawing the current work area
   - <kbd>Space</kbd>: Create a work area from the current view
   - <kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show removal buttons on existing work areas (click the "X" to remove)
   - <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Backspace</kbd>: Remove all work areas in the current image
@@ -1118,7 +1118,6 @@ Multi-select filters and search bars to control which images are displayed:
 - **Interactive hotkey map available** at [Hotkeys Map](https://jordan-pierce.github.io/CoralNet-Toolbox/hot-keys) with visual keyboard layout
 
 ### General
-- <kbd>Escape</kbd>: Exit the program
 - <kbd>Ctrl</kbd> + <kbd>S</kbd>: Save the project
 - <kbd>Ctrl</kbd> + <kbd>Z</kbd>: Undo the last addition or deletion of an annotation
 - <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd>: Redo the previously undone addition or deletion of an annotation
@@ -1141,7 +1140,8 @@ Multi-select filters and search bars to control which images are displayed:
 - <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>C</kbd>: Combine the entire selection into a single result regardless of overlap (e.g. to build a MultiPolygonAnnotation)
 - <kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show every vertex handle at full strength (handles themselves appear on selection)
 - <kbd>Ctrl</kbd> + <kbd>R</kbd>: Open the Morphological Operations dialog (bake vectors into the mask, unbake the mask into vectors, or subtract, remove and merge overlapping polygons by label; Select tool must be active)
-- <kbd>Backspace</kbd> / <kbd>Delete</kbd>: Cancel current drawing (rectangle, polygon, work area, cutting line)
+- <kbd>Backspace</kbd> / <kbd>Esc</kbd>: Cancel current drawing (rectangle, polygon, scale line, work area, cutting line)
+- <kbd>Delete</kbd>: Cancel the current cutting line
 
 ### Tool Control
 - <kbd>Ctrl</kbd> + <kbd>Alt</kbd> (either order; holding does not repeat): Switch between tools within the existing tool group
@@ -1154,7 +1154,7 @@ Multi-select filters and search bars to control which images are displayed:
 - <kbd>Space</kbd>: Create a work area from the current view (or define via left-click twice)
 - <kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show removal buttons on existing work areas
 - <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Backspace</kbd>: Remove all work areas in the current image
-- <kbd>Backspace</kbd>: Cancel work area drawing
+- <kbd>Backspace</kbd> / <kbd>Esc</kbd>: Cancel work area drawing
 
 ### Patch Tool
 - <kbd>Ctrl</kbd> + <kbd>1</kbd>: Enable Live Classification mode (requires loaded classification model)
@@ -1162,7 +1162,7 @@ Multi-select filters and search bars to control which images are displayed:
 
 ### SAM / YOLOE Tools
 - <kbd>Space</kbd>: Set work area, run prediction, finalize, and exit
-- <kbd>Backspace</kbd>: Discard unfinalized predictions
+- <kbd>Backspace</kbd> / <kbd>Esc</kbd>: Discard unfinalized predictions
 - <kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add positive point (SAM Tool) / add detection as a positive example (YOLOE Tool)
 - <kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Add negative point (SAM Tool) / remove detection and add it as a negative example (YOLOE Tool)
 - <kbd>Ctrl</kbd> + <kbd>T</kbd>: Set a text prompt (YOLOE Tool)
@@ -1179,7 +1179,7 @@ Multi-select filters and search bars to control which images are displayed:
 - <kbd>N</kbd>: Refresh the yellow crosshair point suggestion
 - <kbd>Space</kbd>: Finalize and create Polygon / Mask annotation
 - <kbd>Shift</kbd> + <kbd>Space</kbd>: Finalize to Mask and replace the patches it agrees with
-- <kbd>Backspace</kbd>: Clear all points and start over
+- <kbd>Backspace</kbd> / <kbd>Esc</kbd>: Clear all points and start over
 
 ### Model Predictions
 After a model is loaded, use these shortcuts to run inference:
