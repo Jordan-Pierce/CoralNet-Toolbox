@@ -2732,7 +2732,7 @@ This guide provides instructions on how to use the application, including key fu
 <li>Only a single annotation can be selected</li>
 <li>Press <kbd>Ctrl</kbd>-<kbd>X</kbd> to enter cutting mode, <kbd>Left-Click</kbd> to start, draw line, <kbd>Left-Click</kbd> to end</li>
 <li>Hold <kbd>Ctrl</kbd> to create straight line segments</li>
-<li>Press <kbd>Backspace</kbd> or <kbd>Delete</kbd> to cancel the current cutting line without making changes</li>
+<li>Press <kbd>Backspace</kbd>, <kbd>Delete</kbd> or <kbd>Esc</kbd> to cancel the current cutting line without making changes</li>
 </ul>
 </li>
 <li><strong>Exploding Rules</strong>:<ul>
@@ -2766,7 +2766,7 @@ This guide provides instructions on how to use the application, including key fu
 </li>
 <li><kbd>Left-Click</kbd> to set the starting point.</li>
 <li>Drag to draw a line, then <kbd>Left-Click</kbd> again to set the endpoint.</li>
-<li>Press <kbd>Backspace</kbd> to cancel drawing the scale line.</li>
+<li>Press <kbd>Backspace</kbd> or <kbd>Esc</kbd> to cancel drawing the scale line.</li>
 <li>The scale will be calculated based on the known provided length and pixel length.</li>
 <li>Area and Perimeter for an annotation can be viewed when hovering over the Confidence Window.</li>
 <li>
@@ -2790,7 +2790,7 @@ This guide provides instructions on how to use the application, including key fu
 <li><kbd>Left-Click</kbd>: Start drawing a rectangle click again to finish</li>
 <li><kbd>Mouse Movement</kbd>: Shows a preview of the rectangle while drawing</li>
 <li>
-<p><kbd>Backspace</kbd>: Cancel the current rectangle annotation</p>
+<p><kbd>Backspace</kbd> / <kbd>Esc</kbd>: Cancel the current rectangle annotation</p>
 </li>
 <li>
 <p><strong>Polygon Tool</strong>: After selecting the tool</p>
@@ -2800,7 +2800,7 @@ This guide provides instructions on how to use the application, including key fu
 <li><kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Enable straight line mode click to add straight line segments</li>
 <li><kbd>Mouse Movement</kbd>: Shows a preview of the polygon as you draw</li>
 <li>
-<p><kbd>Backspace</kbd>: Cancel the current polygon annotation</p>
+<p><kbd>Backspace</kbd> / <kbd>Esc</kbd>: Cancel the current polygon annotation</p>
 </li>
 <li>
 <p><strong>Brush Tool</strong>: After selecting the tool</p>
@@ -2837,7 +2837,7 @@ This guide provides instructions on how to use the application, including key fu
 <p><strong>SAM Tool</strong>: After a model is loaded</p>
 </li>
 <li><kbd>Left-Click</kbd>: Start drawing a work area click again to finish drawing</li>
-<li><kbd>Backspace</kbd>: Cancel drawing the current work area</li>
+<li><kbd>Backspace</kbd> / <kbd>Esc</kbd>: Cancel drawing the current work area</li>
 <li>
 <p><kbd>Space</kbd>: Create a work area from the current view</p>
 <ul>
@@ -2845,14 +2845,14 @@ This guide provides instructions on how to use the application, including key fu
 <li><kbd>Left-Click</kbd>: Start a box press again to end a box</li>
 <li><kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add positive point</li>
 <li><kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Add negative point</li>
-<li><kbd>Backspace</kbd>: Discard unfinalized predictions</li>
+<li><kbd>Backspace</kbd> / <kbd>Esc</kbd>: Discard unfinalized predictions</li>
 </ul>
 </li>
 <li>
 <p><strong>See Anything (YOLOE) Tool</strong>: After a model is loaded</p>
 </li>
 <li><kbd>Left-Click</kbd>: Start drawing a work area click again to finish drawing</li>
-<li><kbd>Backspace</kbd>: Cancel drawing the current work area</li>
+<li><kbd>Backspace</kbd> / <kbd>Esc</kbd>: Cancel drawing the current work area</li>
 <li>
 <p><kbd>Space</kbd>: Create a work area from the current view</p>
 <ul>
@@ -2864,7 +2864,7 @@ This guide provides instructions on how to use the application, including key fu
 <li><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Right-Click</kbd>: Drop / restore a single detection (hold <kbd>Ctrl</kbd> + <kbd>Shift</kbd> to reveal dropped ones)</li>
 <li><kbd>Ctrl</kbd> + <kbd>Mouse Wheel</kbd>: Adjust the confidence threshold (add <kbd>Shift</kbd> for finer steps)</li>
 <li><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Backspace</kbd>: Clear the prompt session</li>
-<li><kbd>Backspace</kbd>: Discard unfinalized predictions</li>
+<li><kbd>Backspace</kbd> / <kbd>Esc</kbd>: Discard unfinalized predictions</li>
 </ul>
 </li>
 <li>
@@ -2892,14 +2892,14 @@ This guide provides instructions on how to use the application, including key fu
 <li><kbd>N</kbd>: Refresh the yellow crosshair point suggestion (the patch the current points are least sure about)</li>
 <li><kbd>Space</kbd>: Finalize and create a Polygon / Mask annotation</li>
 <li><kbd>Shift</kbd> + <kbd>Space</kbd>: Finalize to the Mask and delete the patches it agrees with (same label at the patch center), so the mask fills them in. Undo restores both.</li>
-<li><kbd>Backspace</kbd>: Clear all points and start over</li>
+<li><kbd>Backspace</kbd> / <kbd>Esc</kbd>: Clear all points and start over</li>
 </ul>
 </li>
 <li>
 <p><strong>Work Area Tool</strong>: For creating restricted areas for model prediction</p>
 </li>
 <li><kbd>Left-Click</kbd>: Start drawing a work area click again to finish drawing</li>
-<li><kbd>Backspace</kbd>: Cancel drawing the current work area</li>
+<li><kbd>Backspace</kbd> / <kbd>Esc</kbd>: Cancel drawing the current work area</li>
 <li><kbd>Space</kbd>: Create a work area from the current view</li>
 <li><kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show removal buttons on existing work areas (click the "X" to remove)</li>
 <li><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Backspace</kbd>: Remove all work areas in the current image</li>
@@ -3163,7 +3163,6 @@ from <strong>Utilities &gt; Morphological</strong>. Its <strong>Overlaps</strong
 </ul>
 <h3 id="general">General<a class="headerlink" href="#general" title="Permanent link">&para;</a></h3>
 <ul>
-<li><kbd>Escape</kbd>: Exit the program</li>
 <li><kbd>Ctrl</kbd> + <kbd>S</kbd>: Save the project</li>
 <li><kbd>Ctrl</kbd> + <kbd>Z</kbd>: Undo the last addition or deletion of an annotation</li>
 <li><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd>: Redo the previously undone addition or deletion of an annotation</li>
@@ -3188,7 +3187,8 @@ from <strong>Utilities &gt; Morphological</strong>. Its <strong>Overlaps</strong
 <li><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>C</kbd>: Combine the entire selection into a single result regardless of overlap (e.g. to build a MultiPolygonAnnotation)</li>
 <li><kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show every vertex handle at full strength (handles themselves appear on selection)</li>
 <li><kbd>Ctrl</kbd> + <kbd>R</kbd>: Open the Morphological Operations dialog (bake vectors into the mask, unbake the mask into vectors, or subtract, remove and merge overlapping polygons by label; Select tool must be active)</li>
-<li><kbd>Backspace</kbd> / <kbd>Delete</kbd>: Cancel current drawing (rectangle, polygon, work area, cutting line)</li>
+<li><kbd>Backspace</kbd> / <kbd>Esc</kbd>: Cancel current drawing (rectangle, polygon, scale line, work area, cutting line)</li>
+<li><kbd>Delete</kbd>: Cancel the current cutting line</li>
 </ul>
 <h3 id="tool-control">Tool Control<a class="headerlink" href="#tool-control" title="Permanent link">&para;</a></h3>
 <ul>
@@ -3203,7 +3203,7 @@ from <strong>Utilities &gt; Morphological</strong>. Its <strong>Overlaps</strong
 <li><kbd>Space</kbd>: Create a work area from the current view (or define via left-click twice)</li>
 <li><kbd>Ctrl</kbd> + <kbd>Shift</kbd>: Show removal buttons on existing work areas</li>
 <li><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Backspace</kbd>: Remove all work areas in the current image</li>
-<li><kbd>Backspace</kbd>: Cancel work area drawing</li>
+<li><kbd>Backspace</kbd> / <kbd>Esc</kbd>: Cancel work area drawing</li>
 </ul>
 <h3 id="patch-tool">Patch Tool<a class="headerlink" href="#patch-tool" title="Permanent link">&para;</a></h3>
 <ul>
@@ -3213,7 +3213,7 @@ from <strong>Utilities &gt; Morphological</strong>. Its <strong>Overlaps</strong
 <h3 id="sam-yoloe-tools">SAM / YOLOE Tools<a class="headerlink" href="#sam-yoloe-tools" title="Permanent link">&para;</a></h3>
 <ul>
 <li><kbd>Space</kbd>: Set work area, run prediction, finalize, and exit</li>
-<li><kbd>Backspace</kbd>: Discard unfinalized predictions</li>
+<li><kbd>Backspace</kbd> / <kbd>Esc</kbd>: Discard unfinalized predictions</li>
 <li><kbd>Ctrl</kbd> + <kbd>Left-Click</kbd>: Add positive point (SAM Tool) / add detection as a positive example (YOLOE Tool)</li>
 <li><kbd>Ctrl</kbd> + <kbd>Right-Click</kbd>: Add negative point (SAM Tool) / remove detection and add it as a negative example (YOLOE Tool)</li>
 <li><kbd>Ctrl</kbd> + <kbd>T</kbd>: Set a text prompt (YOLOE Tool)</li>
@@ -3231,7 +3231,7 @@ from <strong>Utilities &gt; Morphological</strong>. Its <strong>Overlaps</strong
 <li><kbd>N</kbd>: Refresh the yellow crosshair point suggestion</li>
 <li><kbd>Space</kbd>: Finalize and create Polygon / Mask annotation</li>
 <li><kbd>Shift</kbd> + <kbd>Space</kbd>: Finalize to Mask and replace the patches it agrees with</li>
-<li><kbd>Backspace</kbd>: Clear all points and start over</li>
+<li><kbd>Backspace</kbd> / <kbd>Esc</kbd>: Clear all points and start over</li>
 </ul>
 <h3 id="model-predictions">Model Predictions<a class="headerlink" href="#model-predictions" title="Permanent link">&para;</a></h3>
 <p>After a model is loaded, use these shortcuts to run inference:
@@ -3289,7 +3289,7 @@ from <strong>Utilities &gt; Morphological</strong>. Its <strong>Overlaps</strong
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 2, 2026 23:45:02 UTC"><span class="timeago" datetime="2026-11-02T23:45:02+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 2, 2026 23:45:02 UTC">2026-11-02</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 10, 2026 17:54:24 UTC"><span class="timeago" datetime="2026-11-10T17:54:24+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 10, 2026 17:54:24 UTC">2026-11-10</span>
   </span>
 
     
