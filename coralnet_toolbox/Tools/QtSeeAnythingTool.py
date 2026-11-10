@@ -309,17 +309,17 @@ class SeeAnythingTool(Tool):
             session_note = f"  |  Session: {session.summary()}  (Ctrl+Shift+Backspace: clear)"
 
         if self.creating_working_area:
-            message = "Space: finish the work area  |  Backspace: cancel it"
+            message = "Space: finish the work area  |  Backspace or Esc: cancel it"
         elif not self.working_area:
             message = ("Space: use the current view as the work area, or left-click, move, "
                        "left-click to draw one" + session_note)
         elif self.drawing_rectangle:
-            message = "Click to finish the box  |  Backspace: cancel it"
+            message = "Click to finish the box  |  Backspace or Esc: cancel it"
         elif self.rectangles and not self.rectangles_processed:
             count = len(self.rectangles)
             message = (f"Space: predict from {count} reference box{'es' if count != 1 else ''}"
                        "  |  Draw another box to add an example"
-                       "  |  Backspace: clear them")
+                       "  |  Backspace or Esc: clear them")
         elif self.annotations:
             count = len(self.annotations)
             confirm = "refine with SAM and confirm" if self._sam_enabled() else "confirm"
@@ -329,7 +329,7 @@ class SeeAnythingTool(Tool):
                        "  |  Ctrl+Shift+right-click: remove one"
                        f"  |  Ctrl+wheel: threshold {self._threshold():.2f}"
                        "  |  Draw another box to find more"
-                       "  |  Backspace: discard them")
+                       "  |  Backspace or Esc: discard them")
         elif self._has_prompt() and self.session_found_nothing:
             # The dead end that used to trap the tool: Space kept re-running the
             # same empty prediction and Backspace had nothing to clear. Both do
@@ -337,23 +337,23 @@ class SeeAnythingTool(Tool):
             message = (f"{self._prompt_label()} matched nothing here"
                        f"  |  Ctrl+wheel: lower the threshold ({self._threshold():.2f})"
                        "  |  Ctrl+T: try another word"
-                       "  |  Backspace or Space: close the work area")
+                       "  |  Backspace, Esc or Space: close the work area")
         elif self._has_prompt() and self.session_processed:
             message = (f"{self._prompt_label()} has already run"
                        "  |  Ctrl+T: try another word"
-                       "  |  Backspace or Space: close the work area")
+                       "  |  Backspace, Esc or Space: close the work area")
         elif self.text_prompt:
             message = (f"Space: predict from text prompt '{self.text_prompt}'"
-                       "  |  Ctrl+T: change it  |  Backspace: close the work area"
+                       "  |  Ctrl+T: change it  |  Backspace or Esc: close the work area"
                        "  |  Or draw a box instead" + session_note)
         elif self._has_prompt():
             message = ("Space: predict from the prompt session"
                        "  |  Draw a box to add an example"
                        "  |  Ctrl+T: add a phrase"
-                       "  |  Backspace: close the work area" + session_note)
+                       "  |  Backspace or Esc: close the work area" + session_note)
         else:
             message = ("Draw a box around an example, or Ctrl+T for a text prompt"
-                       "  |  Backspace or Space: close the work area")
+                       "  |  Backspace, Esc or Space: close the work area")
 
         return message
 
@@ -873,7 +873,7 @@ class SeeAnythingTool(Tool):
                 # Cancel the working area if no annotations were generated or after confirmation/SAM
                 self.cancel_working_area()
 
-        elif event.key() == Qt.Key_Backspace:
+        elif event.key() in (Qt.Key_Backspace, Qt.Key_Escape):
             # If creating working area, cancel it
             if self.creating_working_area:
                 self.cancel_working_area_creation()
@@ -1160,7 +1160,7 @@ class SeeAnythingTool(Tool):
         self.main_window.status_bar.showMessage(
             f"Nothing in this work area matched {subject}{threshold}. "
             f"Ctrl+wheel: lower the confidence threshold  |  Ctrl+T: try another word  |  "
-            f"Backspace or Space: close the work area",
+            f"Backspace, Esc or Space: close the work area",
             10000)
 
     # --- The cached prediction and its on-screen view ---------------------------------------------------------------
@@ -1628,7 +1628,7 @@ class SeeAnythingTool(Tool):
             confirm = "refine with SAM and confirm" if self._sam_enabled() else "confirm"
             message += (f". Space: {confirm}"
                         "  |  Draw another box to find more"
-                        "  |  Backspace: discard.")
+                        "  |  Backspace or Esc: discard.")
         elif dropped:
             message += ". Try lowering the thresholds, or draw another example box."
         else:

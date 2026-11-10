@@ -1,8 +1,6 @@
 from PyQt5.QtCore import Qt, QObject, QEvent
-from PyQt5.QtWidgets import (QApplication, QMessageBox, QLineEdit, QAbstractSpinBox,
+from PyQt5.QtWidgets import (QApplication, QLineEdit, QAbstractSpinBox,
                              QPlainTextEdit, QTextEdit, QComboBox)
-
-from coralnet_toolbox.Icons import get_window_icon
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -338,10 +336,15 @@ class GlobalEventFilter(QObject):
                     self.main_window.save_project_as()
                     return True
 
-                # Handle Escape key for exiting program
-                if event.key() == Qt.Key_Escape:
-                    self.show_exit_confirmation_dialog()
-                    return True
+                # Esc reaches the Select tool's Cut subtool only (it is driven from
+                # here, not by Qt). Every other tool gets Esc through Qt as usual.
+                if event.key() == Qt.Key_Escape and not event.modifiers():
+                    if not self._is_typing() and self.annotation_window.selected_tool == "select":
+                        select_tool = self.annotation_window.tools.get("select")
+                        subtool = getattr(select_tool, "active_subtool", None)
+                        if subtool is not None and subtool is getattr(select_tool, "cut_subtool", None):
+                            subtool.keyPressEvent(event)
+                            return True
 
             # Return False for other events to allow them to be processed by the target object
             return False
@@ -350,19 +353,3 @@ class GlobalEventFilter(QObject):
             import traceback
             traceback.print_exc()
             return False
-    
-    def show_exit_confirmation_dialog(self):
-        """Show a confirmation dialog when the user attempts to exit the application."""
-        # Create the message box
-        msg_box = QMessageBox()
-        msg_box.setWindowTitle('Confirm Exit')
-        msg_box.setText('Are you sure you want to exit?')
-        msg_box.setIcon(QMessageBox.Question)
-        
-        # Set the custom icon
-        msg_box.setWindowIcon(get_window_icon("coralnet.svg"))
-        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        msg_box.setDefaultButton(QMessageBox.No)
-        reply = msg_box.exec_()
-        if reply == QMessageBox.Yes:
-            QApplication.quit()

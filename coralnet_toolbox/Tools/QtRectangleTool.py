@@ -26,7 +26,7 @@ class RectangleTool(Tool):
     def status_hint(self):
         """Say whether the next click starts or finishes a rectangle."""
         if self.drawing_continuous:
-            return "Left click to place the opposite corner  |  Backspace: cancel it"
+            return "Left click to place the opposite corner  |  Backspace or Esc: cancel it"
         return "Left click to set a corner, move, then left click again to finish"
 
     def deactivate(self):
@@ -102,7 +102,7 @@ class RectangleTool(Tool):
                 self.clear_crosshair()
 
     def keyPressEvent(self, event: QKeyEvent):
-        if event.key() == Qt.Key_Backspace:
+        if event.key() in (Qt.Key_Backspace, Qt.Key_Escape):
             # Cancel the current annotation
             self.cancel_annotation()
             self.report_state()

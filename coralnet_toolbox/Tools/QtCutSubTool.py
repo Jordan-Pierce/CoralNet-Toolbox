@@ -129,8 +129,8 @@ class CutSubTool(SubTool):
             self.parent_tool.report_state()
             return
 
-        # Handle Backspace to clear the current cutting line but stay in cutting mode
-        if event.key() == Qt.Key_Backspace:
+        # Handle Backspace or Esc to clear the current cutting line but stay in cutting mode
+        if event.key() in (Qt.Key_Backspace, Qt.Key_Escape):
             self._clear_cutting_line()
             self.parent_tool.report_state()
             return

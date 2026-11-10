@@ -119,11 +119,11 @@ class SAMTool(Tool):
         too. Mirrors SeeAnythingTool.status_hint so the two tools read alike.
         """
         if self.creating_working_area:
-            message = "Space: finish the work area  |  Backspace: cancel it"
+            message = "Space: finish the work area  |  Backspace or Esc: cancel it"
         elif not self.working_area:
             message = "Space: use the current view as the work area, or drag one out"
         elif self.drawing_rectangle:
-            message = "Drag to size the box, left click to end  |  Backspace: cancel it"
+            message = "Drag to size the box, left click to end  |  Backspace or Esc: cancel it"
         elif self.has_active_prompts:
             positive = len(self.positive_points)
             negative = len(self.negative_points)
@@ -137,7 +137,7 @@ class SAMTool(Tool):
             prompts = ", ".join(parts) if parts else "the current prompts"
             message = (f"Space: accept the preview from {prompts}"
                        "  |  Ctrl+click to add positive, Ctrl+right-click negative"
-                       "  |  Backspace: clear the prompts")
+                       "  |  Backspace or Esc: clear the prompts")
         else:
             # The box is two separate clicks with a drag between them, not a
             # double click and not a press-drag-release.
@@ -819,7 +819,7 @@ class SAMTool(Tool):
             self.annotation_window.scene.update()
             self.report_state()
 
-        elif event.key() == Qt.Key_Backspace:
+        elif event.key() in (Qt.Key_Backspace, Qt.Key_Escape):
             # If creating working area, cancel it
             if self.creating_working_area:
                 self.cancel_working_area_creation()

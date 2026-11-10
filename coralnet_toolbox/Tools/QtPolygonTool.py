@@ -52,7 +52,7 @@ class PolygonTool(Tool):
         if self.drawing_continuous:
             return ("Move to trace, left click to close the polygon"
                     "  |  Hold Ctrl and left click for straight segments"
-                    "  |  Backspace: cancel it")
+                    "  |  Backspace or Esc: cancel it")
         return "Left click to start a polygon, then move to trace its outline"
 
     def deactivate(self):
@@ -127,7 +127,7 @@ class PolygonTool(Tool):
 
     def keyPressEvent(self, event: QKeyEvent):
         """Handles key press events for canceling annotation or toggling straight line mode."""
-        if event.key() == Qt.Key_Backspace:
+        if event.key() in (Qt.Key_Backspace, Qt.Key_Escape):
             self.cancel_annotation()
             self.report_state()
         elif event.key() == Qt.Key_Control:

@@ -112,7 +112,7 @@ class SelectTool(Tool):
             if self.cut_subtool.drawing_in_progress:
                 return ("Move to draw the cut, left click to cut"
                         "  |  Hold Ctrl and left click for straight segments"
-                        "  |  Backspace: clear the line"
+                        "  |  Backspace or Esc: clear the line"
                         "  |  Ctrl+X: leave cut mode")
             return "Cut mode: left click to start the cut line  |  Ctrl+X: leave cut mode"
 
