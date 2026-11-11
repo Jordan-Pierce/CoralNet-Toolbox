@@ -417,6 +417,8 @@ class AnnotationItemDelegate(QtWidgets.QStyledItemDelegate):
                                     pass
                                 try:
                                     viewer.annotation_window.select_annotation(ann, quiet_mode=True)
+                                    # quiet_mode skips the Label Window; highlight only
+                                    viewer.main_window.label_window.set_selected_label(ann.label.id)
                                 except Exception:
                                     pass
                                 try:
