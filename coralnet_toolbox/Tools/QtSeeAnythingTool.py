@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import QGraphicsRectItem, QApplication
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.Annotations.QtAnnotation import RenderMode
 from coralnet_toolbox.QtActions import MaskEditAction
+from coralnet_toolbox.QtActions import ToolActionStack
 
 from coralnet_toolbox.Results import ResultsProcessor
 from coralnet_toolbox.Results import MapResults
@@ -175,6 +176,11 @@ class SeeAnythingTool(Tool):
         # (screen position, modifiers) of a right-button press awaiting its release
         self._right_press = None
         self._signals_connected = False
+
+        # Prompt boxes and the work area are undoable on their own stack, which
+        # Ctrl+Z tries before the annotation window's. Cleared when the work
+        # area goes and when detections are confirmed.
+        self.tool_stack = ToolActionStack()
 
     def activate(self):
         """
@@ -439,6 +445,8 @@ class SeeAnythingTool(Tool):
         self.see_anything_dialog.set_image(self.work_area_image, self.image_path)
         self._ensure_sam_image()
 
+        self._record_working_area()
+
         self.annotation_window.setCursor(Qt.CrossCursor)
         self.annotation_window.scene.update()
         
@@ -497,9 +505,22 @@ class SeeAnythingTool(Tool):
         # while the wait cursor is still up
         self.see_anything_dialog.set_image(self.work_area_image, self.image_path)
         self._ensure_sam_image()
+
+        self._record_working_area()
         
         self.annotation_window.setCursor(Qt.CrossCursor)
         self.annotation_window.scene.update()
+
+    def clear_image(self):
+        """Drop the work area's pixels once the work area itself is gone.
+
+        Called from cancel_working_area. Without it the tool holds a
+        viewport-sized BGR array for as long as it is selected, and
+        _ensure_sam_image keeps answering that there is something to prompt
+        against after the work area it belonged to has been torn down.
+        """
+        self.image_path = None
+        self.work_area_image = None
 
     def display_working_area_preview(self, current_pos):
         """
@@ -699,6 +720,9 @@ class SeeAnythingTool(Tool):
         if not self.working_area.contains_point(scene_pos):
             return
 
+        # Snapshotted before the click, so finishing a box is one undo step.
+        before = self.prompt_state()
+
         if event.button() == Qt.LeftButton and not self.drawing_rectangle:
             # Get the start point
             self.start_point = scene_pos
@@ -722,8 +746,74 @@ class SeeAnythingTool(Tool):
             self.start_point = None
             self.end_point = None
 
+            self._record_prompt_change(before, "drawing a prompt box")
+
         self.annotation_window.scene.update()
         self.report_state()
+
+    def prompt_state(self):
+        """Snapshot the prompt boxes drawn on this work area.
+
+        Only the boxes. The prompt session -- phrases, example crops -- outlives
+        the work area and is shared with the dialog's panel, so it is not this
+        stack's to rewind; clear it with Ctrl+T or Ctrl+Shift+Backspace.
+        """
+        return {
+            'rectangles': [np.array(rectangle, copy=True) for rectangle in self.rectangles],
+            'rectangles_processed': self.rectangles_processed,
+            'session_processed': self.session_processed,
+        }
+
+    def restore_prompt_state(self, state):
+        """Put the prompt boxes back as a snapshot had them.
+
+        Unconfirmed detections are dropped rather than restored: they are a
+        prediction from the boxes being rewound, so leaving them on screen would
+        show results for a prompt that is no longer there. Press Space to run
+        the restored boxes again.
+        """
+        if not self.working_area:
+            return
+
+        self.clear_all_rectangles()
+        self.clear_annotations()
+
+        self.rectangles = [np.array(rectangle, copy=True) for rectangle in state['rectangles']]
+        self.rectangles_processed = bool(state['rectangles_processed'])
+        self.session_processed = bool(state['session_processed'])
+        self.session_found_nothing = False
+        self._rebuild_rectangle_graphics()
+
+        self.annotation_window.scene.update()
+        self.report_state()
+
+    def _rebuild_rectangle_graphics(self):
+        """Redraw the prompt boxes from their stored coordinates.
+
+        The boxes are kept relative to the work area, so this is also what puts
+        them back in scene coordinates; they are rebuilt rather than stashed so
+        a restored box is styled by the label selected now, as a newly drawn one
+        would be.
+        """
+        if not self.working_area or not self.rectangles:
+            return
+
+        label = self.annotation_window.selected_label
+        color = QColor(label.color) if label is not None else QColor(Qt.white)
+        origin = self.working_area.rect.topLeft()
+
+        for rectangle in self.rectangles:
+            x1, y1, x2, y2 = (float(value) for value in rectangle[:4])
+            rect = QRectF(QPointF(x1 + origin.x(), y1 + origin.y()),
+                          QPointF(x2 + origin.x(), y2 + origin.y()))
+            item = QGraphicsRectItem(rect)
+            pen = QPen(color)
+            pen.setCosmetic(True)
+            pen.setWidth(2)
+            pen.setStyle(Qt.DashLine)
+            item.setPen(pen)
+            self.annotation_window.scene.addItem(item)
+            self.rectangle_items.append(item)
 
     def mouseMoveEvent(self, event: QMouseEvent):
         """
@@ -888,6 +978,12 @@ class SeeAnythingTool(Tool):
             # were Space -- which confirms -- or switching tools or images.)
             # Clear the phrase with an empty Ctrl+T, or the whole session with
             # Ctrl+Shift+Backspace.
+            # Clearing boxes is a step like drawing them, so it is recorded too.
+            # Closing the work area is not: that drops the stack, so there is
+            # nothing left to record onto.
+            before = self.prompt_state()
+            change = None
+
             if self.drawing_rectangle:
                 self.cancel_rectangle_drawing()
             # If we have a working area and accumulated annotations, clear them
@@ -895,10 +991,14 @@ class SeeAnythingTool(Tool):
                 self.clear_annotations()  # Clears unconfirmed annotations
                 # Cleared detections mean the prompt can be tried again.
                 self.session_processed = False
+                change = "clearing the detections"
             elif self.rectangles:
                 self.clear_all_rectangles()  # Clears user input rectangles
+                change = "clearing the prompt boxes"
             elif self.working_area:
                 self.cancel_working_area()
+
+            self._record_prompt_change(before, change)
 
         self.annotation_window.scene.update()
         self.report_state()
@@ -916,6 +1016,9 @@ class SeeAnythingTool(Tool):
         """Forget every example in the prompt session (Ctrl+Shift+Backspace)."""
         if self.see_anything_dialog is not None and hasattr(self.see_anything_dialog, 'clear_session'):
             self.see_anything_dialog.clear_session()
+        # Recorded steps were taken against the session that just went away.
+        if self.tool_stack is not None:
+            self.tool_stack.clear()
         self.text_prompt = None
         self.session_processed = False
         self.session_found_nothing = False
@@ -2127,8 +2230,13 @@ class SeeAnythingTool(Tool):
             self.working_area.remove_from_scene()
             self.working_area = None
 
-        self.image_path = None
-        self.work_area_image = None
+        self.clear_image()
+
+        # Every step recorded described this work area. Confirming detections
+        # closes the work area too, so this is also what hands the story to the
+        # annotation window's stack once the annotations exist.
+        if self.tool_stack is not None:
+            self.tool_stack.clear()
 
         # Clear all rectangles when canceling the working area
         self.clear_all_rectangles()

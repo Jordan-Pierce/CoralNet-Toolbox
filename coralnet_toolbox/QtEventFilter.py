@@ -86,6 +86,28 @@ class GlobalEventFilter(QObject):
             self._hotkey_busy = False
         return True
 
+    def _undo_redo(self, redo: bool):
+        """Step the active tool's own stack if it has one, else the 2D stack.
+
+        One way, by design: a tool's unfinished work -- prompts, a preview, a
+        work area -- unwinds before the annotation edits that came before it,
+        and nothing from a tool's stack is ever pushed onto the main one.
+        """
+        tool = None
+        selected = self.annotation_window.selected_tool
+        if selected:
+            tool = self.annotation_window.tools.get(selected)
+
+        if tool is not None:
+            try:
+                handled = tool.tool_redo() if redo else tool.tool_undo()
+            except Exception:
+                handled = False
+            if handled:
+                return
+
+        self._undo_redo_2d(redo)
+
     def _undo_redo_2d(self, redo: bool):
         """Run a 2D undo/redo and say what it did.
 
@@ -248,7 +270,7 @@ class GlobalEventFilter(QObject):
                                 tool.stop_current_drawing()
                                 return True
 
-                            return self._guarded(self._undo_redo_2d, False)
+                            return self._guarded(self._undo_redo, False)
 
                 # Handle redo hotkey (Ctrl+Shift+Z)
                 if event.key() == Qt.Key_Z and event.modifiers() == (Qt.ControlModifier | Qt.ShiftModifier):
@@ -263,7 +285,7 @@ class GlobalEventFilter(QObject):
                             tool.stop_current_drawing()
                             return True
 
-                        return self._guarded(self._undo_redo_2d, True)
+                        return self._guarded(self._undo_redo, True)
 
                 # Delete (backspace or delete key) selected annotations when select tool is active
                 if event.key() == Qt.Key_Delete or event.key() == Qt.Key_Backspace:

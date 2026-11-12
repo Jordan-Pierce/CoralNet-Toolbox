@@ -94,7 +94,19 @@ class Classify(Base):
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
-        # Point Safe Augmentations
+    def setup_model_layout(self):
+        """Model Selection, then the augmentation switch directly beneath it.
+
+        Augmentation is a statement about how the chosen model is trained rather
+        than about the dataset, so it belongs under Model Selection. The base
+        class calls this after the dataset and output groups, which is what puts
+        the switch at the bottom of the left column.
+        """
+        super().setup_model_layout()
+        self.setup_augmentation_layout()
+
+    def setup_augmentation_layout(self):
+        """Point Safe Augmentations, at the bottom of the left column."""
         aug_box = QGroupBox("Augmentation")
         aug_layout = QFormLayout()
         self.point_safe_combo = QComboBox()

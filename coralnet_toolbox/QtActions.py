@@ -779,6 +779,119 @@ class MaskEditAction(Action):
         self._apply(self._before_value_chunks)
 
 
+class ToolAction(Action):
+    """Base for a step a tool took that is not yet an annotation.
+
+    Prompts, a preview, a work area: things that exist only inside a tool's
+    current session and change nothing in the data model. They belong on the
+    tool's own stack rather than the annotation window's, because an edit that
+    never reached the model must not sit between two that did.
+    """
+
+    #: A terminal action cannot be redone. Undoing it tears the tool's session
+    #: down, so every step recorded under it describes something that is gone.
+    terminal = False
+
+
+class WorkAreaAction(ToolAction):
+    """A tool's work area being opened. Undo closes it; there is no redo.
+
+    One way on purpose: reopening would have to re-read the pixels and re-encode
+    them, and the model's features are the one thing on this stack that cannot
+    be rebuilt from what the action holds.
+    """
+
+    terminal = True
+
+    def __init__(self, tool, description: str = "opening the work area"):
+        self.tool = tool
+        self.description = description
+
+    def do(self):
+        # Recorded after the fact: the work area is already open when this is
+        # pushed, and `terminal` means it is never replayed.
+        pass
+
+    def undo(self):
+        self.tool.cancel_working_area()
+
+
+class PromptStateAction(ToolAction):
+    """A change to the prompts a tool holds, as a before and after snapshot.
+
+    Snapshots rather than one action per kind of prompt, because a tool's
+    prompts are several lists that are mutated in place -- points, a box -- and
+    one of them changing is not independent of the rest. The tool is handed a
+    snapshot and rebuilds its graphics and its preview from it; the preview
+    itself is never stored, since it is a prediction from the prompts and
+    keeping one mask per undo step would hold a GPU allocation per step.
+    """
+
+    def __init__(self, tool, before, after, description: str = "adding a prompt"):
+        self.tool = tool
+        self.before = before
+        self.after = after
+        self.description = description
+
+    def do(self):
+        self.tool.restore_prompt_state(self.after)
+
+    def undo(self):
+        self.tool.restore_prompt_state(self.before)
+
+
+class ToolActionStack:
+    """A tool's own undo/redo stack, kept apart from the annotation window's.
+
+    The interface to the main stack is one way: nothing recorded here is ever
+    pushed onto it, and the hotkey tries this stack first, so unfinished work
+    unwinds before the edits that came before it. A tool clears this the moment
+    its work becomes an annotation, which is where the main stack picks the
+    story up.
+    """
+
+    def __init__(self):
+        self.undo_stack = []
+        self.redo_stack = []
+
+    def push(self, action: Action):
+        self.undo_stack.append(action)
+        self.redo_stack.clear()
+
+    def clear(self):
+        self.undo_stack.clear()
+        self.redo_stack.clear()
+
+    def can_undo(self):
+        return bool(self.undo_stack)
+
+    def can_redo(self):
+        return bool(self.redo_stack)
+
+    def undo(self):
+        """Reverse the tool's most recent step. Returns it, or None."""
+        if not self.undo_stack:
+            return None
+        action = self.undo_stack.pop()
+        action.undo()
+        if getattr(action, 'terminal', False):
+            # The session it belonged to is gone, so nothing beneath it on
+            # either stack still describes anything that exists.
+            self.clear()
+        else:
+            self.redo_stack.append(action)
+        return action
+
+    def redo(self):
+        """Re-apply the tool's most recently undone step. Returns it, or None."""
+        if not self.redo_stack:
+            return None
+        action = self.redo_stack.pop()
+        action.do()
+        self.undo_stack.append(action)
+        return action
+
+
 class ActionStack:
     """Simple undo/redo stack for Action objects."""
 
@@ -874,5 +987,9 @@ __all__ = [
     "SubtractAnnotationsAction",
     "AnnotationGeometryEditAction",
     "MaskEditAction",
+    "ToolAction",
+    "ToolActionStack",
+    "WorkAreaAction",
+    "PromptStateAction",
 ]
 

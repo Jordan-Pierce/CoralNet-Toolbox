@@ -51,6 +51,8 @@ from coralnet_toolbox.Features.LabelPropagation import (
 
 from coralnet_toolbox.WorkArea import WorkArea
 
+from coralnet_toolbox.QtActions import ToolActionStack
+
 from coralnet_toolbox.utilities import work_area_to_numpy
 from coralnet_toolbox.utilities import polygonize_mask_with_holes
 from coralnet_toolbox.paths import feature_cache_path
@@ -83,6 +85,11 @@ class FeatureSelectTool(Tool):
         self._raw_engine = None          # multi-class mode (raw features)
         self.feat_h = None               # crop feature grid rows
         self.feat_w = None               # crop feature grid cols
+
+        # Prototypes and the work area are undoable on their own stack, which
+        # Ctrl+Z tries before the annotation window's. Cleared when the work
+        # area goes, when the selection is committed, and when the mode changes.
+        self.tool_stack = ToolActionStack()
 
         # Committed prototypes, as flat crop-grid element ids (gy * feat_w + gx).
         self.positive_ids = []
@@ -326,6 +333,10 @@ class FeatureSelectTool(Tool):
         self._apply_mode_colormap()
         # The hint names the mode, so it doubles as the switch confirmation.
         self.report_state()
+        # Prototypes recorded in the mode just left do not describe this one.
+        if self.tool_stack is not None:
+            self.tool_stack.clear()
+
         # If a work area is already up, seed prototypes from existing annotations
         # right away rather than waiting for the next work-area creation.
         if self.mode == "multiclass":
@@ -463,6 +474,10 @@ class FeatureSelectTool(Tool):
             # overlay (defaults to Plasma, hides the Z-channel). Deferred to here
             # so selecting the tool button alone doesn't change the dropdown.
             self._engage_colormap_controls()
+            # Recorded once the query is armed, so a work area that failed to
+            # extract features never lands on the stack. Before the seeding
+            # below, which is prototypes rather than a step of its own.
+            self._record_working_area()
             self.report_state()
             # Multi-class: seed prototypes from existing annotations so the mask
             # preview appears immediately (Backspace clears it).
@@ -605,6 +620,9 @@ class FeatureSelectTool(Tool):
 
     def cancel_working_area(self):
         """Tear down the work area, query, prompts, and heatmap."""
+        # Every step recorded described this work area.
+        if self.tool_stack is not None:
+            self.tool_stack.clear()
         self.clear_prompts()
         self.annotation_window.clear_feature_overlay()
         self.annotation_window.clear_label_overlay()
@@ -614,10 +632,20 @@ class FeatureSelectTool(Tool):
             except Exception:
                 pass
             self.working_area = None
+        self.clear_image()
+        self.annotation_window.scene.update()
+
+    def clear_image(self):
+        """Drop the work area's features once the work area itself is gone.
+
+        Called from cancel_working_area. The crop feature map is the largest
+        thing this tool holds -- [h, w, C] floats over the whole work area --
+        and the engines built on it are meaningless without the grid they were
+        fitted to, so the grid shape goes with them.
+        """
         self.query_engine = None
         self._crop_fmap = self._raw_engine = None
         self.feat_h = self.feat_w = None
-        self.annotation_window.scene.update()
 
     # ==================== Grid mapping ====================
 
@@ -1151,18 +1179,31 @@ class FeatureSelectTool(Tool):
             element_id = self.pixel_to_cell(scene_pos.x(), scene_pos.y())
             if element_id is None:
                 return
+            # One undo step per prototype, in either mode. The multi-class
+            # right-click already removed the last prototype of the selected
+            # label; routing it through the stack keeps that as the one undo
+            # rather than adding a second mechanism beside it.
+            before = self.prompt_state()
             if self.mode == "multiclass":
                 self._handle_multiclass_click(event, scene_pos, element_id)
+                self._record_prompt_change(
+                    before,
+                    "adding a class prototype" if event.button() == Qt.LeftButton
+                    else "removing a class prototype")
                 self._auto_suggest()
                 self.report_state()
                 return
+            change = None
             if event.button() == Qt.LeftButton:
                 self.positive_ids.append(element_id)
                 self._add_point_graphic(scene_pos, Qt.green)
+                change = "adding a positive prototype"
             elif event.button() == Qt.RightButton:
                 self.negative_ids.append(element_id)
                 self._add_point_graphic(scene_pos, Qt.red)
+                change = "adding a negative prototype"
             self.update_heatmap()
+            self._record_prompt_change(before, change)
             self._auto_suggest()
             self.report_state()
             return
@@ -1311,6 +1352,10 @@ class FeatureSelectTool(Tool):
                 self.set_working_area()
             elif self._has_prompts():
                 self.commit_selection(replace_patches=bool(event.modifiers() & Qt.ShiftModifier))
+                # The selection is an annotation now and the annotation window's
+                # stack owns it from here.
+                if self.tool_stack is not None:
+                    self.tool_stack.clear()
             else:
                 self.cancel_working_area()
                 self.report_state()
@@ -1319,9 +1364,11 @@ class FeatureSelectTool(Tool):
             if self.creating_working_area:
                 self.cancel_working_area_creation()
             elif self._has_prompts():
+                before = self.prompt_state()
                 self.clear_prompts()
                 self.annotation_window.clear_feature_overlay()
                 self.annotation_window.clear_label_overlay()
+                self._record_prompt_change(before, "clearing the prototypes")
             else:
                 self.cancel_working_area()
             self.report_state()
@@ -1619,6 +1666,79 @@ class FeatureSelectTool(Tool):
 
         if added == 0:
             self._status("Feature Select: no class blob large enough to polygonize.")
+
+    # ==================== Undo / redo ====================
+
+    def prompt_state(self):
+        """Snapshot the prototypes in the active mode.
+
+        Prototypes are flat crop-grid element ids, so a snapshot is a handful of
+        integers however large the work area is -- the dots and the heatmap are
+        both derived from them and are rebuilt rather than stored.
+        """
+        return {
+            'positive_ids': list(self.positive_ids),
+            'negative_ids': list(self.negative_ids),
+            'class_prototypes': {key: list(value) for key, value in self.class_prototypes.items()},
+            'class_labels': dict(self.class_labels),
+            'class_colors': dict(self.class_colors),
+            'threshold_active': self.threshold_active,
+        }
+
+    def restore_prompt_state(self, state):
+        """Put the prototypes back as a snapshot had them and rescore.
+
+        Dots are rebuilt from the element ids, and the heatmap or label overlay
+        is recomputed, which is the only honest way to show a restored set: the
+        scores are a function of the prototypes, not something stored with them.
+        """
+        if self.working_area is None or not self.feat_w:
+            return
+
+        for item in self.point_graphics:
+            try:
+                self.annotation_window.scene.removeItem(item)
+            except Exception:
+                pass
+        self.point_graphics = []
+        self.class_point_graphics = {}
+        self._clear_suggestion()
+
+        self.positive_ids = list(state['positive_ids'])
+        self.negative_ids = list(state['negative_ids'])
+        self.class_prototypes = {key: list(value) for key, value in state['class_prototypes'].items()}
+        self.class_labels = dict(state['class_labels'])
+        self.class_colors = dict(state['class_colors'])
+        self.threshold_active = bool(state['threshold_active'])
+
+        for element_id, color in ([(i, Qt.green) for i in self.positive_ids]
+                                  + [(i, Qt.red) for i in self.negative_ids]):
+            self._add_point_graphic(self._element_to_scene_center(element_id), color)
+
+        for label_id, element_ids in self.class_prototypes.items():
+            label = self.class_labels.get(label_id)
+            if label is None:
+                continue
+            for element_id in element_ids:
+                self._add_class_point_graphic(self._element_to_scene_center(element_id), label)
+
+        if self._has_prompts():
+            self.update_heatmap()
+        else:
+            # The engine keeps the query it was last given, so a restore back to
+            # nothing has to say so or the overlay would survive its prototypes.
+            if self.query_engine is not None:
+                self.query_engine.clear()
+            self.annotation_window.clear_feature_overlay()
+            self.annotation_window.clear_label_overlay()
+
+        self.annotation_window.scene.update()
+        self.report_state()
+
+    def _element_to_scene_center(self, element_id):
+        """Scene centre of a flat crop-grid element id (the inverse of the id)."""
+        gy, gx = divmod(int(element_id), int(self.feat_w))
+        return self._cell_to_scene_center(gx, gy)
 
     # ==================== Cleanup ====================
 
