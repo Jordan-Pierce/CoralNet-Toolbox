@@ -109,4 +109,4 @@ class Classify(Base):
         layout.addRow("Workers:", self.workers_spinbox)        
         
         group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
+        self.right_layout.addWidget(group_box)

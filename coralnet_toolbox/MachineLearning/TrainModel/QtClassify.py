@@ -13,13 +13,13 @@ from coralnet_toolbox.pyspacer import CORALNET_WEIGHTS_NAME
 
 
 class Classify(Base):
-    # Largest Ultralytics `scale` that keeps the patch centre, where the point
-    # label sits, inside every training crop. RandomResizedCrop takes an area of
-    # (1 - scale, 1) of the patch at an aspect ratio of 3/4 to 4/3, so at 0.5 the
-    # shortest crop side is sqrt(0.5 * 3/4) = 0.61 of the patch and the centre
-    # stays at least 18% in from the crop edge, enough to survive a RandAugment
-    # translate (about 14%). It is also the Ultralytics default.
-    MAX_CROP_SCALE = 0.5
+    # Ultralytics augmentations that can cut the labeled point out of the patch,
+    # forced off under Point Safe. `scale` 0 makes RandomResizedCrop's area
+    # (1 - scale, 1) = (1, 1), i.e. no random crop. `auto_augment` None skips
+    # RandAugment, which includes translate, shear and cutout.
+    POINT_SAFE_SCALE = 0.0
+    POINT_SAFE_ERASING = 0.0
+    POINT_SAFE_AUTO_AUGMENT = None
 
     def __init__(self, main_window, parent=None):
         super().__init__(main_window, parent)
@@ -33,27 +33,25 @@ class Classify(Base):
     def get_parameters(self):
         """Training parameters; with Point Safe on, minus augmentations that can cut away the label.
 
-        A patch is labeled by its center point. Random erasing can blank it, and
-        a strong random crop (`scale`) can crop it out, so erasing is zeroed and
-        scale capped. Forced, since an imported args.yaml brings erasing back.
+        A patch is labeled by its center point. Random erasing (`erasing`) can
+        blank it, a random crop (`scale`) can crop it out, and RandAugment
+        (`auto_augment`) includes translate, shear and cutout. All three are
+        forced off. Forced, since an imported args.yaml or a custom parameter
+        can bring them back.
         """
         params = super().get_parameters()
 
         if not self.point_safe_enabled():
             return params
 
-        erasing = params.get('erasing')
-        if isinstance(erasing, (int, float)) and erasing > 0:
-            print(f"Note: erasing={erasing} ignored; random erasing can cover "
-                  f"the point each patch is labeled by.")
-        params['erasing'] = 0.0
-
-        scale = params.get('scale', self.MAX_CROP_SCALE)
-        if not isinstance(scale, (int, float)) or scale > self.MAX_CROP_SCALE:
-            print(f"Note: scale={scale} capped at {self.MAX_CROP_SCALE}; a "
-                  f"stronger random crop can cut the labeled point out of the patch.")
-            scale = self.MAX_CROP_SCALE
-        params['scale'] = scale
+        for key, forced in (('erasing', self.POINT_SAFE_ERASING),
+                            ('scale', self.POINT_SAFE_SCALE),
+                            ('auto_augment', self.POINT_SAFE_AUTO_AUGMENT)):
+            value = params.get(key)
+            if value != forced:
+                print(f"Note: {key}={value} overridden to {forced}; this augmentation can "
+                      f"move or cover the point each patch is labeled by.")
+            params[key] = forced
 
         return params
 
@@ -94,14 +92,26 @@ class Classify(Base):
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
 
-        # Point Safe Augmentations
+    def setup_model_layout(self):
+        """Model Selection, then the augmentation switch directly beneath it.
+
+        Augmentation is a statement about how the chosen model is trained rather
+        than about the dataset, so it belongs under Model Selection. The base
+        class calls this after the dataset and output groups, which is what puts
+        the switch at the bottom of the left column.
+        """
+        super().setup_model_layout()
+        self.setup_augmentation_layout()
+
+    def setup_augmentation_layout(self):
+        """Point Safe Augmentations, at the bottom of the left column."""
         aug_box = QGroupBox("Augmentation")
         aug_layout = QFormLayout()
         self.point_safe_combo = QComboBox()
         self.point_safe_combo.addItems(["True", "False"])
         self.point_safe_combo.setToolTip(
             "Keep the patch's center point, which is its label, in view.\n"
-            f"Turns off random erasing and caps random crop at scale {self.MAX_CROP_SCALE}.")
+            "Turns off random erasing, random crop and RandAugment (auto_augment).")
         aug_layout.addRow("Point Safe Augmentations:", self.point_safe_combo)
         aug_box.setLayout(aug_layout)
         self.layout.addWidget(aug_box)
