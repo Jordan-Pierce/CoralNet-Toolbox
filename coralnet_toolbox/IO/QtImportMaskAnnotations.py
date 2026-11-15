@@ -79,7 +79,11 @@ class ImportMaskAnnotations(QDialog):
 
         self.setWindowIcon(get_window_icon("mask.svg"))
         self.setWindowTitle("Import Mask Annotations")
-        self.resize(1100, 500)
+        # 500 was shorter than the right column's own contents wanted once the
+        # theme's padding is counted, and the mapping table is the only item
+        # there that can give -- so it was the one that shrank, to below the
+        # height of four rows.
+        self.resize(1100, 720)
 
         # State variables
         self.valid_mask_pairs = []  # List of (mask_path, raster) tuples
@@ -210,10 +214,15 @@ class ImportMaskAnnotations(QDialog):
         header.setSectionResizeMode(1, QHeaderView.Stretch)
         
         self.mapping_table.hide()
-        layout.addWidget(self.mapping_table)
+        # The one item in the column that should absorb spare height, and the
+        # one that must not be squeezed to pay for the others: a floor of eight
+        # rows or so, and the stretch factor so surplus lands here rather than
+        # being spread over rows that cannot use it.
+        self.mapping_table.setMinimumHeight(260)
+        layout.addWidget(self.mapping_table, 1)
 
         groupbox.setLayout(layout)
-        parent_layout.addWidget(groupbox)
+        parent_layout.addWidget(groupbox, 1)
 
     def setup_buttons_layout(self, parent_layout=None):
         """Set up the bottom action buttons."""

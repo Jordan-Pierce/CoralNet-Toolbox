@@ -3584,6 +3584,8 @@ class EmbeddingViewerWindow(QWidget):
                             self.main_window.image_window.open_image(annotation.image_path)
                         if hasattr(self.annotation_window, 'select_annotation'):
                             self.annotation_window.select_annotation(annotation, quiet_mode=True)
+                            # quiet_mode skips the Label Window; highlight only
+                            self.main_window.label_window.set_selected_label(annotation.label.id)
                         zoom = getattr(self.annotation_window, 'center_and_zoom_on_annotation', None)
                         if zoom is None:
                             zoom = getattr(self.annotation_window, 'center_on_annotation', None)

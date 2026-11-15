@@ -8,6 +8,7 @@ from PyQt5.QtWidgets import QGraphicsEllipseItem, QGraphicsRectItem, QApplicatio
 from coralnet_toolbox.Tools.QtTool import Tool
 from coralnet_toolbox.Annotations.QtAnnotation import RenderMode
 from coralnet_toolbox.QtActions import MaskEditAction
+from coralnet_toolbox.QtActions import ToolActionStack
 
 from coralnet_toolbox.Annotations.QtRectangleAnnotation import RectangleAnnotation
 from coralnet_toolbox.Annotations.QtPolygonAnnotation import PolygonAnnotation
@@ -31,7 +32,13 @@ class SAMTool(Tool):
         self.annotation_window = annotation_window
         self.main_window = annotation_window.main_window
         self.sam_dialog = None
-        
+
+        # Prompts and the work area are undoable on their own stack, which the
+        # Ctrl+Z hotkey tries before the annotation window's. Cleared whenever
+        # the work area goes or a prediction becomes an annotation, so undo
+        # never reaches back past something that is now in the data model.
+        self.tool_stack = ToolActionStack()
+
         self.cursor = Qt.CrossCursor
         self.default_cursor = Qt.ArrowCursor 
 
@@ -232,6 +239,8 @@ class SAMTool(Tool):
             # features behind it would only fail again on the first hover.
             self.cancel_working_area()
 
+        self._record_working_area()
+
         self.annotation_window.setCursor(Qt.CrossCursor)
         self.annotation_window.scene.update()
 
@@ -360,6 +369,8 @@ class SAMTool(Tool):
             # Encoding failed; see set_working_area
             self.cancel_working_area()
 
+        self._record_working_area()
+
         self.annotation_window.setCursor(Qt.CrossCursor)
         self.annotation_window.scene.update()
 
@@ -461,6 +472,88 @@ class SAMTool(Tool):
         self.has_active_prompts = False
 
         self.annotation_window.scene.update()
+
+    def prompt_state(self):
+        """Snapshot every prompt in the work area.
+
+        Points are copied because the lists are mutated in place, and QPointF is
+        a value type the scene holds references to. Work-area relative, exactly
+        as the tool stores them.
+        """
+        def copy(point):
+            return QPointF(point) if point is not None else None
+
+        return {
+            'positive': [QPointF(point) for point in self.positive_points],
+            'negative': [QPointF(point) for point in self.negative_points],
+            'start_point': copy(self.start_point),
+            'end_point': copy(self.end_point),
+            'top_left': copy(self.top_left),
+            'bottom_right': copy(self.bottom_right),
+            'drawing_rectangle': self.drawing_rectangle,
+            'has_active_prompts': self.has_active_prompts,
+        }
+
+    def restore_prompt_state(self, state):
+        """Put the prompts back as a snapshot had them, and re-predict.
+
+        The preview is recomputed rather than restored: it is a prediction from
+        the prompts, and keeping a mask tensor per undo step would hold a GPU
+        allocation for every step on the stack. Point graphics are rebuilt from
+        the restored lists rather than stashed, which is also what keeps them
+        sized to the zoom they are seen at.
+        """
+        if not self.working_area:
+            return
+
+        for point in self.point_graphics:
+            self.annotation_window.scene.removeItem(point)
+        self.point_graphics = []
+        self.clear_temp_annotation()
+
+        if self.rectangle_graphics:
+            self.annotation_window.scene.removeItem(self.rectangle_graphics)
+            self.rectangle_graphics = None
+
+        self.positive_points = [QPointF(point) for point in state['positive']]
+        self.negative_points = [QPointF(point) for point in state['negative']]
+        self.start_point = state['start_point']
+        self.end_point = state['end_point']
+        self.top_left = state['top_left']
+        self.bottom_right = state['bottom_right']
+        self.drawing_rectangle = bool(state['drawing_rectangle'])
+        self.has_active_prompts = bool(state['has_active_prompts'])
+
+        # Stored relative to the work area; the graphics live in scene coords.
+        origin = self.working_area.rect.topLeft()
+        for point, color in ([(point, Qt.green) for point in self.positive_points]
+                             + [(point, Qt.red) for point in self.negative_points]):
+            scene_pos = QPointF(point.x() + origin.x(), point.y() + origin.y())
+            graphic = self._create_point_graphic(scene_pos, color)
+            self.annotation_window.scene.addItem(graphic)
+            self.point_graphics.append(graphic)
+
+        # display_rectangle redraws the box and predicts from it; with no box,
+        # whatever points are left are predicted on their own.
+        if self.start_point is not None and self.end_point is not None:
+            self.display_rectangle()
+        elif self.has_active_prompts:
+            self.create_temp_annotation()
+
+        self.annotation_window.scene.update()
+        self.report_state()
+
+    def clear_image(self):
+        """Drop the work area's pixels and the hover bookkeeping that went with them.
+
+        Called from cancel_working_area. Without it the tool keeps a
+        viewport-sized BGR array for as long as it is selected, and
+        _ensure_predictor_image keeps answering that there is something to
+        prompt against after the work area it belonged to is gone.
+        """
+        self.image = None
+        self.image_path = None
+        self.hover_pixel = None
 
     def create_temp_annotation(self, scene_pos=None):
         """
@@ -698,6 +791,11 @@ class SAMTool(Tool):
         adjusted_pos = QPointF(scene_pos.x() - working_area_top_left.x(),
                                scene_pos.y() - working_area_top_left.y())
 
+        # Snapshotted before anything moves, so whatever this click does to the
+        # prompts lands on the tool's stack as a single step.
+        before = self.prompt_state()
+        change = None
+
         # Handle ctrl+click for positive/negative points
         if event.modifiers() == Qt.ControlModifier:
             if event.button() == Qt.LeftButton:
@@ -714,6 +812,7 @@ class SAMTool(Tool):
 
                 # Update temporary annotation
                 self.create_temp_annotation(scene_pos)
+                change = "adding a positive point"
 
             elif event.button() == Qt.RightButton:
                 # Add negative point
@@ -729,6 +828,7 @@ class SAMTool(Tool):
 
                 # Update temporary annotation
                 self.create_temp_annotation(scene_pos)
+                change = "adding a negative point"
 
         # Handle regular clicks for rectangle drawing
         elif event.button() == Qt.LeftButton:
@@ -740,11 +840,15 @@ class SAMTool(Tool):
                 self.start_point = scene_pos
                 self.drawing_rectangle = True
                 self.has_active_prompts = True
+                change = "starting the box"
             else:
                 # Finish rectangle drawing
                 self.end_point = scene_pos
                 self.display_rectangle()
                 self.drawing_rectangle = False
+                change = "finishing the box"
+
+        self._record_prompt_change(before, change)
 
         self.annotation_window.scene.update()
         self.report_state()
@@ -826,15 +930,25 @@ class SAMTool(Tool):
                 self.report_state()
                 return
 
+            # Clearing prompts is a step like placing them, so it is recorded
+            # too: Ctrl+Z brings a cleared set back. Closing the work area is
+            # not -- that drops the stack, so there is nothing to record onto.
+            before = self.prompt_state()
+            change = None
+
             # If drawing rectangle, cancel it
             if self.drawing_rectangle:
                 self.cancel_rectangle_drawing()
+                change = "cancelling the box"
             # If we have active prompts, clear them
             elif self.has_active_prompts:
                 self.clear_prompt_graphics()
+                change = "clearing the prompts"
             # Otherwise cancel working area
             else:
                 self.cancel_working_area()
+
+            self._record_prompt_change(before, change)
 
             self.annotation_window.scene.update()
             self.report_state()
@@ -908,6 +1022,12 @@ class SAMTool(Tool):
 
         # Clear all temporary graphics and prompts
         self.clear_prompt_graphics()
+
+        # The prediction is an annotation now and the annotation window's stack
+        # owns it, so undoing further here would reach past something that is
+        # in the data model.
+        if self.tool_stack is not None:
+            self.tool_stack.clear()
 
     def create_annotation_from_mask(self, mask_tensor):
         """
@@ -1117,7 +1237,10 @@ class SAMTool(Tool):
         self.bottom_right = None
         self.drawing_rectangle = False
         self.has_active_prompts = False
-        self.image_path = None
-        self.image = None
+        self.clear_image()
+
+        # Every step recorded described this work area.
+        if self.tool_stack is not None:
+            self.tool_stack.clear()
 
         self.annotation_window.scene.update()

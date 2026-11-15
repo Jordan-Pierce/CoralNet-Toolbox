@@ -134,7 +134,7 @@ class Base(QDialog):
         
         self.setWindowIcon(get_window_icon("coralnet.svg"))
         self.setWindowTitle("Evaluate Model")
-        self.resize(400, 600)  # Increased height for additional parameters
+        self.resize(900, 560)
         
         self.setWindowFlags(Qt.Window |
                             Qt.WindowCloseButtonHint |
@@ -147,14 +147,34 @@ class Base(QDialog):
         self.params = {}
         self.class_mapping = {}
         
-        self.layout = QVBoxLayout(self)
-        
+        # Two columns, as the Train Model dialog is laid out: what is being
+        # evaluated on the left, the parameter list on the right. Stacked in one
+        # column this dialog wanted far more height than width.
+        main_layout = QVBoxLayout(self)
+        columns_layout = QHBoxLayout()
+
+        left_column = QVBoxLayout()
+        right_column = QVBoxLayout()
+        columns_layout.addLayout(left_column, 1)
+        columns_layout.addLayout(right_column, 1)
+        main_layout.addLayout(columns_layout, 1)
+
+        # Subclasses add their info and dataset groups to self.layout, so it has
+        # to stay the left column for them to keep working unchanged.
+        self.layout = left_column
+        self.left_layout = left_column
+        self.right_layout = right_column
+        self.main_layout = main_layout
+
         # Setup the info layout
         self.setup_info_layout()
         # Setup the dataset layout
         self.setup_dataset_layout()
         # Setup the output layout
         self.setup_output_layout()
+        # Push the left column's groups to the top; the right column carries the
+        # height, so the left one should not stretch to match it.
+        self.layout.addStretch(1)
         # Setup the parameters layout
         self.setup_parameters_layout()
         # Setup the buttons layout
@@ -288,18 +308,28 @@ class Base(QDialog):
         layout.addRow("Workers:", self.workers_spinbox)        
         
         group_box.setLayout(layout)
-        self.layout.addWidget(group_box)
+        self.right_layout.addWidget(group_box)
         
     def setup_buttons_layout(self):
-        """Setup the buttons layout."""
+        """Setup the buttons layout.
+
+        Below both columns rather than at the foot of one, so the action does
+        not read as belonging to whichever column it sits under.
+        """
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+
         self.buttons = QPushButton("OK")
         self.buttons.clicked.connect(self.accept)
         self.buttons.setToolTip("Start model evaluation with the configured parameters.\nEvaluation will run in the background.")
-        self.layout.addWidget(self.buttons)
+        button_layout.addWidget(self.buttons)
+
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.reject)
         self.cancel_button.setToolTip("Close this dialog without starting evaluation.")
-        self.layout.addWidget(self.cancel_button)
+        button_layout.addWidget(self.cancel_button)
+
+        self.main_layout.addLayout(button_layout)
 
     def browse_model_file(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Select Model File")

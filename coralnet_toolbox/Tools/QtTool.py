@@ -2,6 +2,8 @@ from PyQt5.QtCore import Qt, QPointF, QTimer
 from PyQt5.QtGui import QMouseEvent, QColor, QPen, QCursor
 from PyQt5.QtWidgets import QGraphicsLineItem
 
+from coralnet_toolbox.QtActions import PromptStateAction, WorkAreaAction
+
 
 # Z for transient tool graphics on the main scene (cut line, brush and eraser
 # cursors, box select). Anything left at the default 0 is drawn beneath the
@@ -28,8 +30,10 @@ def fine_dash_pen(color, width: float = 2.0) -> QPen:
 
 
 class Tool:
-    # How long a usage hint stays on the status bar.
-    STATUS_HINT_MSECS = 6000
+    # A tool's hint is the status bar's resting state, so it is posted with no
+    # timeout. Anything else a tool or an operation shows covers it, and
+    # MainWindow puts it back as soon as that message expires.
+    STATUS_HINT_MSECS = 0
 
     def __init__(self, annotation_window):
         self.annotation_window = annotation_window
@@ -61,6 +65,11 @@ class Tool:
         # selected label changes without the mouse moving.
         self.last_scene_pos = None
 
+        # A tool's own undo/redo stack, for steps that are not annotations yet:
+        # prompts, a preview, a work area. Tools with none leave it None and the
+        # hotkey falls through to the annotation window's stack (see tool_undo).
+        self.tool_stack = None
+
         # Crosshair settings
         self.show_crosshair = True  # Flag to toggle crosshair visibility for this tool
         self.h_crosshair_line = None
@@ -81,12 +90,18 @@ class Tool:
         return None
 
     def report_state(self):
-        """Put status_hint() on the status bar.
+        """Put status_hint() on the status bar and leave it there.
 
         Called on activation and wherever the tool changes state, so the hint
-        always describes what the next click or key press will do. Callers that
-        just showed an outcome message (an error, a count) should not call this
-        straight after, or the hint will replace it.
+        always describes what the next click or key press will do. It stays up
+        for as long as the tool is active: MainWindow watches the status bar and
+        reposts the hint whenever a timed message that covered it expires, so a
+        tool's instructions are what the user sees whenever nothing more
+        pressing is being said.
+
+        Callers that just showed an outcome message (an error, a count) should
+        still not call this straight after, or the hint replaces it at once
+        rather than after the user has read it.
         """
         if not self.active:
             return
@@ -94,7 +109,13 @@ class Tool:
         if not message:
             return
         try:
-            self.main_window.status_bar.showMessage(message, self.STATUS_HINT_MSECS)
+            self.main_window.show_tool_hint(message)
+        except AttributeError:
+            # A main window without the hint plumbing (tests, embedding).
+            try:
+                self.main_window.status_bar.showMessage(message, self.STATUS_HINT_MSECS)
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -110,6 +131,12 @@ class Tool:
 
         # Ensure crosshair is properly cleared when deactivating tool
         self.clear_crosshair()
+
+        # The hint has no timeout, so it would outlive the tool that posted it.
+        try:
+            self.main_window.clear_tool_hint()
+        except Exception:
+            pass
 
         # Stop any current drawing operation
         self.stop_current_drawing()
@@ -233,6 +260,93 @@ class Tool:
         Subclasses should override this to implement tool-specific stopping logic.
         """
         pass
+
+    def clear_image(self):
+        """Drop whatever image this tool holds for its work area.
+
+        Called wherever a work area is torn down. A tool that encodes a crop of
+        the raster holds a viewport-sized array for as long as it is selected
+        otherwise, and -- worse -- keeps reporting that there is something to
+        predict against after the work area it belonged to is gone. Tools that
+        hold no image inherit the no-op.
+        """
+        pass
+
+    def prompt_state(self):
+        """A snapshot of the prompts this tool is holding, or None.
+
+        Tools with their own stack override this and restore_prompt_state as a
+        pair; the two are what _record_prompt_change records between.
+        """
+        return None
+
+    def restore_prompt_state(self, state):
+        """Put prompts back as a snapshot had them. Overridden with prompt_state."""
+        pass
+
+    def _record_prompt_change(self, before, description):
+        """Record a prompt change on this tool's stack, if anything changed.
+
+        Called with a snapshot taken before the change and a phrase naming it.
+        Nothing is recorded when the snapshot is identical, so a click that
+        missed, or a clear with nothing to clear, does not fill the stack with
+        steps that do nothing.
+        """
+        if not description or self.tool_stack is None or before is None:
+            return
+        after = self.prompt_state()
+        if after is None or after == before:
+            return
+        self.tool_stack.push(PromptStateAction(self, before, after, description=description))
+
+    def _record_working_area(self, description="opening the work area"):
+        """Start a fresh stack on the work area that was just opened.
+
+        The previous session's steps describe a work area that no longer exists,
+        so they go. Nothing is recorded when the work area failed to open, which
+        is why this is called after the attempt rather than instead of it.
+        """
+        if self.tool_stack is None:
+            return
+        self.tool_stack.clear()
+        if getattr(self, 'working_area', None) is not None:
+            self.tool_stack.push(WorkAreaAction(self, description=description))
+
+    def tool_undo(self):
+        """Undo one of this tool's own steps.
+
+        Returns:
+            bool: True when a step was undone, so the caller leaves the
+            annotation window's stack alone. False means this tool had nothing
+            of its own pending and the 2D undo should run instead.
+        """
+        return self._run_tool_action(redo=False)
+
+    def tool_redo(self):
+        """Redo one of this tool's own steps. See tool_undo."""
+        return self._run_tool_action(redo=True)
+
+    def _run_tool_action(self, redo):
+        """Step the tool's stack and say what moved."""
+        stack = self.tool_stack
+        if stack is None:
+            return False
+        if not (stack.can_redo() if redo else stack.can_undo()):
+            return False
+
+        action = stack.redo() if redo else stack.undo()
+        if action is None:
+            return False
+
+        # Named, like the 2D undo: a prompt coming back somewhere off screen is
+        # otherwise indistinguishable from the key having done nothing. The hint
+        # returns on its own once this message expires.
+        try:
+            verb = "Redid" if redo else "Undid"
+            self.main_window.status_bar.showMessage(f"{verb} {action.label}.", 4000)
+        except Exception:
+            pass
+        return True
 
     def create_cursor_annotation(self, scene_pos: QPointF = None):
         """

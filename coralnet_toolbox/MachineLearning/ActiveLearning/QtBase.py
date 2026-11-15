@@ -791,6 +791,12 @@ class Base(QDialog):
         left.addWidget(self.create_info_group())
         left.addWidget(self.create_model_group())
         left.addWidget(self.create_parameters_group(), 1)
+        # Under the training parameters, not among them: it is a statement about
+        # the annotations rather than one more knob. Absent entirely for a task
+        # with no PU trainer.
+        pu_group = self.create_pu_group()
+        if pu_group is not None:
+            left.addWidget(pu_group)
 
         right = QVBoxLayout()
         right.addWidget(self.create_data_group(), 1)
@@ -915,10 +921,12 @@ class Base(QDialog):
         layout.addRow("Model:", model_row)
 
         self.warm_start_combo = bool_combo(
-            True,
+            False,
             "Start each round from the best weights any round has produced so far,\n"
             "which makes later rounds much cheaper. A warm round fine-tunes rather\n"
             "than retrains: no warmup, and a tenth of the learning rate.\n"
+            "Off by default, so a round trains on the full first-run schedule: a\n"
+            "fine-tune rate this low has been seen to stall a round on its own.\n"
             "False trains from the model above every round. That is not training from\n"
             "scratch: a .pt file is a COCO-pretrained checkpoint, so a cold round still\n"
             "begins with a backbone that has seen a million photographs.\n"
@@ -929,14 +937,93 @@ class Base(QDialog):
             "the round after a set aside one has new confirmations to learn from.")
         layout.addRow("Warm Start:", self.warm_start_combo)
 
-        self.free_gpu_combo = bool_combo(
-            True,
-            "Release cached GPU memory before training.\n"
-            "Deployed models are left alone -- only memory nothing is using is freed.\n"
-            "If a round still runs out of memory, it offers to retry at a smaller batch.")
-        layout.addRow("Free GPU:", self.free_gpu_combo)
-
         group_box.setLayout(layout)
+        return group_box
+
+    def create_pu_group(self):
+        """Positive-Unlabeled training, in a group of its own.
+
+        Not an Ultralytics setting: the ignore band is ours, and the worker pops
+        both of these out of the parameters before model.train() ever sees them.
+        It is a statement about the annotations rather than one more training
+        knob, so it reads better apart from Training Parameters.
+
+        Returns None for a task with no PU trainer, and the caller leaves the
+        group out: a group that can never be used is a question with no answer.
+        """
+        # Detection and instance segmentation: the ignore band masks anchors of
+        # the detection loss, and the segmentation loss is built on that same
+        # loss. Absent rather than disabled for the tasks that have no PU
+        # trainer, so it is never a question with no answer.
+        self.pu_dataset_combo = None
+        self.pu_threshold_spinbox = None
+        if self.task not in PU_TRAINERS:
+            return None
+
+        group_box = QGroupBox("Positive-Unlabeled")
+        layout = QFormLayout(group_box)
+        layout.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+
+        # Kept so update_pu_availability can restore it after a model
+        # that cannot run PU has replaced it with the reason.
+        unlabeled = "boxed" if self.task == 'detect' else "outlined"
+        self.pu_dataset_tooltip = (
+            "Train the project as a positive-unlabeled dataset: regions you have not\n"
+            f"{unlabeled} are treated as unknown rather than as guaranteed background.\n\n"
+            "This is the normal state of an Active Learning project. You confirm what\n"
+            "the round put in front of you and leave the rest of the frame alone, so\n"
+            "real objects sit unlabeled in images that count as fully reviewed. A copy\n"
+            "of the model that trails it closely marks regions it is fairly confident\n"
+            "about, and where you drew nothing those are dropped from the loss instead\n"
+            "of teaching the model that nothing is there. Your labels are never added to.\n\n"
+            "Costs a forward pass per batch and a second copy of the model in memory,\n"
+            "about 1.5 times the training time, and turns mosaic off for the epochs it\n"
+            "is active.\n\n"
+            "Off by default. The measured benefit needs a medium or larger model at a\n"
+            "large image size; at nano and image size 640, this dialog's defaults, it\n"
+            "came out level with normal training.\n"
+            "It usually lowers mAP while raising recall, because finding an\n"
+            "unlabeled object scores as a false positive. PU rounds are therefore\n"
+            "only ever compared with other PU rounds, and are marked (PU) in the\n"
+            "Rounds table.\n\n"
+            + ("All of that was measured on detection. On segmentation the band is\n"
+               "the same code masking the same classification loss, and the mask\n"
+               "loss still sees only your polygons, but the size of the trade there\n"
+               "has not been measured.\n\n" if self.task != 'detect' else "")
+            + PU_MODELS_NOTE)
+        self.pu_dataset_combo = bool_combo(TRAINING_DEFAULTS['pu_dataset'],
+                                           self.pu_dataset_tooltip)
+        self.pu_dataset_label = QLabel("PU Dataset:")
+        # Said in place rather than left in a tooltip. A model that cannot
+        # run PU turns off a switch the user may have turned on, and a
+        # greyed out box does not explain itself.
+        self.pu_unavailable_note = QLabel()
+        self.pu_unavailable_note.setWordWrap(True)
+        self.pu_unavailable_note.setVisible(False)
+        pu_column = QVBoxLayout()
+        pu_column.setContentsMargins(0, 0, 0, 0)
+        pu_column.setSpacing(2)
+        pu_column.addWidget(self.pu_dataset_combo)
+        pu_column.addWidget(self.pu_unavailable_note)
+        layout.addRow(self.pu_dataset_label, pu_column)
+
+        # The band's one setting, directly under the switch it belongs to.
+        self.pu_threshold_spinbox = QDoubleSpinBox()
+        self.pu_threshold_spinbox.setRange(IGNORE_CONF_MIN, IGNORE_CONF_MAX)
+        self.pu_threshold_spinbox.setSingleStep(0.05)
+        self.pu_threshold_spinbox.setDecimals(2)
+        self.pu_threshold_spinbox.setValue(IGNORE_CONF)
+        self.pu_threshold_spinbox.setToolTip(PU_THRESHOLD_NOTE)
+        self.pu_threshold_label = QLabel("PU Threshold:")
+        layout.addRow(self.pu_threshold_label, self.pu_threshold_spinbox)
+        self.pu_dataset_combo.currentTextChanged.connect(self.update_pu_threshold_state)
+
+        # create_model_group() has already run, so the combo exists to
+        # watch. Browse writes into it too, so this covers both ways the
+        # model can change.
+        self.model_combo.currentTextChanged.connect(self.update_pu_availability)
+        self.update_pu_availability()
+
         return group_box
 
     def create_parameters_group(self):
@@ -1023,73 +1110,6 @@ class Base(QDialog):
             "Off by default: it repeats the few images of a rare class many times\n"
             "per epoch, which can cost overall accuracy.")
         layout.addRow("Weighted Sampling:", self.weighted_combo)
-
-        # Detection and instance segmentation: the ignore band masks anchors of
-        # the detection loss, and the segmentation loss is built on that same
-        # loss. Absent rather than disabled for the tasks that have no PU
-        # trainer, so it is never a question with no answer.
-        self.pu_dataset_combo = None
-        self.pu_threshold_spinbox = None
-        if self.task in PU_TRAINERS:
-            # Kept so update_pu_availability can restore it after a model
-            # that cannot run PU has replaced it with the reason.
-            unlabeled = "boxed" if self.task == 'detect' else "outlined"
-            self.pu_dataset_tooltip = (
-                "Train the project as a positive-unlabeled dataset: regions you have not\n"
-                f"{unlabeled} are treated as unknown rather than as guaranteed background.\n\n"
-                "This is the normal state of an Active Learning project. You confirm what\n"
-                "the round put in front of you and leave the rest of the frame alone, so\n"
-                "real objects sit unlabeled in images that count as fully reviewed. A copy\n"
-                "of the model that trails it closely marks regions it is fairly confident\n"
-                "about, and where you drew nothing those are dropped from the loss instead\n"
-                "of teaching the model that nothing is there. Your labels are never added to.\n\n"
-                "Costs a forward pass per batch and a second copy of the model in memory,\n"
-                "about 1.5 times the training time, and turns mosaic off for the epochs it\n"
-                "is active.\n\n"
-                "Off by default. The measured benefit needs a medium or larger model at a\n"
-                "large image size; at nano and image size 640, this dialog's defaults, it\n"
-                "came out level with normal training.\n"
-                "It usually lowers mAP while raising recall, because finding an\n"
-                "unlabeled object scores as a false positive. PU rounds are therefore\n"
-                "only ever compared with other PU rounds, and are marked (PU) in the\n"
-                "Rounds table.\n\n"
-                + ("All of that was measured on detection. On segmentation the band is\n"
-                   "the same code masking the same classification loss, and the mask\n"
-                   "loss still sees only your polygons, but the size of the trade there\n"
-                   "has not been measured.\n\n" if self.task != 'detect' else "")
-                + PU_MODELS_NOTE)
-            self.pu_dataset_combo = bool_combo(TRAINING_DEFAULTS['pu_dataset'],
-                                               self.pu_dataset_tooltip)
-            self.pu_dataset_label = QLabel("PU Dataset:")
-            # Said in place rather than left in a tooltip. A model that cannot
-            # run PU turns off a switch the user may have turned on, and a
-            # greyed out box does not explain itself.
-            self.pu_unavailable_note = QLabel()
-            self.pu_unavailable_note.setWordWrap(True)
-            self.pu_unavailable_note.setVisible(False)
-            pu_column = QVBoxLayout()
-            pu_column.setContentsMargins(0, 0, 0, 0)
-            pu_column.setSpacing(2)
-            pu_column.addWidget(self.pu_dataset_combo)
-            pu_column.addWidget(self.pu_unavailable_note)
-            layout.addRow(self.pu_dataset_label, pu_column)
-
-            # The band's one setting, directly under the switch it belongs to.
-            self.pu_threshold_spinbox = QDoubleSpinBox()
-            self.pu_threshold_spinbox.setRange(IGNORE_CONF_MIN, IGNORE_CONF_MAX)
-            self.pu_threshold_spinbox.setSingleStep(0.05)
-            self.pu_threshold_spinbox.setDecimals(2)
-            self.pu_threshold_spinbox.setValue(IGNORE_CONF)
-            self.pu_threshold_spinbox.setToolTip(PU_THRESHOLD_NOTE)
-            self.pu_threshold_label = QLabel("PU Threshold:")
-            layout.addRow(self.pu_threshold_label, self.pu_threshold_spinbox)
-            self.pu_dataset_combo.currentTextChanged.connect(self.update_pu_threshold_state)
-
-            # create_model_group() has already run, so the combo exists to
-            # watch. Browse writes into it too, so this covers both ways the
-            # model can change.
-            self.model_combo.currentTextChanged.connect(self.update_pu_availability)
-            self.update_pu_availability()
 
         self.freeze_layers_spinbox = QDoubleSpinBox()
         self.freeze_layers_spinbox.setRange(0.0, 1.0)
@@ -2909,8 +2929,9 @@ class Base(QDialog):
             'stopped': False,
         }
 
-        if self.free_gpu_combo.currentText() == "True":
-            self.free_gpu_memory()
+        # Always: it releases only blocks nothing is using, leaves every deployed
+        # model in place, and so has no cost worth putting a switch in front of.
+        self.free_gpu_memory()
 
         self.train_button.setEnabled(False)
         self.train_button.setText(f"Training round {round_number}...")

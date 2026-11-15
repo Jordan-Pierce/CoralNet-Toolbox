@@ -2048,8 +2048,10 @@ class AnnotationViewerWindow(QWidget):
                 if self.annotation_window.current_image_path != ann.image_path:
                     self.main_window.image_window.open_image(ann.image_path)
                 
-                # Select and center on annotation
+                # Select and center on annotation (quiet_mode skips the Label
+                # Window, so highlight the label there directly)
                 self.annotation_window.select_annotation(ann, quiet_mode=True)
+                self.label_window.set_selected_label(ann.label.id)
                 if hasattr(self.annotation_window, 'center_on_annotation'):
                     self.annotation_window.center_on_annotation(ann)
             
@@ -2215,6 +2217,12 @@ class AnnotationViewerWindow(QWidget):
                 if not current and confirmed:
                     for ann in confirmed:
                         self.annotation_window.select_annotation(ann, quiet_mode=True)
+                # Confirming can change the label (Review becomes the model's
+                # pick), and the quiet re-select never tells the Label Window.
+                # Highlight it when the confirmed set shares one label.
+                label_ids = {ann.label.id for ann in confirmed or ()}
+                if len(label_ids) == 1:
+                    self.label_window.set_selected_label(label_ids.pop())
             except Exception:
                 pass
             return

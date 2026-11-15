@@ -700,5 +700,38 @@ class SelectionManager(QObject):
 
             if self._confidence_window is not None:
                 self._confidence_window.display_cropped_image(annotation)
+
+            # The canvas now has this annotation selected, quietly, so nothing
+            # else tells the Label Window; without this it keeps highlighting
+            # whatever label was active before the jump.
+            self._show_label_of(annotation_id)
         finally:
             self._syncing = False
+
+    def _show_label_of(self, annotation_id: str):
+        """Highlight an annotation's label in the Label Window without applying it.
+
+        Uses the effective label (a preview label set in the Explorer wins over
+        the stored one), matching _update_label_window_selection. Highlight
+        only: emit_selection_signal and update_annotations are off, so this can
+        never relabel the canvas selection.
+        """
+        if not self._label_window or self._block_label_updates:
+            return
+
+        label = None
+        for viewer in (self._annotation_viewer, self._embedding_viewer):
+            item = getattr(viewer, 'data_item_cache', {}).get(annotation_id) if viewer else None
+            if item is not None:
+                label = item.effective_label
+                break
+        if label is None and self._annotation_window:
+            annotation = getattr(self._annotation_window, 'annotations_dict', {}).get(annotation_id)
+            label = getattr(annotation, 'label', None)
+        if label is None:
+            return
+
+        label_widget = self._label_window.get_label_by_id(label.id, return_review=True)
+        if label_widget is not None:
+            self._label_window.set_active_label(label_widget, emit_selection_signal=False,
+                                                update_annotations=False)

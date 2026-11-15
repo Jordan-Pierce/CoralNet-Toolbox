@@ -177,6 +177,12 @@ class MainWindow(QMainWindow):
     areaModeChanged = pyqtSignal(str)  # Signal to emit the area threshold's unit
     boundaryToleranceChanged = pyqtSignal(bool)  # Signal to emit whether to keep detections on boundaries
 
+    # Status bar hint bookkeeping (see show_tool_hint). Class level because a
+    # tool can report its state while __init__ is still wiring the window up,
+    # which is before the instance attributes would otherwise exist.
+    _restoring_tool_hint = False
+    _tool_hint_text = ""
+
     # Annotation types each drawing tool can make; Ctrl+Alt from Select returns
     # to one of these (see switch_back_to_tool)
     TOOL_OUTPUT_TYPES = {
@@ -1793,7 +1799,7 @@ class MainWindow(QMainWindow):
         # A permanent widget, so it stays put while temporary status messages come and go
         self.version_label = QLabel(f"v{self.version}")
         self.version_label.setToolTip(f"CoralNet-Toolbox version {self.version}")
-        self.version_label.setStyleSheet("color: #666; margin-right: 4px;")
+        self.version_label.setStyleSheet("color: #8892b0; margin-right: 4px;")
 
         # --------------------------------------------------
         # Selection readout, pinned left of the version label
@@ -1804,10 +1810,22 @@ class MainWindow(QMainWindow):
         # count it on screen. A permanent widget rather than showMessage(), so
         # transient tool messages can come and go without erasing it.
         self.selection_label = QLabel("")
-        self.selection_label.setStyleSheet("color: #666; margin-right: 12px;")
+        self.selection_label.setStyleSheet("color: #c9d1e8; margin-right: 12px;")
         self.status_bar.addPermanentWidget(self.selection_label)
         self.status_bar.addPermanentWidget(self.version_label)
         self.annotation_window.annotationSelectionChanged.connect(self.update_selection_status)
+
+        # --------------------------------------------------
+        # Tool instructions, as the status bar's resting state
+        # --------------------------------------------------
+        # The active tool posts its hint with no timeout, so it is what the bar
+        # says whenever nothing more pressing is being said. Everything else --
+        # an outcome message, an operation's progress line -- is timed, and Qt
+        # emits messageChanged("") the moment one expires, which is where the
+        # hint goes back up. The flag keeps our own posts out of that handler.
+        self._restoring_tool_hint = False
+        self._tool_hint_text = ""
+        self.status_bar.messageChanged.connect(self.on_status_message_changed)
 
         # --------------------------------------------------
         # Check for updates on opening
@@ -1846,6 +1864,74 @@ class MainWindow(QMainWindow):
         except Exception:
             # A status readout must never be the reason a selection fails.
             pass
+
+    def active_tool_hint(self):
+        """What the active tool wants the status bar to say, or None.
+
+        Asked for again rather than remembered, because a hint describes the
+        tool's current state -- how many prompts are placed, whether a work area
+        is open -- and that changes without the status bar being touched.
+        """
+        try:
+            name = self.annotation_window.selected_tool
+            tool = self.annotation_window.tools.get(name) if name else None
+            if tool is None or not getattr(tool, 'active', False):
+                return None
+            return tool.status_hint()
+        except Exception:
+            return None
+
+    def show_tool_hint(self, message=None):
+        """Put a tool hint up with no timeout, as the bar's resting state.
+
+        Called by Tool.report_state with the hint it just built, and by the
+        messageChanged handler with nothing, which asks the active tool afresh.
+        """
+        if message is None:
+            message = self.active_tool_hint()
+        if not message:
+            return
+        self._restoring_tool_hint = True
+        try:
+            self.status_bar.showMessage(message, 0)
+            self._tool_hint_text = message
+        except Exception:
+            pass
+        finally:
+            self._restoring_tool_hint = False
+
+    def clear_tool_hint(self):
+        """Take a hint down, because the tool that posted it is deactivating.
+
+        Without this an untimed hint would outlive its tool -- the next tool
+        posts its own on activation, but switching to no tool at all would leave
+        the old instructions sitting there.
+
+        Only the hint itself is cleared. A tool can be switched while something
+        else is on the bar -- an operation's summary, an error -- and that
+        message is not this method's to take away.
+        """
+        try:
+            if self.status_bar.currentMessage() != self._tool_hint_text:
+                self._tool_hint_text = ""
+                return
+        except Exception:
+            return
+
+        self._tool_hint_text = ""
+        self._restoring_tool_hint = True
+        try:
+            self.status_bar.clearMessage()
+        except Exception:
+            pass
+        finally:
+            self._restoring_tool_hint = False
+
+    def on_status_message_changed(self, message):
+        """Bring the tool hint back as soon as a timed message clears."""
+        if message or self._restoring_tool_hint:
+            return
+        self.show_tool_hint()
 
     @property
     def status_bar(self):

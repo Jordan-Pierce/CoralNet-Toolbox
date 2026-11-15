@@ -788,6 +788,9 @@ class Base(QDialog):
         self.setup_output_layout()
         # Create the model layout (new)
         self.setup_model_layout()
+        # Positive-Unlabeled, below it: not an Ultralytics parameter, and it
+        # watches the model widgets the line above creates.
+        self.setup_pu_layout()
         # Push the left column's groups to the top; the right column carries the
         # height, so the left one should not stretch to match it.
         self.layout.addStretch(1)
@@ -906,6 +909,87 @@ class Base(QDialog):
         self.name_edit = QLineEdit()
         self.name_edit.setToolTip("Name for this training run (creates subdirectory in Project folder).\nUseful for organizing multiple training experiments.\nDefault: Timestamp (YYYY-MM-DD_HH-MM-SS).")
         form_layout.addRow("Name:", self.name_edit)
+
+        group_box.setLayout(form_layout)
+        self.layout.addWidget(group_box)
+
+    def setup_pu_layout(self):
+        """Positive-Unlabeled training, in a group of its own.
+
+        Not an Ultralytics setting: the ignore band is ours, and the worker pops
+        both of these out of the parameters before model.train() ever sees them.
+        So it sits apart from Training Parameters rather than reading as one more
+        knob in that list -- it is a statement about the annotations.
+
+        Runs after setup_model_layout because the controls watch the model
+        widgets: which model is chosen decides whether PU can be offered at all.
+        """
+        # PU Dataset. Detection and instance segmentation only -- the ignore
+        # band masks anchors of the v8 detection loss, and the segmentation loss
+        # is built on that same loss, which the other tasks are not. Absent
+        # rather than disabled elsewhere: a row that can never be used is a
+        # question the user has to answer and then discover did not matter.
+        self.pu_dataset_combo = None
+        self.pu_threshold_spinbox = None
+        if self.task not in PU_TRAINERS:
+            return
+
+        group_box = QGroupBox("Positive-Unlabeled")
+        form_layout = QFormLayout()
+        form_layout.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+
+        self.pu_dataset_combo = QComboBox()
+        self.pu_dataset_combo.addItems(["True", "False"])
+        # Off unless asked for: it is a statement about the data, and only
+        # the user knows whether their images are fully annotated.
+        self.pu_dataset_combo.setCurrentText("False")
+        # Kept on the dialog so update_pu_availability can put it back
+        # after a disabled model has replaced it with its reason.
+        drew = "boxed" if self.task == 'detect' else "drew a polygon around"
+        self.pu_dataset_tooltip = (
+            f"Set True if this dataset is positive-unlabeled: you {drew} what you\n"
+            "came for and left other real objects in the same images unlabeled.\n\n"
+            "Normal training treats every unlabeled region as background, so it\n"
+            "learns to stop finding the objects nobody got to. With this on, a second\n"
+            "copy of the model, trailing it closely, marks regions it is\n"
+            "fairly sure about; where you drew nothing, those are dropped from the\n"
+            "loss instead. Nothing is ever added to your labels.\n\n"
+            "Costs a forward pass per batch and a second copy of the model in memory,\n"
+            "and turns mosaic off for the epochs it is active.\n\n"
+            "Measured to help on medium and larger models at large image sizes; at\n"
+            "nano it came out level with or slightly behind normal training. It\n"
+            "usually lowers mAP while raising recall, because a find nobody labeled\n"
+            "scores as a false positive. The epoch with the best recall is kept as\n"
+            "weights/recall_best.pt beside best.pt.\n\n"
+            + ("Measured on detection only. The mechanism is identical on\n"
+               "segmentation -- it masks the same classification loss, and leaves\n"
+               "the mask loss on your polygons alone -- but the size of the\n"
+               "mAP-for-recall trade there has not been measured.\n\n"
+               if self.task != 'detect' else "")
+            + PU_MODELS_NOTE)
+        self.pu_dataset_combo.setToolTip(self.pu_dataset_tooltip)
+        self.pu_dataset_label = QLabel("PU Dataset:")
+        form_layout.addRow(self.pu_dataset_label, self.pu_dataset_combo)
+
+        # The band's one setting, directly under the switch it belongs to.
+        self.pu_threshold_spinbox = QDoubleSpinBox()
+        self.pu_threshold_spinbox.setRange(IGNORE_CONF_MIN, IGNORE_CONF_MAX)
+        self.pu_threshold_spinbox.setSingleStep(0.05)
+        self.pu_threshold_spinbox.setDecimals(2)
+        self.pu_threshold_spinbox.setValue(IGNORE_CONF)
+        self.pu_threshold_spinbox.setToolTip(PU_THRESHOLD_NOTE)
+        self.pu_threshold_label = QLabel("PU Threshold:")
+        form_layout.addRow(self.pu_threshold_label, self.pu_threshold_spinbox)
+        self.pu_dataset_combo.currentTextChanged.connect(self.update_pu_threshold_state)
+
+        # The chosen model decides whether this can be offered at all,
+        # and it can change after this runs. Both tabs are watched, plus
+        # the tab bar itself, because which tab is in front is what picks
+        # the model -- see selected_model().
+        self.model_combo.currentTextChanged.connect(self.update_pu_availability)
+        self.model_edit.textChanged.connect(self.update_pu_availability)
+        self.model_tabs.currentChanged.connect(self.update_pu_availability)
+        self.update_pu_availability()
 
         group_box.setLayout(form_layout)
         self.layout.addWidget(group_box)
@@ -1037,66 +1121,6 @@ class Base(QDialog):
             "more to you than overall accuracy, and compare on the test split."
         )
         form_layout.addRow("Weighted Sampling:", self.weighted_combo)
-
-        # PU Dataset. Detection and instance segmentation only -- the ignore
-        # band masks anchors of the v8 detection loss, and the segmentation loss
-        # is built on that same loss, which the other tasks are not. Absent
-        # rather than disabled elsewhere: a row that can never be used is a
-        # question the user has to answer and then discover did not matter.
-        self.pu_dataset_combo = None
-        self.pu_threshold_spinbox = None
-        if self.task in PU_TRAINERS:
-            self.pu_dataset_combo = create_bool_combo()
-            # Off unless asked for: it is a statement about the data, and only
-            # the user knows whether their images are fully annotated.
-            self.pu_dataset_combo.setCurrentText("False")
-            # Kept on the dialog so update_pu_availability can put it back
-            # after a disabled model has replaced it with its reason.
-            drew = "boxed" if self.task == 'detect' else "drew a polygon around"
-            self.pu_dataset_tooltip = (
-                f"Set True if this dataset is positive-unlabeled: you {drew} what you\n"
-                "came for and left other real objects in the same images unlabeled.\n\n"
-                "Normal training treats every unlabeled region as background, so it\n"
-                "learns to stop finding the objects nobody got to. With this on, a second\n"
-                "copy of the model, trailing it closely, marks regions it is\n"
-                "fairly sure about; where you drew nothing, those are dropped from the\n"
-                "loss instead. Nothing is ever added to your labels.\n\n"
-                "Costs a forward pass per batch and a second copy of the model in memory,\n"
-                "and turns mosaic off for the epochs it is active.\n\n"
-                "Measured to help on medium and larger models at large image sizes; at\n"
-                "nano it came out level with or slightly behind normal training. It\n"
-                "usually lowers mAP while raising recall, because a find nobody labeled\n"
-                "scores as a false positive. The epoch with the best recall is kept as\n"
-                "weights/recall_best.pt beside best.pt.\n\n"
-                + ("Measured on detection only. The mechanism is identical on\n"
-                   "segmentation -- it masks the same classification loss, and leaves\n"
-                   "the mask loss on your polygons alone -- but the size of the\n"
-                   "mAP-for-recall trade there has not been measured.\n\n"
-                   if self.task != 'detect' else "")
-                + PU_MODELS_NOTE)
-            self.pu_dataset_combo.setToolTip(self.pu_dataset_tooltip)
-            self.pu_dataset_label = QLabel("PU Dataset:")
-            form_layout.addRow(self.pu_dataset_label, self.pu_dataset_combo)
-
-            # The band's one setting, directly under the switch it belongs to.
-            self.pu_threshold_spinbox = QDoubleSpinBox()
-            self.pu_threshold_spinbox.setRange(IGNORE_CONF_MIN, IGNORE_CONF_MAX)
-            self.pu_threshold_spinbox.setSingleStep(0.05)
-            self.pu_threshold_spinbox.setDecimals(2)
-            self.pu_threshold_spinbox.setValue(IGNORE_CONF)
-            self.pu_threshold_spinbox.setToolTip(PU_THRESHOLD_NOTE)
-            self.pu_threshold_label = QLabel("PU Threshold:")
-            form_layout.addRow(self.pu_threshold_label, self.pu_threshold_spinbox)
-            self.pu_dataset_combo.currentTextChanged.connect(self.update_pu_threshold_state)
-
-            # The chosen model decides whether this can be offered at all,
-            # and it can change after this runs. Both tabs are watched, plus
-            # the tab bar itself, because which tab is in front is what picks
-            # the model -- see selected_model().
-            self.model_combo.currentTextChanged.connect(self.update_pu_availability)
-            self.model_edit.textChanged.connect(self.update_pu_availability)
-            self.model_tabs.currentChanged.connect(self.update_pu_availability)
-            self.update_pu_availability()
 
         # Freeze Layers
         self.freeze_layers_spinbox = QDoubleSpinBox()

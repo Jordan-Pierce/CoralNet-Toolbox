@@ -513,12 +513,15 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 /* ── Status bar ─────────────────────────────────────────────── */
 QStatusBar {
     background: #0c0e15;
-    color: #d4d8e8;
+    color: #e8edfa;
     font-size: 11px;
     border-top: 1px solid #1e2130;
 }
+QStatusBar::item {
+    border: none;
+}
 QStatusBar QLabel {
-    color: #d4d8e8;
+    color: #e8edfa;
 }
 
 /* ── Menu bar ───────────────────────────────────────────────── */
