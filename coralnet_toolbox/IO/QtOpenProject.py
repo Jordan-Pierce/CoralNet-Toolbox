@@ -42,6 +42,7 @@ class OpenProject(QDialog):
         self.current_project_path = self.main_window.current_project_path
         
         self.updated_paths = {}
+        self.removed_paths = set()
 
         self.setWindowTitle("Open Project")
         self.resize(600, 100)
@@ -171,6 +172,11 @@ class OpenProject(QDialog):
             images_data = project_data.get('images', project_data.get('image_paths'))
             legacy_workareas = project_data.get('workareas')  # For backward compatibility
 
+            # Per-open path decisions from Update Image Paths; never carry them
+            # over from a previous open, even when this project has no images.
+            self.updated_paths = {}
+            self.removed_paths = set()
+
             # Update main window with loaded project data
             self.import_images(images_data, legacy_workareas)
             self.import_labels(project_data.get('labels'))
@@ -186,12 +192,15 @@ class OpenProject(QDialog):
             # Update current project path
             self.current_project_path = file_path
             elapsed = time.perf_counter() - start_time
+            missing_count = len(self.main_window.missing_project_images)
+            missing_note = (f" {plural(missing_count, 'image')} missing, kept in the project file."
+                            if missing_count else "")
             show_status(self.main_window,
                         f"Opened {os.path.basename(file_path)}: "
                         f"{plural(len(self.image_window.raster_manager.image_paths), 'image')}, "
                         f"{plural(len(self.label_window.labels), 'label')}, "
                         f"{plural(len(self.annotation_window.annotations_dict), 'annotation')} "
-                        f"({elapsed:.2f}s).",
+                        f"({elapsed:.2f}s).{missing_note}",
                         STATUS_SUMMARY_MS)
 
         except Exception as e:
@@ -214,35 +223,43 @@ class OpenProject(QDialog):
         show_status(self.main_window, f"Importing {plural(len(images_data), 'image')}...")
 
         is_new_format = isinstance(images_data[0], dict)
-        image_paths = [img['path'] for img in images_data] if is_new_format else images_data
-        
-        if not all([os.path.exists(path) for path in image_paths]):
-            # Ask user to update missing paths. If they cancel, abort the import.
-            new_paths, self.updated_paths = UpdateImagePaths.update_paths(image_paths)
-            if new_paths is None:
-                # User cancelled path update — stop importing images
-                return
-            
-            image_paths = new_paths
-        
+        original_paths = [img['path'] for img in images_data] if is_new_format else list(images_data)
+        image_paths = original_paths
+
+        if not all(os.path.exists(path) for path in original_paths):
+            # Relink what the user can find; whatever stays missing is skipped
+            # below and kept in the project file rather than ending the open.
+            # Images the user removed are dropped, annotations and all.
+            image_paths, self.updated_paths, _still_missing, removed = UpdateImagePaths.update_paths(
+                original_paths, self.main_window)
+            self.removed_paths = set(removed)
+
         total_images = len(image_paths)
         progress_bar = ProgressBar(self.image_window, title="Importing Images")
         progress_bar.show()
         progress_bar.start_progress(total_images)
 
         try:
+            # Keyed by the SAVED path: a relinked image must still find its state.
             image_data_map = {img['path']: img for img in images_data} if is_new_format else {}
             progress_batch = 0
             PROGRESS_BATCH_SIZE = 50  # Update UI every 50 images instead of every image
 
             # Add images directly to the manager without emitting signals
-            for path in image_paths:
-                # Determine canonical raster type (only 'raster_type' expected)
-                r_type = None
-                if is_new_format and path in image_data_map:
-                    r_type = image_data_map[path].get('raster_type', None)
+            for original_path, path in zip(original_paths, image_paths):
+                if original_path in self.removed_paths:
+                    # Also clears anything an earlier open in this session kept.
+                    self.forget_missing_image(original_path)
+                    progress_batch += 1
+                    continue
 
-                if r_type == 'VideoRaster':
+                data = image_data_map.get(original_path)
+                # Determine canonical raster type (only 'raster_type' expected)
+                r_type = data.get('raster_type', None) if data else None
+
+                if not os.path.exists(path):
+                    pass  # still missing: nothing to open, kept below
+                elif r_type == 'VideoRaster':
                     self.image_window.raster_manager.add_video_raster(path)
                 elif r_type == 'OrthoRaster':
                     # Add an OrthoRaster instance
@@ -254,17 +271,23 @@ class OpenProject(QDialog):
                 else:
                     # Call the manager directly to add the raster silently
                     self.image_window.raster_manager.add_raster(path, emit_signal=False)
-                
+
                 raster = self.image_window.raster_manager.get_raster(path)
                 if not raster:
+                    # Missing or unreadable: keep the saved entry (and any legacy
+                    # work areas) so the next save writes it back unchanged.
+                    self.keep_missing_image(original_path, data, legacy_workareas)
                     progress_batch += 1
                     if progress_batch >= PROGRESS_BATCH_SIZE:
                         progress_bar.advance_progress(progress_batch)
                         progress_batch = 0
                     continue
 
-                if is_new_format and path in image_data_map:
-                    data = image_data_map[path]
+                # Loaded now, so anything kept for it from an earlier open in
+                # this session would be written twice.
+                self.forget_missing_image(original_path)
+
+                if data:
                     # Use the raster's update_from_dict method
                     raster.update_from_dict(data)
                 
@@ -297,6 +320,37 @@ class OpenProject(QDialog):
             
             progress_bar.stop_progress()
             progress_bar.close()
+
+    def keep_missing_image(self, path, data=None, legacy_workareas=None):
+        """Hold a project image that could not be loaded so saving keeps it."""
+        entry = dict(data) if data else {'path': path}
+        if not data and legacy_workareas and legacy_workareas.get(path):
+            # Older projects stored work areas beside the images; the current
+            # format nests them, which is the form the next save writes.
+            entry['work_areas'] = list(legacy_workareas[path])
+        self.main_window.missing_project_images[path] = entry
+
+    def forget_missing_image(self, path):
+        """Drop anything kept for an image that has now been loaded."""
+        self.main_window.missing_project_images.pop(path, None)
+        kept_annotations = self.main_window.missing_project_annotations
+        if kept_annotations:
+            frame_prefix = f"{path}::frame_"
+            for key in [k for k in kept_annotations if k == path or k.startswith(frame_prefix)]:
+                del kept_annotations[key]
+
+    def keep_missing_annotations(self, image_path, image_annotations):
+        """Hold the saved annotations of an image that is not loaded.
+
+        Returns:
+            bool: False if the image was removed in Update Image Paths, in which
+                  case its annotations are dropped instead.
+        """
+        base_path = image_path.rsplit('::frame_', 1)[0]
+        if base_path in self.removed_paths:
+            return False
+        self.main_window.missing_project_annotations.setdefault(image_path, []).extend(image_annotations)
+        return True
 
     def resolve_video_frame_masks(self):
         """Remap every video's restored per-frame masks into the live label space.
@@ -401,6 +455,8 @@ class OpenProject(QDialog):
 
         skipped_count = 0
         duplicate_count = 0
+        kept_count = 0  # annotations of images that are not loaded, held for saving
+        removed_count = 0  # annotations of images removed in Update Image Paths
 
         # OPTIMIZATION: Create lists to hold objects for batch processing
         all_new_annotations = []
@@ -436,7 +492,10 @@ class OpenProject(QDialog):
                         resolved_video = self.updated_paths.get(base_video, base_video)
                         if not raster_manager.has_image_path(resolved_video):
                             print(f"Warning: Video not found for frame path: {image_path}")
-                            skipped_count += len(image_annotations)
+                            if self.keep_missing_annotations(image_path, image_annotations):
+                                kept_count += len(image_annotations)
+                            else:
+                                removed_count += len(image_annotations)
                             progress_batch += len(image_annotations)
                             if progress_batch >= PROGRESS_BATCH_SIZE:
                                 progress_bar.advance_progress(progress_batch)
@@ -448,8 +507,11 @@ class OpenProject(QDialog):
                             image_path = f"{resolved_video}::frame_{frame_num}"
                             updated_path = True
                     else:
-                        print(f"Warning: Image not found: {image_path}")
-                        skipped_count += len(image_annotations)
+                        if self.keep_missing_annotations(image_path, image_annotations):
+                            print(f"Warning: Image not found: {image_path}")
+                            kept_count += len(image_annotations)
+                        else:
+                            removed_count += len(image_annotations)
                         progress_batch += len(image_annotations)
                         # flush progress batch if needed
                         if progress_batch >= PROGRESS_BATCH_SIZE:
@@ -578,6 +640,10 @@ class OpenProject(QDialog):
                 print(f"Warning: Skipped {skipped_count} annotations due to missing keys or other issues.")
             if duplicate_count > 0:
                 print(f"Warning: Skipped {duplicate_count} duplicate annotations based on ID.")
+            if kept_count > 0:
+                print(f"Warning: Kept {kept_count} annotations of missing images for saving.")
+            if removed_count > 0:
+                print(f"Removed {removed_count} annotations of images removed from the project.")
 
             # Ensure progress bar completes
             progress_bar.stop_progress()

@@ -236,6 +236,12 @@ class MainWindow(QMainWindow):
         # Set the version and window icon used across dialogs and update prompts
         self.version = __version__
         self.current_project_path = ""
+        # Images an opened project lists but that could not be loaded (file
+        # missing or unreadable), and the annotations saved against them. Kept
+        # as their raw project dicts, keyed by the saved path, so SaveProject
+        # writes them back unchanged instead of dropping them from the file.
+        self.missing_project_images = {}
+        self.missing_project_annotations = {}
         self.setWindowIcon(self.coralnet_icon)
         self.update_project_label()
 
