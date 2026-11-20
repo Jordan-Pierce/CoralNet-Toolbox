@@ -25,7 +25,7 @@ from PyQt5.QtWidgets import (
 from coralnet_toolbox.QtProgressBar import ProgressBar
 from coralnet_toolbox.Icons import get_window_icon
 
-from coralnet_toolbox.Features import TRANSFORMER_MODELS, TIMM_MODELS, OPENCLIP_MODELS
+from coralnet_toolbox.Features import DINO_MODELS, is_dino_vit_model
 from coralnet_toolbox.Features.Extractor import FeatureExtractor, model_supports_dense
 
 import torch
@@ -78,29 +78,28 @@ class FeaturesDeployModelDialog(QDialog):
         model_group = QGroupBox("Model Selection")
         model_layout = QFormLayout()
 
-        # Only dense-capable backbones are offered here: feature maps (and the
-        # 3D Features tool) need a dense [h, w, C] map. YOLO and Color models are
-        # pooled-only (image-level embeddings for the Explorer) and would produce
-        # no feature map, so they are intentionally excluded.
+        # Only DINO ViT backbones are offered here: feature maps (and the 3D
+        # Features tool) need a dense [h, w, C] patch-token grid. DINOv3 ViTs
+        # appear only when HF_TOKEN is set (gated on HuggingFace).
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
-        for registry in (TRANSFORMER_MODELS, TIMM_MODELS, OPENCLIP_MODELS):
-            for display_name, model_id in registry.items():
-                if model_supports_dense(model_id):
-                    self.model_combo.addItem(display_name, model_id)
+        for display_name, model_id in DINO_MODELS.items():
+            if is_dino_vit_model(model_id):
+                self.model_combo.addItem(display_name, model_id)
 
         # Plain DINOv2, not the registers variant: tied when many labels seed the
         # classes, clearly better from a few clicks per class (mIoU 0.86 vs 0.76).
         default_idx = self.model_combo.findText("DINOv2 (Small)")
         self.model_combo.setCurrentIndex(default_idx if default_idx >= 0 else 0)
-        self.model_combo.setToolTip("Choose a dense-capable backbone for feature extraction.\nDINOv2: Fast, strong general-purpose features.\nOpenCLIP/TIMM: Specialized vision models.")
+        self.model_combo.setToolTip(
+            "Choose a DINO ViT backbone for feature extraction.\n"
+            "DINOv2: fast, strong general-purpose features.\n"
+            "DINOv3: needs an HF_TOKEN with access granted on HuggingFace."
+        )
 
         model_layout.addRow("Model:", self.model_combo)
 
-        dense_note = QLabel(
-            "Dense backbones only (ViT / ConvNext). YOLO and Color models are "
-            "image-level only and don't produce feature maps."
-        )
+        dense_note = QLabel("DINO ViT backbones only (DINOv2, DINOv2+reg, DINOv3 ViT).")
         dense_note.setWordWrap(True)
         dense_note.setStyleSheet("color: gray; font-size: 10px;")
         model_layout.addRow("", dense_note)
@@ -247,7 +246,7 @@ class FeaturesDeployModelDialog(QDialog):
                 self,
                 "Unsupported Model",
                 f"'{model_name}' is a pooled-only model and cannot produce dense "
-                "feature maps.\n\nChoose a ViT or ConvNext backbone instead.",
+                "feature maps.\n\nChoose a DINO ViT backbone instead.",
             )
             return
 

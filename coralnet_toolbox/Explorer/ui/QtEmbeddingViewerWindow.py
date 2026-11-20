@@ -52,8 +52,7 @@ from coralnet_toolbox.Explorer.core.feature_vectors import (
 from coralnet_toolbox.Explorer.managers.CacheManager import CacheManager
 from coralnet_toolbox.Explorer.workers import EmbeddingPipelineWorker
 from coralnet_toolbox.Features.ModelRegistry import YOLO_MODELS, is_yolo_model, is_live_yolo_model
-from coralnet_toolbox.Features.ModelRegistry import TRANSFORMER_MODELS, is_transformer_model
-from coralnet_toolbox.Features.ModelRegistry import TIMM_MODELS, is_timm_model, strip_timm_prefix
+from coralnet_toolbox.Features.ModelRegistry import DINO_MODELS, is_transformer_model
 from coralnet_toolbox.Features.ModelRegistry import OPENCLIP_MODELS, is_openclip_model, strip_openclip_prefix
 from coralnet_toolbox.Features.Extractor import model_supports_dense
 
@@ -175,8 +174,6 @@ class EmbeddingViewerWindow(QWidget):
         self._cached_openclip_model = None
         self._cached_openclip_model_name = None
         self._cached_openclip_preprocess = None
-        self._cached_timm_extractor = None
-        self._cached_timm_extractor_name = None
         self._cached_dense_extractor = None  # Image tokens source (FeatureExtractor)
 
         # Dimensionality reduction result cache (in-memory, last result only)
@@ -307,6 +304,7 @@ class EmbeddingViewerWindow(QWidget):
         # Background worker for embedding pipeline
         self._pipeline_worker = None
         self._pipeline_running = False
+        self._busy_cursor_active = False
         # Connected once here (not per run) so repeated pipelines do not
         # stack duplicate connections.
         self.extraction_status.connect(self._on_extraction_status)
@@ -340,10 +338,10 @@ class EmbeddingViewerWindow(QWidget):
         toolbar.addWidget(category_label)
 
         self.category_combo = QComboBox()
-        self.category_combo.addItems(["Color Features", "YOLO", "Transformer", "TIMM", "OpenCLIP", "Live Models"])
+        self.category_combo.addItems(["Color Features", "YOLO", "DINO", "CLIP", "Live Models"])
         self.category_combo.currentTextChanged.connect(self._on_category_changed)
         self.category_combo.setMinimumWidth(120)
-        self.category_combo.setToolTip("Select feature extraction model category:\nColor Features (colour, or colour + texture), YOLO (detection), Transformer, TIMM, OpenCLIP, or Live Models")
+        self.category_combo.setToolTip("Select feature extraction model category:\nColor Features (colour, or colour + texture), YOLO (classification), DINO (DINOv2/v3), CLIP (BioCLIP), or Live Models")
         toolbar.addWidget(self.category_combo)
 
         # Model Selection (dynamically populated)
@@ -501,15 +499,11 @@ class EmbeddingViewerWindow(QWidget):
                 self.model_combo.setEnabled(True)
                 for display_name, model_name in YOLO_MODELS.items():
                     self.model_combo.addItem(display_name, model_name)
-            elif category == "Transformer":
+            elif category == "DINO":
                 self.model_combo.setEnabled(True)
-                for display_name, model_name in TRANSFORMER_MODELS.items():
+                for display_name, model_name in DINO_MODELS.items():
                     self.model_combo.addItem(display_name, model_name)
-            elif category == "TIMM":
-                self.model_combo.setEnabled(True)
-                for display_name, model_name in TIMM_MODELS.items():
-                    self.model_combo.addItem(display_name, model_name)
-            elif category == "OpenCLIP":
+            elif category == "CLIP":
                 self.model_combo.setEnabled(True)
                 for display_name, model_name in OPENCLIP_MODELS.items():
                     self.model_combo.addItem(display_name, model_name)
@@ -621,7 +615,7 @@ class EmbeddingViewerWindow(QWidget):
             "Crop: embed each annotation's crop on its own.\n"
             "Image tokens: run each whole image through the model once and average the tokens\n"
             "under the annotation, so its features carry the context around it.\n"
-            "Dense models only (DINO, ConvNeXt, EVA, CLIP); YOLO and Color always use the crop.\n"
+            "DINO and CLIP models only; YOLO and Color always use the crop.\n"
             "Uses the Feature Extractor dialog's Input Resolution and Upsample settings.\n"
             "Mask background and Rotation-invariant do not apply."
         )
@@ -1164,8 +1158,42 @@ class EmbeddingViewerWindow(QWidget):
         3. Run dimensionality reduction
         4. Update visualization
         """
-        # Cancel any existing pipeline
+        # Busy from the click on: cancelling a previous worker and building
+        # crops below are synchronous and can take a while. The worker's
+        # finished/error handlers drop the cursor once it is running.
+        self._set_busy_cursor()
+        started = False
+        try:
+            started = self._start_embedding_pipeline()
+        finally:
+            if not started:
+                self._restore_busy_cursor()
+
+    def _set_busy_cursor(self):
+        """Show the wait cursor; idempotent so a superseded run cannot stack it."""
+        if not self._busy_cursor_active:
+            self._busy_cursor_active = True
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+
+    def _restore_busy_cursor(self):
+        """Drop the wait cursor, but only if this window set it."""
+        if self._busy_cursor_active:
+            self._busy_cursor_active = False
+            QApplication.restoreOverrideCursor()
+
+    def _start_embedding_pipeline(self):
+        """Prepare and launch the pipeline worker. Returns True once it is started."""
+        # Cancel any existing pipeline. Disconnect it first: a cancelled worker
+        # emits nothing, but one that already queued finished/error would
+        # otherwise land on top of the new run and drop its cursor.
         if self._pipeline_running and self._pipeline_worker:
+            for signal in (self._pipeline_worker.progress,
+                           self._pipeline_worker.finished,
+                           self._pipeline_worker.error):
+                try:
+                    signal.disconnect()
+                except TypeError:
+                    pass
             self._pipeline_worker.cancel()
             self._pipeline_worker.wait()
 
@@ -1176,6 +1204,7 @@ class EmbeddingViewerWindow(QWidget):
             )
         
         if not self.working_set_ids:
+            self._restore_busy_cursor()
             QMessageBox.information(
                 self, "No Data",
                 "No annotations to embed. Apply a filter in the Annotation Gallery first."
@@ -1206,6 +1235,7 @@ class EmbeddingViewerWindow(QWidget):
         self.refresh_model_options()
         model_name = self._get_selected_model()
         if not model_name:
+            self._restore_busy_cursor()
             QMessageBox.information(
                 self,
                 "No Model Selected",
@@ -1246,6 +1276,7 @@ class EmbeddingViewerWindow(QWidget):
                 for item in data_items
             )
             if len(set(lda_labels) - {REVIEW_LABEL}) < 2:
+                self._restore_busy_cursor()
                 QMessageBox.warning(
                     self,
                     "LDA Not Available",
@@ -1314,13 +1345,12 @@ class EmbeddingViewerWindow(QWidget):
         # Start worker
         self._pipeline_running = True
         
-        # Update status bar if available
-        QApplication.setOverrideCursor(Qt.WaitCursor)
         self.main_window.status_bar.showMessage("Running embedding pipeline...", 5000)
-        
+
         self._disable_analysis_buttons()
         self._pipeline_worker.start()
-        
+        return True
+
     def _extract_features_for_worker(self, model_name, data_items, live_model=None, on_batch=None, status_callback=None, cancel_check=None):
         """
         Wrapper for _extract_features that works with the worker thread.
@@ -1344,7 +1374,13 @@ class EmbeddingViewerWindow(QWidget):
     @pyqtSlot(str, str)
     def _on_worker_error(self, title, text):
         """Show a warning raised on the worker thread. Runs on the GUI thread."""
-        QMessageBox.warning(self, title, text)
+        # The pipeline may still be running under the wait cursor; show an
+        # arrow over the box (balanced push/pop, so the wait cursor returns).
+        QApplication.setOverrideCursor(Qt.ArrowCursor)
+        try:
+            QMessageBox.warning(self, title, text)
+        finally:
+            QApplication.restoreOverrideCursor()
 
     @pyqtSlot(int, int)
     def _on_extraction_status(self, processed, total):
@@ -1406,15 +1442,15 @@ class EmbeddingViewerWindow(QWidget):
                 
         finally:
             self._pipeline_running = False
-            QApplication.restoreOverrideCursor()
+            self._restore_busy_cursor()
             self._update_toolbar_state()
     
     def _on_pipeline_error(self, error_message):
         """Handle errors from the worker."""
-        QMessageBox.warning(self, "Pipeline Error", error_message)
-        
         self._pipeline_running = False
-        QApplication.restoreOverrideCursor()
+        self._restore_busy_cursor()
+        QMessageBox.warning(self, "Pipeline Error", error_message)
+
         self._update_toolbar_state()
         
         # Update status bar with error message if available
@@ -1538,7 +1574,7 @@ class EmbeddingViewerWindow(QWidget):
             return key
         # The HF pipeline path used to flatten every token (257 x 384 for
         # DINOv2-small); vectors cached under the bare key are that layout.
-        if (not live_source and not is_openclip_model(model_name) and not is_timm_model(model_name)
+        if (not live_source and not is_openclip_model(model_name)
                 and not is_yolo_model(model_name) and is_transformer_model(model_name)):
             key += MEAN_POOL_KEY_SUFFIX
         if options.get('image_tokens'):
@@ -1601,7 +1637,7 @@ class EmbeddingViewerWindow(QWidget):
             status_callback: Optional callback fn() for per-item status updates.
             cancel_check: Optional callable () -> bool to abort extraction early.
         """
-        # First: image tokens applies to every dense backbone (HF, timm, OpenCLIP).
+        # First: image tokens applies to every dense backbone (DINO, OpenCLIP).
         if self._extraction_options.get('image_tokens'):
             return self._extract_image_token_features(data_items, model_name, on_batch=on_batch, status_callback=status_callback, cancel_check=cancel_check)
         if model_name == COLOR_MODEL:
@@ -1611,8 +1647,6 @@ class EmbeddingViewerWindow(QWidget):
                                                 feature_fn=color_texture_features)
         elif is_openclip_model(model_name):
             return self._extract_openclip_features(data_items, model_name, progress_bar, on_batch=on_batch, status_callback=status_callback, cancel_check=cancel_check)
-        elif is_timm_model(model_name):
-            return self._extract_timm_features(data_items, model_name, progress_bar, on_batch=on_batch, status_callback=status_callback, cancel_check=cancel_check)
         elif is_yolo_model(model_name):
             return self._extract_yolo_features(data_items, model_name, progress_bar, live_model=live_model, on_batch=on_batch, status_callback=status_callback, cancel_check=cancel_check)
         elif is_transformer_model(model_name):
@@ -2033,76 +2067,6 @@ class EmbeddingViewerWindow(QWidget):
                 holes.append(np.array([(p.x(), p.y()) for p in hole], dtype=np.float64))
         return rings, holes
 
-    def _load_timm_extractor(self, model_name):
-        """Load and cache a TimmExtractor for pooled feature extraction."""
-        bare_name = strip_timm_prefix(model_name)
-        if (self._cached_timm_extractor_name == bare_name
-                and self._cached_timm_extractor is not None):
-            return self._cached_timm_extractor
-
-        try:
-            from coralnet_toolbox.Features.Extractor import TimmExtractor
-            extractor = TimmExtractor(bare_name, device=self.device)
-            self._cached_timm_extractor = extractor
-            self._cached_timm_extractor_name = bare_name
-            return extractor
-        except Exception as e:
-            self.worker_error.emit("Error", f"Failed to load TIMM model: {e}")
-            return None
-
-    def _extract_timm_features(self, data_items, model_name, progress_bar=None,
-                               on_batch=None, status_callback=None, cancel_check=None):
-        """Extract pooled features using a timm model."""
-        try:
-            extractor = self._load_timm_extractor(model_name)
-            if extractor is None:
-                return np.array([]), []
-
-            features_list = []
-            valid_results = []
-            batch_buffer_items = []
-            batch_buffer_features = []
-            flush_interval = self.batch_size
-
-            for chunk in self._chunked(
-                    self._iter_prepared_images(data_items, 'numpy'), self.batch_size):  # RGB: extract_pooled takes image_rgb
-                if cancel_check is not None and cancel_check():
-                    return np.array(features_list), valid_results
-
-                for img, item in chunk:
-                    try:
-                        feature_vector = np.mean(
-                            [extractor.extract_pooled(v) for v in self._expand_rotations([img])],
-                            axis=0).astype(np.float32)
-                        features_list.append(feature_vector)
-                        valid_results.append(item)
-                        batch_buffer_items.append(item)
-                        batch_buffer_features.append(feature_vector)
-                        if status_callback:
-                            status_callback()
-                    except Exception:
-                        pass
-                    finally:
-                        if progress_bar:
-                            progress_bar.update_progress()
-
-                if on_batch and len(batch_buffer_items) >= flush_interval:
-                    on_batch(batch_buffer_items, np.array(batch_buffer_features))
-                    batch_buffer_items = []
-                    batch_buffer_features = []
-
-            if on_batch and batch_buffer_items:
-                on_batch(batch_buffer_items, np.array(batch_buffer_features))
-
-            return np.array(features_list), valid_results
-
-        except Exception as e:
-            self.worker_error.emit("Error", f"TIMM extraction failed: {e}")
-            return np.array([]), []
-        finally:
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
     def _load_openclip_model(self, model_name):
         """Load and cache an open_clip model for pooled feature extraction."""
         bare_name = strip_openclip_prefix(model_name)
@@ -2196,7 +2160,7 @@ class EmbeddingViewerWindow(QWidget):
         """Yield (image, item) lazily to bound memory during extraction.
 
         `bgr` because the two numpy consumers want opposite channel orders:
-        ultralytics `model.embed` documents cv2 order, while timm/HF
+        ultralytics `model.embed` documents cv2 order, while HF
         `extract_pooled` takes `image_rgb`. Passing one array to both is wrong
         for one of them, so the caller states which it needs.
         """
@@ -3935,6 +3899,8 @@ class EmbeddingViewerWindow(QWidget):
                         pass
             except Exception:
                 pass
+            # A cancelled worker emits neither finished nor error.
+            self._restore_busy_cursor()
 
             # Clear scene and internal state
             try:
