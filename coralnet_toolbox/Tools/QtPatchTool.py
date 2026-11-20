@@ -39,13 +39,16 @@ class PatchTool(Tool):
         self.report_state()
 
     def status_hint(self):
-        """Say how to place patches, and whether live classification is on."""
+        """Say how to place patches, the current patch size, and whether live classification is on."""
+        size = self.annotation_window.annotation_size
         if self.live_classify_mode:
-            return ("Live classification on: hover to see the model's prediction"
+            return (f"Patch size: {size} px"
+                    "  |  Live classification on: hover to see the model's prediction"
                     "  |  Left click to place a patch with it"
                     "  |  Ctrl+wheel: patch size"
                     "  |  Ctrl+1: turn live classification off")
-        return ("Left click to place a patch"
+        return (f"Patch size: {size} px"
+                "  |  Left click to place a patch"
                 "  |  Ctrl+wheel: patch size"
                 "  |  Ctrl+1: turn live classification on")
 
@@ -147,6 +150,9 @@ class PatchTool(Tool):
                 self.annotation_window.set_annotation_size(delta=16)  # Zoom in
             else:
                 self.annotation_window.set_annotation_size(delta=-16)  # Zoom out
+
+            # The hint carries the patch size, so repost it with the new value
+            self.report_state()
 
             # Update the cursor annotation with the new size
             scene_pos = self.annotation_window.mapToScene(event.pos())
