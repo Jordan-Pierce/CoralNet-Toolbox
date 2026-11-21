@@ -670,13 +670,6 @@ class Base(QDialog):
         # the user to guess. The open image is the one that surprises people.
         self.last_skipped = {}
 
-        # How the last pass ranked its candidates: 'diversity' when the project
-        # carries pooled descriptors and k-center greedy decided the order,
-        # 'random' when it fell back to a shuffle. Reported rather than asked
-        # for -- there is no knob, because a project with no descriptors has no
-        # choice to make.
-        self.last_acquisition = 'random'
-
         # Per-label verified counts as of the last round, which is what the
         # automatic trigger measures against. Captured when a round starts, so
         # work done while one is training still counts towards the next.
@@ -725,9 +718,6 @@ class Base(QDialog):
         self._auto_shortfall = {}
         self._verified_counts = {}
 
-        # Which of the five states the session is in, read by the callout and
-        # by the status-bar line so the two cannot disagree.
-        self.session_state = 'idle'
         # What the round is doing right now, in the words the worker used. Held
         # rather than only posted, because the line is rebuilt on every recount
         # and would otherwise lose the epoch note to the next annotation change.
@@ -1568,27 +1558,6 @@ class Base(QDialog):
             rest = len(shortfall) - len(short)
             listed += ", +%d label%s" % (rest, "" if rest == 1 else "s")
         return ("auto train in %s" % listed) if auto else ("next round wants %s" % listed)
-
-    def next_round_detail(self):
-        """The same thing at tooltip length, naming every label that is short."""
-        shortfall = getattr(self, '_auto_shortfall', None)
-        spinbox = getattr(self, 'auto_train_spinbox', None)
-        target = spinbox.value() if spinbox is not None else 0
-        auto = (getattr(self, 'auto_train_combo', None) is not None
-                and self.auto_train_combo.currentText() == "True")
-        if not shortfall:
-            if auto:
-                return ("Every included label has enough new work: the next round "
-                        "starts on its own.")
-            return ("Every included label has enough new work. Press Train Round "
-                    "when you are ready.")
-
-        listed = ", ".join("%s %d" % (code, count) for code, count
-                           in sorted(shortfall.items(), key=lambda item: -item[1]))
-        lead = ("Auto Train starts the next round once every included label has gained "
-                if auto else
-                "Counting towards the next round: every included label wants ")
-        return "%s%d newly confirmed annotations. Still to go: %s." % (lead, target, listed)
 
     def create_review_header(self):
         """The queue count, at the top of the Review group and on its own surface.
@@ -3559,7 +3528,6 @@ class Base(QDialog):
         self.last_predicted_images = []
         self.predicted_ever = set()
         self.last_skipped = {}
-        self.last_acquisition = 'random'
         self.baseline_counts = None
         # The frozen class order goes too. It exists to keep round n+1's class
         # indices lined up with round n's weights, and there are no weights now.
@@ -3829,12 +3797,6 @@ class Base(QDialog):
         self.last_round_outcome.update(fields)
 
     @staticmethod
-    def next_step_message(outcome):
-        """The whole hand-off as one sentence, for the status bar and for tests."""
-        headline, detail, action = Base.next_step_parts(outcome)
-        return headline + " " + detail + action
-
-    @staticmethod
     def next_step_parts(outcome):
         """(headline, detail, action) for one finished round.
 
@@ -3950,7 +3912,6 @@ class Base(QDialog):
         self.state_pill.setText(STATE_WORD[state])
         self.state_pill.setStyleSheet(state_pill_style(colour))
         self.state_pill.setToolTip(STATE_TOOLTIP[state])
-        self.session_state = state
         self.post_status()
 
     @staticmethod
@@ -4672,12 +4633,6 @@ class Base(QDialog):
         return best if os.path.isfile(best) else None
 
     @staticmethod
-    def read_metric(run_dir):
-        """The round's mAP50, for the column that reports it."""
-        metrics = Base.read_metrics(run_dir)
-        return None if metrics is None else metrics.get('map50')
-
-    @staticmethod
     def round_score(entry):
         """What a round is judged by: fitness, falling back to mAP50.
 
@@ -4873,8 +4828,6 @@ class Base(QDialog):
                               excluded from the budget still covers the part of
                               the project it sits in.
         """
-        self.last_acquisition = 'random'
-
         candidates = [entry[-1] for entry in untouched] + [entry[-1] for entry in working]
         if budget <= 0 or len(candidates) < DIVERSITY_MIN_VECTORS:
             return untouched, working
@@ -4889,7 +4842,6 @@ class Base(QDialog):
                    if vector.size == dim]
         covered = np.stack(covered) if covered else None
 
-        self.last_acquisition = 'diversity'
         # The untouched pool is measured against the annotated set, because
         # reaching the parts of the project nobody has covered is the whole
         # point of it. The working pool *is* that set: measuring it against
