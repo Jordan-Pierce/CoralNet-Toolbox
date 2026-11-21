@@ -492,7 +492,7 @@ EXPLORE_SHARE = 0.75
 # images in a project of six hundred, the diverse three would take the front of
 # every round's budget forever -- not because they are worth predicting on, but
 # because they are the only ones the ranking can see. Below the share the whole
-# pool falls back to the counting order, which at least ranks every image by the
+# pool falls back to the random order, which at least treats every image by the
 # same rule.
 DIVERSITY_MIN_SHARE = 0.5
 
@@ -672,10 +672,10 @@ class Base(QDialog):
 
         # How the last pass ranked its candidates: 'diversity' when the project
         # carries pooled descriptors and k-center greedy decided the order,
-        # 'counts' when it fell back to annotation counts. Reported rather than
-        # asked for -- there is no knob, because a project with no descriptors
-        # has no choice to make.
-        self.last_acquisition = 'counts'
+        # 'random' when it fell back to a shuffle. Reported rather than asked
+        # for -- there is no knob, because a project with no descriptors has no
+        # choice to make.
+        self.last_acquisition = 'random'
 
         # Per-label verified counts as of the last round, which is what the
         # automatic trigger measures against. Captured when a round starts, so
@@ -3559,7 +3559,7 @@ class Base(QDialog):
         self.last_predicted_images = []
         self.predicted_ever = set()
         self.last_skipped = {}
-        self.last_acquisition = 'counts'
+        self.last_acquisition = 'random'
         self.baseline_counts = None
         # The frozen class order goes too. It exists to keep round n+1's class
         # indices lined up with round n's weights, and there are no weights now.
@@ -4712,16 +4712,15 @@ class Base(QDialog):
         either pool takes what the other cannot fill.
 
         Within a pool: images no round has predicted on yet come first, so the
-        budget moves across the project instead of re-picking the same handful;
-        then fewest annotations; then a stable hash, so the choice does not
-        wander between rounds for no reason.
+        budget moves across the project instead of re-picking the same handful.
+        Inside that tier the order is random, freshly drawn on every call, so
+        two rounds over the same project do not land on the same images.
 
-        Within those tiers, when the project carries pooled per-image
-        descriptors, the order is decided by **k-center greedy** rather than by
-        annotation count: the image furthest from everything already covered
-        first, each pick joining the covered set. That is what stops a budget of
-        ten going on ten pictures of the same sand patch. It falls back to the
-        counting order silently when the descriptors are not there --- see
+        When the project carries pooled per-image descriptors, the order inside
+        the tier is decided by **k-center greedy** instead: a random image
+        first, then each pick the one furthest from everything already covered.
+        That is what stops a budget of ten going on ten pictures of the same
+        sand patch. Without descriptors the random order simply stands --- see
         rank_by_diversity.
 
         The Explorer's FAISS index is not what this reads, and cannot be: it is
@@ -4767,18 +4766,19 @@ class Base(QDialog):
                 skipped['awaiting'] += 1
                 continue
 
-            entry = (1 if image_path in self.predicted_ever else 0,
-                     len(annotations),
-                     InPlaceTraining.stable_fraction(image_path),
-                     image_path)
+            entry = (1 if image_path in self.predicted_ever else 0, image_path)
             (untouched if not annotations else working).append(entry)
 
-        untouched.sort()
-        working.sort()
+        # Shuffled, then stably sorted by tier: never-predicted images first,
+        # in a different random order every call.
+        rng = np.random.default_rng()
+        for pool in (untouched, working):
+            rng.shuffle(pool)
+            pool.sort(key=lambda entry: entry[0])
         self.last_skipped = skipped
 
         untouched, working = self.rank_by_diversity(untouched, working,
-                                                    covered_paths, budget)
+                                                    covered_paths, budget, rng)
         return self.spend_budget(untouched, working, budget)
 
     @staticmethod
@@ -4860,11 +4860,11 @@ class Base(QDialog):
         dim = max(counts, key=lambda size: (counts[size], size))
         return {path: vector for path, vector in found.items() if vector.size == dim}
 
-    def rank_by_diversity(self, untouched, working, covered_paths, budget):
+    def rank_by_diversity(self, untouched, working, covered_paths, budget, rng=None):
         """Re-order both pools by descriptor diversity, or leave them as found.
 
         Diversity is an upgrade to the ranking and never a requirement of it: a
-        project that has never been baked must behave exactly as it did before,
+        project that has never been baked keeps the random order it arrived in,
         with no dialog, no error, and no minutes silently spent baking features
         nobody asked for. Every early return here is that fallback.
 
@@ -4873,7 +4873,7 @@ class Base(QDialog):
                               excluded from the budget still covers the part of
                               the project it sits in.
         """
-        self.last_acquisition = 'counts'
+        self.last_acquisition = 'random'
 
         candidates = [entry[-1] for entry in untouched] + [entry[-1] for entry in working]
         if budget <= 0 or len(candidates) < DIVERSITY_MIN_VECTORS:
@@ -4894,12 +4894,12 @@ class Base(QDialog):
         # reaching the parts of the project nobody has covered is the whole
         # point of it. The working pool *is* that set: measuring it against
         # itself would make every distance zero, so it is spread out within
-        # itself instead, from its most typical image outwards.
-        return (self.diversify(untouched, vectors, covered, budget),
-                self.diversify(working, vectors, None, budget))
+        # itself instead.
+        return (self.diversify(untouched, vectors, covered, budget, rng),
+                self.diversify(working, vectors, None, budget, rng))
 
     @staticmethod
-    def diversify(entries, vectors, covered, budget):
+    def diversify(entries, vectors, covered, budget, rng=None):
         """Re-order one pool by k-center greedy, tier by tier.
 
         The tiers are the pool's existing first sort key -- images no round has
@@ -4909,7 +4909,7 @@ class Base(QDialog):
         image already predicted on this session has a result waiting no matter
         how distinct it looks.
 
-        Entries whose image has no descriptor keep their counting order and go
+        Entries whose image has no descriptor keep their random order and go
         behind the ranked ones in their tier. Picks made in an earlier tier join
         the covered set, so a later tier is not ranked as though the budget were
         still unspent.
@@ -4929,7 +4929,7 @@ class Base(QDialog):
 
             if remaining > 0 and len(described) >= DIVERSITY_MIN_VECTORS:
                 matrix = np.stack([vectors[entry[-1]] for entry in described])
-                picked = Base.kcenter_greedy(matrix, covered, remaining)
+                picked = Base.kcenter_greedy(matrix, covered, remaining, rng)
                 taken = set(picked)
                 tier_order = ([described[index] for index in picked]
                               + [entry for index, entry in enumerate(described)
@@ -4956,7 +4956,7 @@ class Base(QDialog):
         return ordered
 
     @staticmethod
-    def kcenter_greedy(vectors, covered, k):
+    def kcenter_greedy(vectors, covered, k, rng=None):
         """Farthest-point traversal over `vectors`, returning row indices.
 
         The classic diversity acquisition: repeatedly take the row furthest from
@@ -4964,11 +4964,14 @@ class Base(QDialog):
         distances, which at project scale is milliseconds of numpy and needs no
         index -- see the plan's note on why FAISS is not reached for here.
 
-        :param covered: Rows already accounted for, or None. With none, the
-                        first pick is the pool's medoid: the most typical image
-                        rather than the strangest, which is where a maximum over
-                        an empty covered set lands and is usually a blurred
-                        frame or a hand in the shot.
+        The first pick is a random row, drawn fresh on every call, so two rounds
+        over the same pool do not begin from the same image and therefore do not
+        walk the same path. Every pick after it is deterministic.
+
+        :param covered: Rows already accounted for, or None. When given, they
+                        count as picked for the distances, so the traversal
+                        heads for what they do not already represent.
+        :param rng: A numpy Generator, for a reproducible first pick.
         """
         vectors = np.asarray(vectors, dtype=np.float32)
         count = len(vectors)
@@ -4976,13 +4979,14 @@ class Base(QDialog):
             return []
         k = min(k, count)
 
+        if rng is None:
+            rng = np.random.default_rng()
+
         if covered is None or len(covered) == 0:
-            centre = vectors.mean(axis=0, keepdims=True)
-            first = int(np.argmin(Base.min_square_distance(vectors, centre)))
             running = np.full(count, np.inf, dtype=np.float32)
         else:
             running = Base.min_square_distance(vectors, covered)
-            first = int(np.argmax(running))
+        first = int(rng.integers(count))
 
         picked = [first]
         running = np.minimum(
