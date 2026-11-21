@@ -411,25 +411,25 @@ All dock windows (Annotation Window, Labels Window, Rasters Window, Confidence W
 
 - **See Anything (YOLOE)**:
   - **Train Model**: Train a custom See Anything (YOLOE) model from annotations
+  - **One prompt**: the Deploy Predictor (and its tool) and the Deploy Generator share a single prompt. Examples added in the tool are run by the Generator, and what the Generator's **Calibrate** adds and chooses is what the tool predicts from. Load the same model in both; a different model clears the prompt when it loads. Deactivating a model keeps the prompt.
   - **Deploy Predictor**: Deploy a YOLOE model to use interactively within the same image
-    - Use the See Anything Tool to draw boxes, type a phrase (<kbd>Ctrl</kbd> + <kbd>T</kbd>), or click detections to find more / fewer like them
-    - Everything added is listed in the **Prompt Session** panel, grouped by where it came from; untick an example to try the prompt without it
-    - **Save** / **Load** a session (`.npz`), or **Inspect** it to plot the examples and rank phrases against them (Text Alignment)
-    - **Send to Generator** adds the session, with its confidence threshold and image size, to the Generator's prompt
-    - The Status box shows the loaded model, where the session's examples came from, and the last action
+    - Use the See Anything Tool to draw 2 or 3 boxes around examples (more boxes make a better example), type a phrase (<kbd>Ctrl</kbd> + <kbd>T</kbd>), or click detections to find more / fewer like them
+    - **Clear Prompt** removes every example (<kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Backspace</kbd> in the tool); single examples cannot be removed
+    - **Save Prompt** / **Load Prompt** (`.npz`); loading adds the file's examples to the prompt and applies its confidence threshold
+    - The Status box shows the loaded model, where the prompt's examples came from, the last action, and any warnings
   - **Deploy Generator**: Deploy a YOLOE model to use like a detector / segmentor across many images
     - Select the YOLOE model and parameters, then load the model
-    - Build the prompt from any of:
-      - **Add from annotations**: choose a label, highlight image(s) with rectangles or polygons, then press **Add highlighted** (one example per image)
-        - Images already in the prompt are skipped unless their annotations changed
-        - **Remove all images from the prompt** removes examples added from annotations, keeping tool examples and phrases
-      - **Add from Tool**: the prompt built with the See Anything Tool (adding it twice is harmless)
-      - **Add phrase**: a text prompt
+    - Build the prompt with:
+      - **Calibrate**: choose a label and press it. Every image with a verified rectangle or polygon of that label becomes an example (one per image), some images are held out, and the confidence threshold that scores best on them is applied. Press it again after adding annotations
+        - Only verified annotations are used; objects nobody annotated count as false positives, so the threshold may come out a little high
+        - The held out images are left out of the prompt, so the prompt that runs is the one that was tested
+      - The See Anything Tool: its examples are already in the prompt
+      - **Load Prompt**: a saved prompt (loading it twice is harmless)
     - **Save detections as**: the label detections are saved under; it can differ from the label of the annotations used as examples
-    - The prompt list groups examples by source (annotations, tool, phrases, files); untick an example to leave it out
-    - **Save** / **Load** the prompt (`.npz` only; legacy `.pt` VPE files are no longer supported)
-    - Examples from annotations are re-embedded automatically when the image size changes; examples from the tool cannot be, and the panel warns
-    - **OK** is enabled once a model is loaded, an output label is chosen, and the prompt has at least one enabled example
+    - The last calibration's result shows under **Calibrate**; the Status box shows the model, where the examples came from, how many are in use, and any warnings; **Clear Prompt** removes every example, here and in the tool
+    - **Save Prompt** / **Load Prompt** (`.npz` only; legacy `.pt` VPE files are no longer supported)
+    - Examples from annotations are re-embedded automatically when the Generator's image size changes; examples from the tool cannot be, and the Status box warns
+    - **OK** is enabled once a model is loaded, an output label is chosen, and the prompt has at least one example in use
     - Use the loaded model with the prompt on new images or work areas
 
 - **Feature Selector**:

@@ -123,6 +123,7 @@ from coralnet_toolbox.SeeAnything import (
     DeployPredictorDialog as SeeAnythingDeployPredictorDialog,
     DeployGeneratorDialog as SeeAnythingDeployGeneratorDialog,
 )
+from coralnet_toolbox.SeeAnything.QtPromptSession import SharedPrompt as SeeAnythingSharedPrompt
 
 # CoralNet dialogs
 from coralnet_toolbox.CoralNet import (
@@ -361,7 +362,9 @@ class MainWindow(QMainWindow):
         self.sam_deploy_predictor_dialog = SAMDeployPredictorDialog(self)
         self.sam_deploy_generator_dialog = SAMDeployGeneratorDialog(self)
 
-        # Create dialogs (See Anything)
+        # Create dialogs (See Anything). Both use the one prompt made here: what
+        # the tool adds, the Generator runs, and what Calibrate finds, the tool uses.
+        self.see_anything_prompt = SeeAnythingSharedPrompt(self)
         self.see_anything_deploy_predictor_dialog = SeeAnythingDeployPredictorDialog(self)
         self.see_anything_deploy_generator_dialog = SeeAnythingDeployGeneratorDialog(self)
 
