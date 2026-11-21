@@ -3,7 +3,7 @@
 The Generator stacks one class per reference image, so the confidence a prompt
 needs rises with the number of references, and which images are the references
 matters as much as how many. Measured on THESIA with YOLOE 11s at 1024
-(scripts/SeeAnything_Testbed.py): the best threshold went from about 0.16 for 10
+(data/experimental/SeeAnything_Testbed.py): the best threshold went from about 0.16 for 10
 images to 0.53 for all 234, against a fixed default of 0.20, and prompts of 10
 random images ranged 0.06 to 0.21 mAP50-95.
 
@@ -44,7 +44,26 @@ MAX_VALIDATION = 40
 MIN_IMAGES = MIN_VALIDATION + 1
 
 DEFAULT_PER_TRY = 10
-DEFAULT_TRIES = 20
+# Random sets to try besides every candidate image together. Off: THESIA, held out
+# images (data/experimental/vpe_boxes), every candidate stacked with a calibrated
+# threshold scored F1 0.32 against 0.19 at the default threshold, within 0.01 of
+# the best possible threshold, and the best of 20 random sets of 10 gained nothing
+# on top (-0.01 to +0.01): picked on the validation images it looked 0.13 better
+# than it did on new ones. The search below still works if this is raised.
+DEFAULT_TRIES = 0
+
+# Images with at least this many boxes make better examples: an image's boxes are
+# embedded together, and one box alone gave about half the detections of two
+# (THESIA, data/experimental/vpe_boxes). Random sets are drawn from such images
+# when there are enough of them.
+PREFERRED_BOXES = 2
+
+# A random set is only kept over every candidate image if it would have done
+# better on images it was not chosen on: resampled this many times, it must gain
+# on average and win in at least MIN_WIN_RATE of the resamples.
+BOOTSTRAP_ROUNDS = 200
+MIN_GAIN = 0.0
+MIN_WIN_RATE = 0.6
 
 
 def seed_for(keys):
@@ -86,7 +105,7 @@ def split_images(pool, outside, rng):
     return candidates, from_outside + sorted(held)
 
 
-def draw_tries(candidates, per_try, tries, rng):
+def draw_tries(candidates, per_try, tries, rng, box_counts=None):
     """The example sets to score: every candidate together first, then random sets.
 
     Scoring every candidate too shows whether choosing a few beats using them
@@ -97,6 +116,9 @@ def draw_tries(candidates, per_try, tries, rng):
         per_try (int): Images per random set.
         tries (int): How many distinct random sets to draw.
         rng (random.Random): Draws the sets.
+        box_counts (dict, optional): Image to how many boxes it is embedded from.
+            Random sets are drawn from the images with `PREFERRED_BOXES` or more
+            when at least twice `per_try` of them exist, otherwise from every candidate.
 
     Returns:
         list[tuple]: The tries. Just one, every candidate, when there are no more
@@ -107,11 +129,17 @@ def draw_tries(candidates, per_try, tries, rng):
     if len(candidates) <= per_try:
         return [everything]
 
+    pool = list(candidates)
+    if box_counts:
+        rich = [c for c in candidates if box_counts.get(c, 1) >= PREFERRED_BOXES]
+        if len(rich) >= 2 * per_try:
+            pool = rich
+
     out, seen = [everything], {frozenset(everything)}
     attempts = 0
     while len(out) < tries + 1 and attempts < 50 * max(1, tries):
         attempts += 1
-        pick = tuple(rng.sample(candidates, per_try))
+        pick = tuple(rng.sample(pool, per_try))
         key = frozenset(pick)
         if key not in seen:
             seen.add(key)
@@ -213,6 +241,11 @@ class TryCurve:
     shown: np.ndarray           # Detections above each threshold, ignored ones aside
     known: int
     images: int
+    # The same counts per validation image, (thresholds, images), and each image's
+    # verified boxes: what resampling the images needs.
+    true_positives_by_image: np.ndarray = None
+    shown_by_image: np.ndarray = None
+    known_by_image: np.ndarray = None
 
     def scores(self, beta):
         """F-beta at every threshold."""
@@ -253,14 +286,21 @@ def curve_for(keys, matches):
     Returns:
         TryCurve
     """
-    confidence = np.concatenate([m.confidence for m in matches]) if matches else np.zeros(0)
-    found = np.concatenate([m.found for m in matches]) if matches else np.zeros(0, dtype=bool)
-    above = confidence[None, :] > THRESHOLDS[:, None]
+    hits = np.zeros((len(THRESHOLDS), len(matches)))
+    shown = np.zeros((len(THRESHOLDS), len(matches)))
+    for j, m in enumerate(matches):
+        above = m.confidence[None, :] > THRESHOLDS[:, None]
+        hits[:, j] = (above & m.found[None, :]).sum(axis=1)
+        shown[:, j] = above.sum(axis=1)
+    known = np.array([m.known for m in matches], dtype=np.float64)
     return TryCurve(keys=tuple(keys),
-                    true_positives=(above & found[None, :]).sum(axis=1).astype(np.float64),
-                    shown=above.sum(axis=1).astype(np.float64),
-                    known=int(sum(m.known for m in matches)),
-                    images=len(matches))
+                    true_positives=hits.sum(axis=1),
+                    shown=shown.sum(axis=1),
+                    known=int(known.sum()),
+                    images=len(matches),
+                    true_positives_by_image=hits,
+                    shown_by_image=shown,
+                    known_by_image=known)
 
 
 def score_try(keys, matches, beta):
@@ -268,9 +308,31 @@ def score_try(keys, matches, beta):
     return curve_for(keys, matches).best(beta)
 
 
+def _fbeta(hits, shown, known, beta):
+    """F-beta from counts, of any shape; zero where nothing is found."""
+    hits = np.asarray(hits, dtype=np.float64)
+    shown = np.asarray(shown, dtype=np.float64)
+    precision = np.divide(hits, shown, out=np.zeros_like(hits), where=shown > 0)
+    recall = hits / known if known else np.zeros_like(hits)
+    b2 = beta * beta
+    denominator = b2 * precision + recall
+    return np.divide((1 + b2) * precision * recall, denominator,
+                     out=np.zeros_like(hits), where=denominator > 0)
+
+
+@dataclass
+class Choice:
+    """What a calibration settled on."""
+
+    score: TryScore      # The images to prompt with, and the threshold to use
+    subset: bool         # Whether that is a random set, rather than every candidate image
+    gain: float          # What the best set gained over every image, on images it was not chosen on
+    win_rate: float      # How often it gained, over the resamples
+
+
 @dataclass
 class Calibration:
-    """Every try's counts; which one to keep depends on the goal, chosen afterwards."""
+    """Every try's counts; the goal and which try to keep are decided from them afterwards."""
 
     candidates: list
     validation: list
@@ -289,27 +351,67 @@ class Calibration:
         """Whether any try found any verified box at any threshold."""
         return any(t.true_positives.max() > 0 for t in self.tries)
 
-    def options(self, goal):
-        """What the results offer for this goal, as (name, TryScore), each at its own threshold.
+    def best_set(self, beta):
+        """Index of the random set that best meets the goal on every validation image; the earlier wins a tie."""
+        return max(range(1, len(self.tries)), key=lambda i: (self.tries[i].best(beta).score, -i))
 
-        Every candidate together, then the random set that best meets the goal,
-        when any were drawn.
+    def subset_gain(self, beta, rounds=BOOTSTRAP_ROUNDS):
+        """What choosing the best random set is worth, measured on images it was not chosen on.
+
+        The best of many sets looks better on the images it was picked on than it
+        will on new ones. So the validation images are resampled with replacement:
+        the best set and its threshold are chosen on the images drawn, then
+        compared with every candidate image together on the images left out.
+
+        Returns:
+            tuple[float, float]: The mean F-beta gain of the chosen set over every
+            candidate, and the share of resamples in which it was ahead.
+        """
+        everything = self.everything
+        n = everything.images if everything is not None else 0
+        if len(self.tries) < 2 or n < 2 or everything.true_positives_by_image is None:
+            return 0.0, 0.0
+
+        hits = np.stack([t.true_positives_by_image for t in self.tries])    # (tries, thresholds, images)
+        shown = np.stack([t.shown_by_image for t in self.tries])
+        known = everything.known_by_image
+        rng = np.random.default_rng(seed_for(everything.keys))
+        count, steps = len(self.tries), len(THRESHOLDS)
+
+        gains = []
+        for _ in range(rounds):
+            inside = np.bincount(rng.integers(0, n, n), minlength=n).astype(np.float64)
+            outside = (inside == 0).astype(np.float64)
+            known_in, known_out = float(known @ inside), float(known @ outside)
+            if known_in == 0 or known_out == 0:
+                continue
+            scores = _fbeta(hits @ inside, shown @ inside, known_in, beta)    # (tries, thresholds)
+            # Where each try peaks: the highest threshold reaching its best, as `TryCurve.best` does.
+            peak = steps - 1 - np.argmax(scores[:, ::-1] == scores.max(axis=1, keepdims=True), axis=1)
+            winner = 1 + int(np.argmax(scores[np.arange(1, count), peak[1:]]))
+            result = [float(_fbeta(hits[i, peak[i]] @ outside, shown[i, peak[i]] @ outside, known_out, beta))
+                      for i in (winner, 0)]
+            gains.append(result[0] - result[1])
+
+        if not gains:
+            return 0.0, 0.0
+        gains = np.asarray(gains)
+        return float(gains.mean()), float((gains > 0).mean())
+
+    def choose(self, goal=DEFAULT_GOAL):
+        """The images and threshold to use: every candidate, unless a random set clearly does better.
+
+        Returns:
+            Choice
         """
         beta = GOALS[goal]
-        rows = [("All images", self.everything.best(beta))]
-        if len(self.tries) > 1:
-            best = max(range(1, len(self.tries)), key=lambda i: (self.tries[i].best(beta).score, -i))
-            rows.append((f"Best set of {len(self.tries[best].keys)}", self.tries[best].best(beta)))
-        return rows
-
-    def recommended(self, goal):
-        """Index into `options(goal)` of the higher score; All images wins a tie."""
-        rows = self.options(goal)
-        return max(range(len(rows)), key=lambda i: (rows[i][1].score, -i))
-
-    def best(self, goal):
-        """The recommended option for this goal."""
-        return self.options(goal)[self.recommended(goal)][1]
+        everything = self.everything.best(beta)
+        if len(self.tries) < 2:
+            return Choice(everything, False, 0.0, 0.0)
+        gain, win_rate = self.subset_gain(beta)
+        if gain > MIN_GAIN and win_rate >= MIN_WIN_RATE:
+            return Choice(self.tries[self.best_set(beta)].best(beta), True, gain, win_rate)
+        return Choice(everything, False, gain, win_rate)
 
 
 def new_rng(keys):

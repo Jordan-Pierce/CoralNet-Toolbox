@@ -18,12 +18,8 @@ from PIL import Image
 
 from coralnet_toolbox.paths import resolve_weights
 from coralnet_toolbox.Features.ModelRegistry import (
-    TRANSFORMER_MODELS,
-    YOLO_MODELS,
     is_transformer_model,
     is_yolo_model,
-    is_timm_model,
-    strip_timm_prefix,
     is_openclip_model,
     strip_openclip_prefix,
 )
@@ -42,8 +38,6 @@ def model_supports_dense(model_name: str) -> bool:
         return False
     if is_openclip_model(model_name):
         return True
-    if is_timm_model(model_name):
-        return True
     if is_yolo_model(model_name):
         return False
     return is_transformer_model(model_name)
@@ -52,7 +46,6 @@ def model_supports_dense(model_name: str) -> bool:
 # Global model caches (one per model name to avoid reloading)
 _TRANSFORMER_MODEL_CACHE = {}
 _YOLO_MODEL_CACHE = {}
-_TIMM_MODEL_CACHE = {}
 _OPENCLIP_MODEL_CACHE = {}
 
 
@@ -434,198 +427,6 @@ class TransformerExtractor(BaseExtractor):
         """Extract pooled vector [C] by mean pooling over spatial dims."""
         dense = self.extract_dense(image_rgb)
         pooled = np.mean(dense, axis=(0, 1))  # Mean over h, w
-        return pooled.astype(np.float16)
-
-    @property
-    def out_channels(self) -> int:
-        return self._channels or 768
-
-    @property
-    def patch_stride(self) -> Optional[int]:
-        return self._stride
-
-    @property
-    def supports_dense(self) -> bool:
-        return True
-
-
-class TimmExtractor(BaseExtractor):
-    """timm backbone extractor (EVA-02, FastViT, EfficientViT, ...).
-
-    Pulls the last-stage spatial map via ``forward_intermediates`` (timm >= 1.0)
-    in a uniform ``[B, C, H, W]`` layout for both ViT and CNN backbones, so there
-    is no special-token bookkeeping. Two things differ from the HF pipeline path:
-      - timm does NOT normalize inputs internally, so we apply each model's own
-        mean/std (resolved from its data config).
-      - channel count is taken from an actual forward probe, not
-        ``model.num_features`` (which can disagree, e.g. FastViT reports 1024 but
-        its last spatial map is 512).
-    """
-
-    def __init__(self, model_name: str, device: str = "cuda",
-                 input_size: Optional[int] = None,
-                 upsample_factor: Optional[int] = None):
-        # model_name arrives WITHOUT the "timm:" prefix (stripped by the caller).
-        self.model_name = model_name
-        self.device = device
-        self._input_size = int(input_size) if input_size else None
-        self._upsample_factor = int(upsample_factor) if upsample_factor else None
-        self._anyup = None
-        self._model = None
-        self._mean = None
-        self._std = None
-        self._channels = None
-        self._native_size = 224
-        # Input edge must be a multiple of this (the ViT/EVA patch size, e.g. 14
-        # or 16). patch14 backbones HARD-ASSERT on non-divisible inputs, and none
-        # of the dialog's resolutions are multiples of 14 — so we snap. 1 = no
-        # constraint (CNN backbones tolerate arbitrary sizes).
-        self._size_multiple = 1
-        self._stride = None
-        self._load_model()
-
-    def _load_anyup(self):
-        """Lazily load the AnyUp upsampler (requires internet on first use)."""
-        if self._anyup is None:
-            from coralnet_toolbox.Features.Models.AnyUpUpsampler import AnyUpUpsampler
-            self._anyup = AnyUpUpsampler(device=self.device)
-        return self._anyup
-
-    def _load_model(self):
-        """Load or retrieve a cached timm model and probe its true channel dim."""
-        global _TIMM_MODEL_CACHE
-
-        if self.model_name in _TIMM_MODEL_CACHE:
-            (self._model, self._mean, self._std, self._channels,
-             self._native_size, self._size_multiple) = _TIMM_MODEL_CACHE[self.model_name]
-            return
-
-        try:
-            import timm
-
-            # dynamic_img_size lets ViTs run at arbitrary input resolution
-            # (interpolated position embeddings). CNN backbones don't accept the
-            # kwarg, so fall back to a plain create_model for them.
-            try:
-                model = timm.create_model(
-                    self.model_name, pretrained=True, num_classes=0,
-                    dynamic_img_size=True,
-                )
-            except TypeError:
-                model = timm.create_model(self.model_name, pretrained=True, num_classes=0)
-
-            model.eval()
-            if self.device == "cuda":
-                model = model.cuda()
-
-            cfg = timm.data.resolve_model_data_config(model)
-            self._mean = np.asarray(cfg["mean"], dtype=np.float32).reshape(1, 1, 3)
-            self._std = np.asarray(cfg["std"], dtype=np.float32).reshape(1, 1, 3)
-            self._native_size = int(cfg["input_size"][-1])
-
-            # Required input multiple = the patch size for ViT/EVA backbones
-            # (patch_embed.patch_size); CNNs have no such attribute → 1.
-            patch_embed = getattr(model, "patch_embed", None)
-            patch_size = getattr(patch_embed, "patch_size", None)
-            if isinstance(patch_size, (tuple, list)):
-                self._size_multiple = int(patch_size[0])
-            elif isinstance(patch_size, int):
-                self._size_multiple = int(patch_size)
-            else:
-                self._size_multiple = 1
-
-            # Probe the true last-stage channel count from a real forward pass:
-            # forward_intermediates' last map is what extract_dense consumes, and
-            # it can differ from model.num_features (FastViT). Snap the probe size
-            # so patch14 backbones don't assert.
-            probe_S = self._snap_size(self._native_size)
-            probe = np.zeros((1, 3, probe_S, probe_S), dtype=np.float32)
-            with torch.inference_mode():
-                probe_t = torch.from_numpy(probe)
-                if self.device == "cuda":
-                    probe_t = probe_t.cuda()
-                outs = model.forward_intermediates(
-                    probe_t, indices=[-1], output_fmt="NCHW",
-                    intermediates_only=True, norm=True
-                )
-            self._channels = int(outs[-1].shape[1])
-
-            self._model = model
-            _TIMM_MODEL_CACHE[self.model_name] = (
-                model, self._mean, self._std, self._channels,
-                self._native_size, self._size_multiple
-            )
-        except Exception as e:
-            raise RuntimeError(f"Failed to load timm model {self.model_name}: {e}")
-
-    def _snap_size(self, size: int) -> int:
-        """Round an input edge down to a multiple of the patch size.
-
-        patch14 ViT/EVA backbones assert on non-divisible inputs, and none of the
-        dialog resolutions are multiples of 14, so we snap (e.g. 768 -> 756).
-        """
-        m = self._size_multiple
-        if m <= 1:
-            return int(size)
-        return max(m, (int(size) // m) * m)
-
-    def extract_dense(
-        self,
-        image_rgb: np.ndarray,
-        *,
-        out_hw: Optional[Tuple[int, int]] = None,
-    ) -> np.ndarray:
-        """Extract dense features [h, w, C] from the last-stage spatial map."""
-        try:
-            S = self._snap_size(self._input_size or self._native_size)
-            model_input = cv2.resize(image_rgb, (S, S), interpolation=cv2.INTER_AREA)
-
-            # timm does not normalize internally — apply the model's mean/std.
-            x = model_input.astype(np.float32) / 255.0
-            x = (x - self._mean) / self._std
-            x = np.ascontiguousarray(np.transpose(x, (2, 0, 1))[None])  # [1, 3, S, S]
-            tensor = torch.from_numpy(x)
-            if self.device == "cuda":
-                tensor = tensor.cuda()
-
-            with torch.inference_mode():
-                outs = self._model.forward_intermediates(
-                    tensor, indices=[-1], output_fmt="NCHW",
-                    intermediates_only=True, norm=True
-                )
-            # [1, C, h, w] -> [h, w, C]
-            feat = outs[-1][0].float().cpu().numpy()
-            feat = np.transpose(feat, (1, 2, 0))
-            h_patches, w_patches = feat.shape[0], feat.shape[1]
-            self._stride = max(1, round(image_rgb.shape[0] / h_patches))
-
-            # Optional AnyUp densification, mirroring TransformerExtractor.
-            if self._upsample_factor:
-                try:
-                    target_h = min(h_patches * self._upsample_factor, model_input.shape[0])
-                    target_w = min(w_patches * self._upsample_factor, model_input.shape[1])
-                    anyup = self._load_anyup()
-                    feat = anyup.upsample(model_input, feat, (target_h, target_w))
-                    h_patches, w_patches = target_h, target_w
-                    self._stride = max(1, round(image_rgb.shape[0] / h_patches))
-                except Exception as e:
-                    print(f"AnyUp upsampling failed, using native patch grid: {e}")
-
-            # L2 normalize over channels, return float16.
-            feat = feat.astype(np.float32)
-            norms = np.linalg.norm(feat, axis=-1, keepdims=True)
-            norms = np.maximum(norms, 1e-12)
-            feat = feat / norms
-            return feat.astype(np.float16)
-
-        except Exception as e:
-            print(f"Dense extraction failed: {e}")
-            return np.zeros((1, 1, self.out_channels), dtype=np.float16)
-
-    def extract_pooled(self, image_rgb: np.ndarray) -> np.ndarray:
-        """Extract pooled vector [C] by mean pooling over spatial dims."""
-        dense = self.extract_dense(image_rgb)
-        pooled = np.mean(dense, axis=(0, 1))
         return pooled.astype(np.float16)
 
     @property
@@ -1100,11 +901,6 @@ class FeatureExtractor:
                 strip_openclip_prefix(self.model_name), device=self.device,
                 input_size=self.input_size, upsample_factor=self.upsample_factor
             )
-        elif is_timm_model(self.model_name):
-            self._backend = TimmExtractor(
-                strip_timm_prefix(self.model_name), device=self.device,
-                input_size=self.input_size, upsample_factor=self.upsample_factor
-            )
         elif is_yolo_model(self.model_name):
             self._backend = YOLOExtractor(self.model_name, device=self.device)
         elif is_transformer_model(self.model_name):
@@ -1205,10 +1001,9 @@ class FeatureExtractor:
 
     def clear_cache(self):
         """Clear global model caches (memory cleanup)."""
-        global _TRANSFORMER_MODEL_CACHE, _YOLO_MODEL_CACHE, _TIMM_MODEL_CACHE, _OPENCLIP_MODEL_CACHE
+        global _TRANSFORMER_MODEL_CACHE, _YOLO_MODEL_CACHE, _OPENCLIP_MODEL_CACHE
         _TRANSFORMER_MODEL_CACHE.clear()
         _YOLO_MODEL_CACHE.clear()
-        _TIMM_MODEL_CACHE.clear()
         _OPENCLIP_MODEL_CACHE.clear()
 
         from coralnet_toolbox.Features.Models.AnyUpUpsampler import clear_cache as clear_anyup_cache

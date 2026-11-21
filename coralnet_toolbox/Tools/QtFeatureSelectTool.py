@@ -1,7 +1,7 @@
 """
 FeatureSelectTool — 2D feature-similarity query tool for the annotation window.
 
-Instead of SAM, it queries a dense feature map (DINOv2/v3, TIMM, ...) with
+Instead of SAM, it queries a dense feature map (DINOv2/v3, BioCLIP, ...) with
 cosine similarity and shows the per-patch similarity as a live heatmap overlay.
 The interaction mirrors SAMTool:
 

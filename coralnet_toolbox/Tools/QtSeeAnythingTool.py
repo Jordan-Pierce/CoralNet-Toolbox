@@ -199,7 +199,7 @@ class SeeAnythingTool(Tool):
         self.report_state()
 
     def _connect_signals(self):
-        """Follow the global threshold slider and edits made in the session panel."""
+        """Follow the global threshold slider and prompt changes made outside the tool."""
         if self._signals_connected:
             return
         try:
@@ -358,7 +358,7 @@ class SeeAnythingTool(Tool):
                        "  |  Ctrl+T: add a phrase"
                        "  |  Backspace or Esc: close the work area" + session_note)
         else:
-            message = ("Draw a box around an example, or Ctrl+T for a text prompt"
+            message = ("Draw 2 or 3 boxes around examples, or Ctrl+T for a text prompt"
                        "  |  Backspace, Esc or Space: close the work area")
 
         return message
@@ -755,8 +755,8 @@ class SeeAnythingTool(Tool):
         """Snapshot the prompt boxes drawn on this work area.
 
         Only the boxes. The prompt session -- phrases, example crops -- outlives
-        the work area and is shared with the dialog's panel, so it is not this
-        stack's to rewind; clear it with Ctrl+T or Ctrl+Shift+Backspace.
+        the work area and is shared with the Generator, so it is not this stack's
+        to rewind; clear it with Ctrl+T or Ctrl+Shift+Backspace.
         """
         return {
             'rectangles': [np.array(rectangle, copy=True) for rectangle in self.rectangles],
@@ -1566,8 +1566,7 @@ class SeeAnythingTool(Tool):
         """More like this: add the detection under the point as a positive example.
 
         Each such example is its own class. Measured, a separate class adds its own
-        kind of object and leaves the rest alone -- and it can be switched off by
-        itself in the session panel to see whether it was helping.
+        kind of object and leaves the rest alone.
 
         Returns:
             bool: True if the example was added.
@@ -1637,7 +1636,7 @@ class SeeAnythingTool(Tool):
         return True
 
     def on_session_edited(self):
-        """An example was toggled or removed in the session panel: re-run the work area."""
+        """The shared prompt changed outside the tool (Clear or Load, or the Generator): re-run the work area."""
         if not self.active or self.working_area is None:
             return
         session = self._session()

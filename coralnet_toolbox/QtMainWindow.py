@@ -123,6 +123,7 @@ from coralnet_toolbox.SeeAnything import (
     DeployPredictorDialog as SeeAnythingDeployPredictorDialog,
     DeployGeneratorDialog as SeeAnythingDeployGeneratorDialog,
 )
+from coralnet_toolbox.SeeAnything.QtPromptSession import SharedPrompt as SeeAnythingSharedPrompt
 
 # CoralNet dialogs
 from coralnet_toolbox.CoralNet import (
@@ -236,6 +237,12 @@ class MainWindow(QMainWindow):
         # Set the version and window icon used across dialogs and update prompts
         self.version = __version__
         self.current_project_path = ""
+        # Images an opened project lists but that could not be loaded (file
+        # missing or unreadable), and the annotations saved against them. Kept
+        # as their raw project dicts, keyed by the saved path, so SaveProject
+        # writes them back unchanged instead of dropping them from the file.
+        self.missing_project_images = {}
+        self.missing_project_annotations = {}
         self.setWindowIcon(self.coralnet_icon)
         self.update_project_label()
 
@@ -355,7 +362,9 @@ class MainWindow(QMainWindow):
         self.sam_deploy_predictor_dialog = SAMDeployPredictorDialog(self)
         self.sam_deploy_generator_dialog = SAMDeployGeneratorDialog(self)
 
-        # Create dialogs (See Anything)
+        # Create dialogs (See Anything). Both use the one prompt made here: what
+        # the tool adds, the Generator runs, and what Calibrate finds, the tool uses.
+        self.see_anything_prompt = SeeAnythingSharedPrompt(self)
         self.see_anything_deploy_predictor_dialog = SeeAnythingDeployPredictorDialog(self)
         self.see_anything_deploy_generator_dialog = SeeAnythingDeployGeneratorDialog(self)
 
