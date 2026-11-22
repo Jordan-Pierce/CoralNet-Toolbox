@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
     
     
       
@@ -2371,31 +2371,31 @@ This guide provides instructions on how to use the application, including key fu
 <p><strong>See Anything (YOLOE)</strong>:</p>
 </li>
 <li><strong>Train Model</strong>: Train a custom See Anything (YOLOE) model from annotations</li>
+<li><strong>One prompt</strong>: the Deploy Predictor (and its tool) and the Deploy Generator share a single prompt. Examples added in the tool are run by the Generator, and what the Generator's <strong>Calibrate</strong> adds and chooses is what the tool predicts from. Load the same model in both; a different model clears the prompt when it loads. Deactivating a model keeps the prompt.</li>
 <li><strong>Deploy Predictor</strong>: Deploy a YOLOE model to use interactively within the same image<ul>
-<li>Use the See Anything Tool to draw boxes, type a phrase (<kbd>Ctrl</kbd> + <kbd>T</kbd>), or click detections to find more / fewer like them</li>
-<li>Everything added is listed in the <strong>Prompt Session</strong> panel, grouped by where it came from; untick an example to try the prompt without it</li>
-<li><strong>Save</strong> / <strong>Load</strong> a session (<code>.npz</code>), or <strong>Inspect</strong> it to plot the examples and rank phrases against them (Text Alignment)</li>
-<li><strong>Send to Generator</strong> adds the session, with its confidence threshold and image size, to the Generator's prompt</li>
-<li>The Status box shows the loaded model, where the session's examples came from, and the last action</li>
+<li>Use the See Anything Tool to draw 2 or 3 boxes around examples (more boxes make a better example), type a phrase (<kbd>Ctrl</kbd> + <kbd>T</kbd>), or click detections to find more / fewer like them</li>
+<li><strong>Clear Prompt</strong> removes every example (<kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Backspace</kbd> in the tool); single examples cannot be removed</li>
+<li><strong>Save Prompt</strong> / <strong>Load Prompt</strong> (<code>.npz</code>); loading adds the file's examples to the prompt and applies its confidence threshold</li>
+<li>The Status box shows the loaded model, where the prompt's examples came from, the last action, and any warnings</li>
 </ul>
 </li>
 <li>
 <p><strong>Deploy Generator</strong>: Deploy a YOLOE model to use like a detector / segmentor across many images</p>
 <ul>
 <li>Select the YOLOE model and parameters, then load the model</li>
-<li>Build the prompt from any of:</li>
-<li><strong>Add from annotations</strong>: choose a label, highlight image(s) with rectangles or polygons, then press <strong>Add highlighted</strong> (one example per image)<ul>
-<li>Images already in the prompt are skipped unless their annotations changed</li>
-<li><strong>Remove all images from the prompt</strong> removes examples added from annotations, keeping tool examples and phrases</li>
+<li>Build the prompt with:</li>
+<li><strong>Calibrate</strong>: choose a label and press it. Every image with a verified rectangle or polygon of that label becomes an example (one per image), some images are held out, and the confidence threshold that scores best on them is applied. Press it again after adding annotations<ul>
+<li>Only verified annotations are used; objects nobody annotated count as false positives, so the threshold may come out a little high</li>
+<li>The held out images are left out of the prompt, so the prompt that runs is the one that was tested</li>
 </ul>
 </li>
-<li><strong>Add from Tool</strong>: the prompt built with the See Anything Tool (adding it twice is harmless)</li>
-<li><strong>Add phrase</strong>: a text prompt</li>
+<li>The See Anything Tool: its examples are already in the prompt</li>
+<li><strong>Load Prompt</strong>: a saved prompt (loading it twice is harmless)</li>
 <li><strong>Save detections as</strong>: the label detections are saved under; it can differ from the label of the annotations used as examples</li>
-<li>The prompt list groups examples by source (annotations, tool, phrases, files); untick an example to leave it out</li>
-<li><strong>Save</strong> / <strong>Load</strong> the prompt (<code>.npz</code> only; legacy <code>.pt</code> VPE files are no longer supported)</li>
-<li>Examples from annotations are re-embedded automatically when the image size changes; examples from the tool cannot be, and the panel warns</li>
-<li><strong>OK</strong> is enabled once a model is loaded, an output label is chosen, and the prompt has at least one enabled example</li>
+<li>The last calibration's result shows under <strong>Calibrate</strong>; the Status box shows the model, where the examples came from, how many are in use, and any warnings; <strong>Clear Prompt</strong> removes every example, here and in the tool</li>
+<li><strong>Save Prompt</strong> / <strong>Load Prompt</strong> (<code>.npz</code> only; legacy <code>.pt</code> VPE files are no longer supported)</li>
+<li>Examples from annotations are re-embedded automatically when the Generator's image size changes; examples from the tool cannot be, and the Status box warns</li>
+<li><strong>OK</strong> is enabled once a model is loaded, an output label is chosen, and the prompt has at least one example in use</li>
 <li>Use the loaded model with the prompt on new images or work areas</li>
 </ul>
 </li>
@@ -3289,7 +3289,7 @@ from <strong>Utilities &gt; Morphological</strong>. Its <strong>Overlaps</strong
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 10, 2026 17:54:24 UTC"><span class="timeago" datetime="2026-11-10T17:54:24+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 10, 2026 17:54:24 UTC">2026-11-10</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 21, 2026 04:55:11 UTC"><span class="timeago" datetime="2026-11-21T04:55:11+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 21, 2026 04:55:11 UTC">2026-11-21</span>
   </span>
 
     
