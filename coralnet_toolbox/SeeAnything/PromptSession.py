@@ -21,11 +21,11 @@ POSITIVE_KINDS = frozenset({KIND_BOXES, KIND_TEXT, KIND_DETECTION, KIND_IMPORTED
 
 # Where an example came from, as `Prototype.origin["source"]`. It decides whether
 # the example can be embedded again -- only annotations still exist to re-read --
-# and which rows the session panel shows as one.
-ORIGIN_ANNOTATIONS = "annotations"  # the Generator's "Add from annotations"
+# and which examples count as one image's.
+ORIGIN_ANNOTATIONS = "annotations"  # the Generator's Calibrate button, one example per image
 ORIGIN_TOOL = "tool"                # boxes or a detection on a tool work area
 ORIGIN_TOOL_PHRASE = "tool-phrase"  # the tool's one Ctrl+T phrase
-ORIGIN_PHRASE = "phrase"            # a phrase added in the Generator or Inspect
+ORIGIN_PHRASE = "phrase"            # a phrase in a prompt saved by an older version
 ORIGIN_FILE = "file"                # a plain prompt-embedding file
 
 # Written into session files so a reader can tell one from a plain prompt file.
@@ -338,36 +338,6 @@ class PromptSession:
             return None
         return self.add_positive(KIND_TEXT, embedding, phrase,
                                  origin={"source": ORIGIN_TOOL_PHRASE})
-
-    def add_phrase(self, phrase, embedding):
-        """Add a phrase as one more positive, alongside any others.
-
-        Returns:
-            Prototype | None: The phrase's example (the existing one if it is
-            already here), or None for an empty phrase.
-        """
-        phrase = (phrase or "").strip()
-        if not phrase:
-            return None
-        for prototype in self.positives:
-            if prototype.kind == KIND_TEXT and prototype.source == ORIGIN_PHRASE and prototype.label == phrase:
-                return prototype
-        return self.add_positive(KIND_TEXT, embedding, phrase, origin={"source": ORIGIN_PHRASE})
-
-    def remove_phrase(self, phrase):
-        """Remove a phrase added with `add_phrase`.
-
-        Returns:
-            bool: True if something was removed.
-        """
-        before = len(self.positives)
-        self.positives = [p for p in self.positives
-                          if not (p.kind == KIND_TEXT and p.source == ORIGIN_PHRASE and p.label == phrase)]
-        return len(self.positives) != before
-
-    def phrases(self):
-        """The phrases added with `add_phrase`, in order."""
-        return [p.label for p in self.positives if p.kind == KIND_TEXT and p.source == ORIGIN_PHRASE]
 
     def replace_group(self, negative, key, prototypes):
         """Put `prototypes` where the examples with this group key were.

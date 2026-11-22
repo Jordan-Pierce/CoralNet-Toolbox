@@ -11,7 +11,6 @@ ultralytics>=8.4.153,<8.5
 lightly-train[ultralytics]>=0.17,<1
 open-clip-torch>=2.20.0,<4
 transformers>=5.0.0,<6
-timm>=1.0.0,<2
 # NVIDIA GPU video decode. No Mac has an NVIDIA GPU, and there are no macOS
 # wheels -- without this marker pip/uv falls back to the 1.0.2 sdist, which
 # fails to build against modern setuptools (no pkg_resources).

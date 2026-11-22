@@ -335,10 +335,10 @@ class Classify(Base):
             backend = getattr(predictor, 'model', None) if predictor else None
 
             if transforms is not None and backend is not None:
-                # ultralytics applies cv2.COLOR_BGR2RGB internally; replicate the
-                # same channel reversal so results match the batch path exactly.
-                swapped = np.ascontiguousarray(image_np[..., ::-1])
-                im = transforms(Image.fromarray(swapped)).unsqueeze(0).to(backend.device)
+                # image_np is RGB, which is what PIL wants. The batch path hands
+                # ultralytics BGR and ultralytics converts it to RGB itself, so
+                # the model sees RGB either way. Reversing here fed it BGR.
+                im = transforms(Image.fromarray(np.ascontiguousarray(image_np))).unsqueeze(0).to(backend.device)
                 im = im.half() if backend.fp16 else im.float()
                 with torch.no_grad():
                     out = backend(im)
@@ -354,7 +354,8 @@ class Classify(Base):
 
         # Fallback: high-level API (slower, but robust).
         try:
-            results = model([image_np],
+            # The high-level API treats an ndarray as BGR, like the batch path.
+            results = model([np.ascontiguousarray(image_np[..., ::-1])],
                             device=self.main_window.device,
                             quantize=16,
                             stream=True,

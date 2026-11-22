@@ -35,17 +35,25 @@ from coralnet_toolbox.SeeAnything.PromptSession import (ORIGIN_TOOL,
                                                         PromptSession,
                                                         keep_positive_detections,
                                                         stem_from_path)
-from coralnet_toolbox.SeeAnything.QtPromptAlignment import project_label_names
-from coralnet_toolbox.SeeAnything.QtPromptSessionPanel import (PromptSessionPanel,
-                                                               SessionPhraseStore,
-                                                               describe_sources,
-                                                               fixed_width_text,
-                                                               inspect_session)
+from coralnet_toolbox.SeeAnything.QtPromptSession import (PromptButtons,
+                                                          describe_sources,
+                                                          fit_height,
+                                                          fixed_width_text,
+                                                          level_columns,
+                                                          reserve_lines,
+                                                          session_signature,
+                                                          session_warnings,
+                                                          shared_prompt,
+                                                          show_warnings,
+                                                          warning_label)
 
 
 # Input-size granularity for YOLOE. Everything in the family is a stride-32
 # model, so the letterbox pads to a multiple of this.
 IMGSZ_STRIDE = 32
+
+# Lines the status keeps room for: the model, the prompt and the last thing done.
+STATUS_LINES = 3
 
 # Shared by both See Anything dialogs so they open on the same model.
 # 11s rather than 11l: on THESIA (scripts/SeeAnything_Testbed.py, held out test,
@@ -63,7 +71,8 @@ DEFAULT_OUTPUT_TYPE = "Rectangle"
 
 
 class DeployPredictorDialog(QDialog):
-    # Emitted when the user edits the session from this dialog's panel, so the
+    # Emitted when the prompt changes other than through the tool (Clear or
+    # Load here, or anything the Generator does to the shared prompt), so the
     # tool can re-run its work area. Edits the tool makes itself do not emit:
     # the tool re-runs those on its own and would otherwise run twice.
     sessionEdited = pyqtSignal()
@@ -76,12 +85,17 @@ class DeployPredictorDialog(QDialog):
 
         self.setWindowIcon(get_window_icon("eye.svg"))
         self.setWindowTitle("See Anything Deploy Model")
-        self.resize(800, 520)
+        # The width; the height is fitted to the contents when the dialog shows.
+        self.resize(820, 600)
 
-        # The prompt the tool builds interactively and the Generator can run.
-        # Owned here rather than by the tool so it outlives tool switches and is
-        # visible in the session panel below.
-        self.session = PromptSession()
+        # The prompt the tool builds interactively, shared with the Generator
+        # (QtPromptSession.SharedPrompt). Held outside the tool so it outlives
+        # tool switches.
+        self.prompt = shared_prompt(main_window)
+        self.prompt.changed.connect(self._on_prompt_changed)
+        # What the prompt was when this dialog last looked, to tell a change
+        # made in the Generator from a redraw.
+        self._seen_signature = None
         # The last thing done, shown under the model and prompt in the status.
         self._last_action = ""
 
@@ -110,43 +124,35 @@ class DeployPredictorDialog(QDialog):
         # Setup the info layout
         self.setup_info_layout()
 
-        # Equal-width columns; the last box in each stretches so both end level
+        # Equal-width columns that end level with each other
         columns = QHBoxLayout()
         left, right = QVBoxLayout(), QVBoxLayout()
         columns.addLayout(left, 1)
         columns.addLayout(right, 1)
         root.addLayout(columns)
 
-        # Settings on the left, compact at the top
+        # What to load on the left
         self.layout = left
-        # Setup the model layout
         self.setup_models_layout()
-        # Setup the parameter layout
         self.setup_parameters_layout()
-        # Setup the SAM layout
         self.setup_sam_layout()
-        # Setup the thresholds layout
-        self.setup_thresholds_layout()
-        left.addStretch(1)
 
-        # The prompt session gets the whole right column: its list is the part of
-        # this dialog that grows, so it extends downwards and its buttons stay
-        # pinned to the bottom.
+        # What it finds on the right
         self.layout = right
-        # Setup the prompt session panel
-        self.setup_session_layout()
-        right.setStretch(right.count() - 1, 1)
+        self.setup_thresholds_layout()
+        level_columns(left, right)
 
-        # Actions and status side by side along the bottom
-        footer = QHBoxLayout()
-        root.addLayout(footer)
-        self.layout = footer
-        # Setup the buttons layout
+        # The actions in one row, then where things stand, across the full width
+        self.layout = root
         self.setup_buttons_layout()
-        # Setup the status layout
         self.setup_status_layout()
-        footer.setStretch(0, 1)
-        footer.setStretch(1, 1)
+
+        self.refresh_session_state()
+
+    @property
+    def session(self):
+        """The shared prompt's session: the tool's examples, and whatever the Generator added."""
+        return self.prompt.session
 
     def showEvent(self, event):
         """
@@ -157,6 +163,20 @@ class DeployPredictorDialog(QDialog):
         """
         super().showEvent(event)
         self.thresholds_widget.initialize_thresholds()
+        # Room for the usual status lines, then no spare height.
+        QWidget.layout(self).activate()
+        self.reserve_space()
+        fit_height(self)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Text wraps differently at another width, so the room it needs changes.
+        self.reserve_space()
+
+    def reserve_space(self):
+        """Keep room for the usual status lines, so loading a model or adding examples changes text, not height."""
+        if hasattr(self, 'status_bar'):
+            reserve_lines(self.status_bar, STATUS_LINES)
 
     def setup_info_layout(self):
         """
@@ -168,12 +188,11 @@ class DeployPredictorDialog(QDialog):
         # Create a QLabel with explanatory text and hyperlink
         info_label = QLabel(
             "Load a model, then select the See Anything tool:\n"
-            "  •  Work area: left-click to start, move, left-click to finish (Space uses the current view).\n"
-            "  •  Examples: draw boxes and press Space, or press Ctrl+T to type a phrase.\n"
-            "  •  Detections: Ctrl+click for more like it, Ctrl+right-click for fewer.\n"
-            "  •  Ctrl+wheel changes the confidence threshold.\n"
-            "Untick an example under Prompt Session to try without it. "
-            "Send to Generator runs the prompt over many images."
+            "  •  Left-click to start a work area, move, left-click to finish (Space uses the current view).\n"
+            "  •  Draw 2 or 3 boxes around examples and press Space, or press Ctrl+T to type a phrase.\n"
+            "  •  Ctrl+click a detection for more like it, Ctrl+right-click for fewer; "
+            "Ctrl+wheel changes the confidence.\n"
+            "The See Anything Generator shares this prompt, to run it over many images."
         )
         info_label.setTextFormat(Qt.PlainText)
         info_label.setWordWrap(True)
@@ -328,41 +347,6 @@ class DeployPredictorDialog(QDialog):
 
         self.layout.addWidget(self.thresholds_widget)
 
-    def setup_session_layout(self):
-        """The prompt session: every example the tool has collected, editable.
-
-        Toggling an example off re-runs the tool's work area without it, which is
-        how a user finds out which example is actually doing the work before
-        sending the session to the Generator. The panel is the one the Generator
-        shows, so a prompt looks the same on both sides.
-        """
-        self.session_panel = PromptSessionPanel(
-            lambda: self.session,
-            stem_source=self.session_stem,
-            imgsz_source=self.get_imgsz,
-            title="Prompt Session",
-            empty_text="Empty. In the tool, draw boxes or Ctrl+T for a phrase; Ctrl+click a detection "
-                       "for more like it, Ctrl+right-click for fewer.")
-        self.session_panel.clear_button.setToolTip("Remove every example (Ctrl+Shift+Backspace in the tool).")
-
-        self.send_to_generator_button = QPushButton("Send to Generator")
-        self.send_to_generator_button.setToolTip(
-            "Add this exact prompt to the See Anything Generator, to run over many images.\n"
-            "The confidence threshold and image size go with it.")
-        self.send_to_generator_button.clicked.connect(self.send_session_to_generator)
-        self.session_panel.add_host_widget(self.send_to_generator_button)
-
-        self.session_panel.edited.connect(self._on_session_panel_edited)
-        self.session_panel.saveRequested.connect(self.save_session)
-        self.session_panel.loadRequested.connect(self.load_session)
-        self.session_panel.inspectRequested.connect(self.inspect_session)
-        # The image-size warnings depend on the spinbox.
-        self.imgsz_spinbox.valueChanged.connect(lambda _: self.refresh_session_panel())
-
-        self.layout.addWidget(self.session_panel)
-
-        self.refresh_session_panel()
-
     # --- Prompt session ------------------------------------------------------------------------------------------------
 
     def session_stem(self):
@@ -389,16 +373,55 @@ class DeployPredictorDialog(QDialog):
         if dropped:
             self.session.clear()
         self.session.model_stem = stem
-        self.refresh_session_panel()
+        self.refresh_session_state()
         return dropped
 
-    def refresh_session_panel(self):
-        """Redraw the session panel and the status from `self.session`."""
-        if not hasattr(self, 'session_panel'):
+    def refresh_session_state(self):
+        """Redraw the buttons and the status, and tell the Generator the prompt may have changed."""
+        self._refresh_view()
+        self._seen_signature = session_signature(self.session)
+        self.prompt.notify(self)
+
+    def _refresh_view(self):
+        """Redraw the buttons and the status from the shared prompt."""
+        if not hasattr(self, 'prompt_buttons') or not hasattr(self, 'status_bar'):
             return
-        self.session_panel.refresh()
-        self.send_to_generator_button.setEnabled(self.session.has_positives())
+        self.prompt_buttons.refresh(self.session)
         self.update_status()
+
+    def _on_prompt_changed(self, source):
+        """The Generator changed or redrew the shared prompt: redraw, and re-run the tool if it changed."""
+        if source is self:
+            return
+        self.text_prompt = self.session.text_phrase()
+        self._refresh_view()
+        signature = session_signature(self.session)
+        if signature != self._seen_signature:
+            self._seen_signature = signature
+            self.sessionEdited.emit()
+
+    def _claim_session(self):
+        """Whether the tool may add to the shared prompt with this dialog's model.
+
+        An empty prompt takes this model's checkpoint. One made with another
+        checkpoint (the Generator loaded a different model) refuses, and says
+        why: its embeddings mean nothing to this model.
+        """
+        stem = self.session_stem()
+        if self.session.is_empty():
+            self.session.model_stem = stem
+            return True
+        try:
+            self.session.check_stem(stem)
+        except ValueError:
+            QMessageBox.warning(self.annotation_window, "Different Model",
+                                f"The prompt is shared with the See Anything Generator and was made with "
+                                f"'{self.session.model_stem}', but this dialog has '{stem}' loaded. Load the same "
+                                f"model in both, or clear the prompt.")
+            return False
+        if self.session.model_stem is None:
+            self.session.model_stem = stem
+        return True
 
     def report(self, message):
         """Show what was just done, under the model and prompt lines of the status."""
@@ -406,9 +429,9 @@ class DeployPredictorDialog(QDialog):
         self.update_status()
 
     def update_status(self):
-        """The model, where the session's examples came from, and the last thing done.
+        """The model, where the session's examples came from, the last thing done, and any warnings.
 
-        Refreshed on every edit, the tool's included, so it always matches the panel.
+        Refreshed on every edit, the tool's included, so it always matches the session.
         """
         if not hasattr(self, 'status_bar'):
             return
@@ -420,62 +443,53 @@ class DeployPredictorDialog(QDialog):
         if self._last_action:
             lines.append(self._last_action)
         self.status_bar.setText("\n".join(lines))
+        # The tool uses every example as it was made, so it does not re-embed.
+        show_warnings(self.warning_label, session_warnings(self.session, stem=self.session_stem(),
+                                                           imgsz=self.get_imgsz(), reembeds=False))
+        # Room is kept for the usual lines; anything longer (warnings) needs more
+        # height, and is never squeezed.
+        if self.isVisible():
+            fit_height(self, grow_only=True)
 
-    def _on_session_panel_edited(self):
-        """The user toggled, removed or cleared examples in the panel."""
-        # The tool's phrase may be what was removed.
-        self.text_prompt = self.session.text_phrase()
-        self.refresh_session_panel()
+    def _on_clear_requested(self):
+        """The Clear Prompt button: forget every example, and let the tool re-run its work area."""
+        self.session.clear()
+        self.text_prompt = None
+        self.refresh_session_state()
         self.sessionEdited.emit()
 
     def clear_session(self):
         """Forget every example (the tool's Ctrl+Shift+Backspace)."""
         self.session.clear()
         self.text_prompt = None
-        self.refresh_session_panel()
+        self.refresh_session_state()
 
     def add_session_positive(self, kind, embedding, label):
         """Add a positive example from the tool. Does not emit `sessionEdited`.
 
         Stamped with the image size it was embedded at, so the Generator can
         warn when it runs at another.
+
+        Returns:
+            Prototype | None: The example, or None if the prompt belongs to another model.
         """
+        if not self._claim_session():
+            return None
         prototype = self.session.add_positive(kind, embedding, label,
                                               imgsz=self.get_imgsz(),
                                               origin={"source": ORIGIN_TOOL})
-        self.refresh_session_panel()
+        self.refresh_session_state()
         return prototype
 
     def add_session_negative(self, embedding, label):
         """Add a negative example from the tool. Does not emit `sessionEdited`."""
+        if not self._claim_session():
+            return None
         prototype = self.session.add_negative(embedding, label,
                                               imgsz=self.get_imgsz(),
                                               origin={"source": ORIGIN_TOOL})
-        self.refresh_session_panel()
+        self.refresh_session_state()
         return prototype
-
-    def inspect_session(self):
-        """Plot the session's examples and rank phrases against them.
-
-        A phrase kept in Text Alignment becomes a text example; the tool re-runs
-        its work area with it when the dialog closes.
-        """
-        before = [(p.uid, p.enabled) for p in self.session.positives + self.session.negatives]
-        store = None
-        if self.loaded_model is not None:
-            store = SessionPhraseStore(lambda: self.session,
-                                       lambda phrase: self.text_embedder().encode([phrase]))
-        shown = inspect_session(self, self.session, self.loaded_model,
-                                label_names=project_label_names(getattr(self.main_window, 'label_window', None)),
-                                prompt_store=store)
-        if not shown:
-            QMessageBox.information(self, "Nothing to Inspect",
-                                    "Add an example with the tool, or load a model to work from text.")
-            return
-        after = [(p.uid, p.enabled) for p in self.session.positives + self.session.negatives]
-        self.refresh_session_panel()
-        if after != before:
-            self.sessionEdited.emit()
 
     def session_for_export(self):
         """A copy of the session carrying the threshold in force now."""
@@ -488,57 +502,58 @@ class DeployPredictorDialog(QDialog):
     def save_session(self):
         if not self.session.positives:
             QMessageBox.information(self, "Nothing to Save",
-                                    "The session has no positive examples yet.")
+                                    "The prompt has no positive examples yet.")
             return
-        path, _ = QFileDialog.getSaveFileName(self, "Save Prompt Session", "",
-                                              "Prompt Session (*.npz)")
+        path, _ = QFileDialog.getSaveFileName(self, "Save Prompt", "", "Prompt (*.npz)")
         if not path:
             return
         try:
             written = self.session_for_export().to_npz(path)
         except Exception as e:
-            QMessageBox.critical(self, "Could Not Save Session", str(e))
+            QMessageBox.critical(self, "Could Not Save Prompt", str(e))
             return
         count = len(self.session.positives) + len(self.session.negatives)
-        self.report(f"Session saved to {os.path.basename(written)}.")
-        QMessageBox.information(self, "Session Saved",
+        self.report(f"Prompt saved to {os.path.basename(written)}.")
+        QMessageBox.information(self, "Prompt Saved",
                                 f"Saved {count} example{'s' if count != 1 else ''} to:\n{written}")
 
     def load_session(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Load Prompt Session", "",
-                                              "Prompt Session or VPE (*.npz)")
+        """Load Prompt: add a saved prompt's examples to the shared prompt, as the Generator's Load does.
+
+        Added rather than replacing, so loading here does not wipe what the
+        Generator calibrated; Clear Prompt first to start over. The file's
+        confidence threshold is applied.
+        """
+        path, _ = QFileDialog.getOpenFileName(self, "Load Prompt", "",
+                                              "Prompt or prompt embeddings (*.npz)")
         if not path:
             return
         try:
             session = PromptSession.from_npz(path, expected_stem=self.session_stem())
+            session.model_stem = session.model_stem or self.session_stem()
+            if self.session.is_empty():
+                self.session.model_stem = session.model_stem
+            else:
+                self.session.check_stem(session.model_stem)
         except Exception as e:
-            QMessageBox.critical(self, "Could Not Load Session", str(e))
+            QMessageBox.critical(self, "Could Not Load Prompt", str(e))
             return
 
-        session.model_stem = session.model_stem or self.session_stem()
-        self.session = session
-        self.text_prompt = session.text_phrase()
+        offered = len(session.positives) + len(session.negatives)
+        added = self.session.merge(session)
+        self.text_prompt = self.session.text_phrase()
         if session.confidence is not None:
             self.main_window.update_uncertainty_thresh(session.confidence)
-        self.refresh_session_panel()
-        count = len(session.positives) + len(session.negatives)
-        self.report(f"Loaded {os.path.basename(path)}, replacing the session.")
+        self.refresh_session_state()
         self.sessionEdited.emit()
-        QMessageBox.information(self, "Session Loaded",
-                                f"Loaded {count} example{'s' if count != 1 else ''} from {os.path.basename(path)}.\n"
-                                f"They replace the previous session.")
-
-    def send_session_to_generator(self):
-        generator = getattr(self.main_window, 'see_anything_deploy_generator_dialog', None)
-        if generator is None:
-            QMessageBox.warning(self, "No Generator", "The See Anything Generator is not available.")
-            return
-        if not self.session.has_positives():
-            QMessageBox.information(self, "Nothing to Send",
-                                    "The session has no enabled positive examples.")
-            return
-        if generator.import_session(self.session_for_export()):
-            self.report(f"Sent to the Generator ({describe_sources(self.session)}).")
+        name = os.path.basename(path)
+        if added == offered:
+            message = f"Added {added} example{'s' if added != 1 else ''} from {name}."
+        else:
+            message = (f"Added {added} of {offered} examples from {name}; "
+                       f"the others were already in the prompt.")
+        self.report(message)
+        QMessageBox.information(self, "Prompt Loaded", message)
 
     def embed_boxes(self, bboxes, masks=None):
         """One embedding for a set of boxes drawn together on the current image.
@@ -610,6 +625,13 @@ class DeployPredictorDialog(QDialog):
             return None
         if not self.session.has_positives():
             return None
+        try:
+            self.session.check_stem(self.session_stem())
+        except ValueError:
+            self.main_window.status_bar.showMessage(
+                f"The prompt was made with '{self.session.model_stem}', not this model: load the same "
+                f"model here and in the See Anything Generator, or clear the prompt.", 8000)
+            return None
 
         self.task = self.get_task()
 
@@ -638,7 +660,10 @@ class DeployPredictorDialog(QDialog):
 
     def setup_buttons_layout(self):
         """
-        Setup action buttons in a group box.
+        Setup the action buttons in one row across the dialog: the model, then the prompt.
+
+        Examples are added in the tool itself (more like this, fewer like this),
+        so there is no list of them here; Clear Prompt removes them all.
         """
         group_box = QGroupBox("Actions")
         layout = QHBoxLayout()
@@ -646,12 +671,24 @@ class DeployPredictorDialog(QDialog):
         load_button = QPushButton("Load Model")
         load_button.clicked.connect(self.load_model)
         load_button.setToolTip("Load the selected See Anything (YOLOE) model for inference.")
-        layout.addWidget(load_button)
 
         deactivate_button = QPushButton("Deactivate Model")
         deactivate_button.clicked.connect(self.deactivate_model)
-        deactivate_button.setToolTip("Unload the current See Anything model and free GPU memory.")
-        layout.addWidget(deactivate_button)
+        deactivate_button.setToolTip("Unload the current See Anything model and free GPU memory.\n"
+                                     "The prompt is kept.")
+
+        self.prompt_buttons = PromptButtons("Remove every example, here and in the See Anything Generator\n"
+                                            "(Ctrl+Shift+Backspace in the tool).")
+        self.prompt_buttons.clearRequested.connect(self._on_clear_requested)
+        self.prompt_buttons.saveRequested.connect(self.save_session)
+        self.prompt_buttons.loadRequested.connect(self.load_session)
+
+        # Equal shares of the width, however wide the dialog is.
+        for button in [load_button, deactivate_button] + self.prompt_buttons.buttons:
+            layout.addWidget(button, 1)
+
+        # The image-size warnings depend on the spinbox.
+        self.imgsz_spinbox.valueChanged.connect(lambda _: self.refresh_session_state())
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
@@ -668,6 +705,9 @@ class DeployPredictorDialog(QDialog):
         # The status changes after every edit; its length must not resize the columns.
         fixed_width_text(self.status_bar)
         layout.addWidget(self.status_bar)
+
+        self.warning_label = warning_label()
+        layout.addWidget(self.warning_label)
 
         group_box.setLayout(layout)
         self.layout.addWidget(group_box)
@@ -762,11 +802,11 @@ class DeployPredictorDialog(QDialog):
             dropped = self._adopt_model_stem()
             # Update the status bar
             self.report("Model loaded." if not dropped else
-                        "Model loaded; the session was cleared, its examples were made with another model.")
+                        "Model loaded; the prompt was cleared, its examples were made with another model.")
             message = "Model loaded successfully"
             if dropped:
-                message += ("\n\nThe prompt session was cleared: its examples were made with "
-                            "a different model and cannot be used with this one.")
+                message += ("\n\nThe prompt, which the See Anything Generator shares, was cleared: its "
+                            "examples were made with a different model and cannot be used with this one.")
             QMessageBox.information(self, "Model Loaded", message)
             # The dialog has done its job; leaving it up meant it reappeared
             # behind the message box and had to be dismissed a second time.
@@ -925,7 +965,7 @@ class DeployPredictorDialog(QDialog):
             # Clearing the phrase clears it from the session too, so the next
             # prediction does not quietly keep using it.
             self.session.set_text(None)
-            self.refresh_session_panel()
+            self.refresh_session_state()
             return False
 
         # A fused head cannot take new prompts; unfuse before setting classes,
@@ -934,13 +974,16 @@ class DeployPredictorDialog(QDialog):
         # Through the embedder rather than `YOLOE.get_text_pe`, which leaves
         # `cache_clip_model` False and so rebuilds the 572 MB MobileCLIP encoder
         # on every phrase -- 0.40 s a call against 0.08 s when it is kept.
+        if not self._claim_session():
+            self.text_prompt = None
+            return False
         phrase_vector = self.text_embedder().encode([self.text_prompt])
         embeddings = to_model_space(self.loaded_model, phrase_vector.unsqueeze(0))
         self.loaded_model.set_classes([self.text_prompt], embeddings)
         # The phrase is one of the session's examples: the tool predicts from the
         # session, and the Generator receives it with everything else.
         self.session.set_text(self.text_prompt, phrase_vector)
-        self.refresh_session_panel()
+        self.refresh_session_state()
         return True
 
     def text_embedder(self):
@@ -1147,17 +1190,17 @@ class DeployPredictorDialog(QDialog):
         self.model_path = None
         self.image_path = None
         self.original_image = None
-        self.text_prompt = None
         # Phrase embeddings belong to the checkpoint that produced them
         self._text_embedder = None
-        # ...and so does every example in the session
-        self.session = PromptSession()
-        self.refresh_session_panel()
+        # The prompt is kept: the Generator shares it, and it still fits the next
+        # model of the same kind. A different model clears it when it loads.
+        self.text_prompt = self.session.text_phrase()
+        self.refresh_session_state()
         # Clear the cache
         gc.collect()
         empty_cache()
         # Untoggle all tools
         self.main_window.untoggle_all_tools()
         # Update the status bar
-        self.report("Model deactivated; the session went with it.")
+        self.report("Model deactivated; the prompt is kept.")
         QMessageBox.information(self.annotation_window, "Model Deactivated", "Model deactivated")

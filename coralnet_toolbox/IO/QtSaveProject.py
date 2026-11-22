@@ -156,6 +156,7 @@ class SaveProject(QDialog):
                 'annotations': self.get_annotations(),
                 'metadata_schema': self.get_metadata_schema()
             }
+            missing_count = self.add_missing_images(project_data)
 
             # If no extension provided, default to binary
             root, ext = os.path.splitext(file_path)
@@ -171,13 +172,18 @@ class SaveProject(QDialog):
 
             elapsed = time.perf_counter() - start_time
             elapsed_msg = f"Project has been successfully saved ({elapsed:.2f}s)."
+            missing_note = ""
+            if missing_count:
+                missing_note = f" {plural(missing_count, 'missing image')} kept as they were."
+                elapsed_msg += (f"\n\n{plural(missing_count, 'image')} could not be found when the project "
+                                f"was opened. They and their annotations were kept in the file unchanged.")
 
             show_status(self.main_window,
                         f"Saved {os.path.basename(file_path)}: "
                         f"{plural(len(project_data['images']), 'image')}, "
                         f"{plural(len(project_data['labels']), 'label')}, "
                         f"{plural(sum(len(a) for a in project_data['annotations'].values()), 'annotation')} "
-                        f"({elapsed:.2f}s).",
+                        f"({elapsed:.2f}s).{missing_note}",
                         STATUS_SUMMARY_MS)
 
             QMessageBox.information(self.annotation_window,
@@ -323,6 +329,35 @@ class SaveProject(QDialog):
             progress_bar.close()
 
         return export_annotations
+
+    def add_missing_images(self, project_data):
+        """Write back images the open could not load, with their annotations.
+
+        OpenProject keeps their saved entries untouched; without this, saving
+        a project opened with missing images would delete them from the file.
+        An entry whose image (or video) has since been loaded is skipped.
+
+        Returns:
+            int: Number of missing images written back.
+        """
+        raster_manager = self.image_window.raster_manager
+        kept_images = getattr(self.main_window, 'missing_project_images', {}) or {}
+        kept_annotations = getattr(self.main_window, 'missing_project_annotations', {}) or {}
+
+        count = 0
+        for path, entry in kept_images.items():
+            if raster_manager.has_image_path(path):
+                continue
+            project_data['images'].append(entry)
+            count += 1
+
+        for image_path, annotation_dicts in kept_annotations.items():
+            base_path = image_path.rsplit('::frame_', 1)[0]
+            if raster_manager.has_image_path(base_path):
+                continue
+            project_data['annotations'].setdefault(image_path, []).extend(annotation_dicts)
+
+        return count
 
     def get_metadata_schema(self):
         """Get the project's metadata field definitions.

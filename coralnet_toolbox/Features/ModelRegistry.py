@@ -1,8 +1,7 @@
 """
-Model registry for the Explorer tool.
+Model registry for feature extraction (Explorer, Feature Select, 3D Features).
 
-Consolidates transformer and YOLO model configurations and helpers
-(formerly split across transformer_models.py and yolo_models.py).
+DINO backbones (HuggingFace), BioCLIP (open_clip), and YOLO classifiers.
 """
 
 from __future__ import annotations
@@ -11,35 +10,20 @@ import os
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# Transformer models
+# DINO models (HuggingFace pipeline)
 # ----------------------------------------------------------------------------------------------------------------------
 
 
-TRANSFORMER_MODELS = {
-    'ResNet-50': 'microsoft/resnet-50',
-    'ResNet-101': 'microsoft/resnet-101',
-    'Swin Transformer (Tiny)': 'microsoft/swin-tiny-patch4-window7-224',
-    'Swin Transformer (Base)': 'microsoft/swin-base-patch4-window7-224',
-    'ViT (Base)': 'google/vit-base-patch16-224',
-    'ViT (Large)': 'google/vit-large-patch16-224',
+DINO_MODELS = {
     'DINOv2 (Small)': 'facebook/dinov2-small',
     'DINOv2 (Base)': 'facebook/dinov2-base',
     'DINOv2 (Large)': 'facebook/dinov2-large',
-    'DINOv2 (Giant)': 'facebook/dinov2-giant',
-    'DINOv2 (Giant ImageNet1k)': 'facebook/dinov2-giant-imagenet1k-1-layer',
     # DINOv2 with registers: extra register tokens absorb high-norm artifact
     # patches. Ungated. For label propagation it did NOT beat plain DINOv2
     # (tied with many labels, worse from a few clicks), matching Raine et al.
     'DINOv2+reg (Small)': 'facebook/dinov2-with-registers-small',
     'DINOv2+reg (Base)': 'facebook/dinov2-with-registers-base',
     'DINOv2+reg (Large)': 'facebook/dinov2-with-registers-large',
-    'DINOv2+reg (Giant)': 'facebook/dinov2-with-registers-giant',
-    # ConvNeXt V2: pure-convolutional backbone whose cost scales linearly with
-    # resolution (no attention token² blowup), so it loads larger images closer
-    # to native res. Ungated.
-    'ConvNeXt V2 (Nano)': 'facebook/convnextv2-nano-22k-224',
-    'ConvNeXt V2 (Tiny)': 'facebook/convnextv2-tiny-22k-224',
-    'ConvNeXt V2 (Base)': 'facebook/convnextv2-base-22k-224',
 }
 
 try:
@@ -52,7 +36,7 @@ try:
 
     if hf_token and hf_token.strip():
         # Add the DINOv3 models if the HuggingFace token is set
-        TRANSFORMER_MODELS.update({
+        DINO_MODELS.update({
             'DINOv3 ConvNext (Tiny)': 'facebook/dinov3-convnext-tiny-pretrain-lvd1689m',
             'DINOv3 ConvNext (Small)': 'facebook/dinov3-convnext-small-pretrain-lvd1689m',
             'DINOv3 ConvNext (Base)': 'facebook/dinov3-convnext-base-pretrain-lvd1689m',
@@ -68,40 +52,9 @@ except Exception:
     pass
 
 
-# ----------------------------------------------------------------------------------------------------------------------
-# timm models
-# ----------------------------------------------------------------------------------------------------------------------
-
-
-# timm backbones, addressed by the "timm:" prefix so routing can tell them apart
-# from HuggingFace ids (which the transformer path loads via the HF pipeline).
-# These are loaded through TimmExtractor, which pulls the last-stage spatial map
-# via forward_intermediates (timm >= 1.0) in a uniform [B, C, H, W] layout for
-# both ViT and CNN backbones. All entries here are dense-capable.
-TIMM_PREFIX = "timm:"
-
-TIMM_MODELS = {
-    # EVA-02: strong dense ViT features for cosine similarity (CLIP-normalized).
-    'EVA-02 (Base/14)': 'timm:eva02_base_patch14_224.mim_in22k',
-    'EVA-02 (Large/14)': 'timm:eva02_large_patch14_224.mim_in22k',
-    # FastViT: fast hybrid conv-transformer, strong at higher resolution.
-    'FastViT (SA12)': 'timm:fastvit_sa12.apple_in1k',
-    'FastViT (SA24)': 'timm:fastvit_sa24.apple_in1k',
-    # EfficientViT: near-linear scaling with resolution — a "near-native res"
-    # workhorse alongside ConvNeXt V2.
-    'EfficientViT (B1)': 'timm:efficientvit_b1.r224_in1k',
-    'EfficientViT (B2)': 'timm:efficientvit_b2.r224_in1k',
-}
-
-
-def is_timm_model(model_name: str) -> bool:
-    """Return True for a timm-backed model id (carries the ``timm:`` prefix)."""
-    return isinstance(model_name, str) and model_name.startswith(TIMM_PREFIX)
-
-
-def strip_timm_prefix(model_name: str) -> str:
-    """Strip the ``timm:`` prefix, yielding the bare timm model name."""
-    return model_name[len(TIMM_PREFIX):] if is_timm_model(model_name) else model_name
+def is_dino_vit_model(model_name: str) -> bool:
+    """Return True for a DINO ViT backbone (DINOv2, DINOv2+reg, DINOv3 ViT), not ConvNext."""
+    return model_name in DINO_MODELS.values() and "convnext" not in model_name.lower()
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -153,14 +106,12 @@ def is_transformer_model(model_name: str) -> bool:
     if not model_name or not isinstance(model_name, str):
         return False
 
-    # timm / open_clip models have their own backends; never claim them here.
-    if is_timm_model(model_name):
-        return False
+    # open_clip models have their own backend; never claim them here.
     if is_openclip_model(model_name):
         return False
 
     # Check if it's one of our known transformer model IDs
-    if model_name in TRANSFORMER_MODELS.values():
+    if model_name in DINO_MODELS.values():
         return True
 
     # Check for common HuggingFace model naming patterns
