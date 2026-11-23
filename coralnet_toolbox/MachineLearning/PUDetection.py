@@ -211,14 +211,18 @@ RECALL_CHECKPOINT = 'recall_best.pt'
 
 # The families the anchor-based v8 loss covers, as a user reads them. Every
 # community detection or segmentation config ends in that same Detect or Segment
-# head, so they qualify too.
-PU_FAMILIES = "YOLOv3u, YOLOv5u, YOLOv8, YOLOv9, YOLO11 or YOLO12"
+# head, so they qualify too; DINOv2 is the one community family the dialogs list
+# (ModelCatalog.LISTED_COMMUNITY_FAMILIES), so it is the one named here.
+PU_FAMILIES = "YOLOv3u, YOLOv5u, YOLOv8, YOLOv9, YOLO11, YOLO12 or DINOv2"
 
 # What the dialogs append to the PU Dataset tooltip, enabled or not, so the
 # models it works with are stated rather than left to be found by elimination.
-PU_MODELS_NOTE = ("Works with: YOLOv3u, YOLOv5u, YOLOv8, YOLOv9, YOLO11 and YOLO12, for\n"
-                  "detection and for instance segmentation (-seg), plus the community\n"
-                  "models.\n"
+# DINOv2 passed a PU smoke run on detect and segment (2026-11-23), but every
+# benchmark behind the tooltips' claims used YOLO models, so the note says so.
+PU_MODELS_NOTE = ("Works with: YOLOv3u, YOLOv5u, YOLOv8, YOLOv9, YOLO11, YOLO12 and\n"
+                  "DINOv2, for detection and for instance segmentation (-seg).\n"
+                  "PU has been measured on YOLO models only. It runs the same way with\n"
+                  "DINOv2, but how much it helps there has not been measured.\n"
                   "Not available for: RT-DETR, YOLOv10, YOLO26 (yolo26-seg included).")
 
 # The PU Threshold tooltip, the same in both dialogs.
