@@ -27,6 +27,7 @@ from PyQt5.QtWidgets import (QFileDialog, QScrollArea, QMessageBox, QWidget, QVB
 from coralnet_toolbox.MachineLearning.Callbacks import TrainingSignalEmitter
 from coralnet_toolbox.MachineLearning.Callbacks import create_training_callbacks
 from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
+from coralnet_toolbox.MachineLearning.TrainModel.ModelCatalog import ModelPicker, default_model, model_families
 from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedInstanceDataset
 from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedSemanticDataset
 from coralnet_toolbox.MachineLearning.WeightedDataset import WeightedClassificationDataset
@@ -35,6 +36,7 @@ from coralnet_toolbox.MachineLearning.EvaluateModel.QtBase import EvaluateModelW
 from coralnet_toolbox.MachineLearning.RunLog import capture_run_log
 from coralnet_toolbox.paths import resolve_weights
 
+from coralnet_toolbox.dino import dino_freeze_list
 from coralnet_toolbox.pyspacer import (CORALNET_WEIGHTS_NAME, convert_coralnet_weights,
                                        is_coralnet_weights, restore_pyspacer_architecture)
 
@@ -362,8 +364,17 @@ class TrainModelWorker(QThread):
             self.setup_pu_training()
             # Freeze layers, freeze encoder
             freeze_layers = self.params.pop('freeze_layers', None)
+            dino_layers = dino_freeze_list(self.model.model)
 
-            if freeze_layers:
+            if dino_layers:
+                # A DINO backbone is never trained, whatever Freeze Layers says: only
+                # the layers after it learn. It has to go through `freeze`, since the
+                # trainer re-enables gradients on every parameter `freeze` does not name.
+                if freeze_layers:
+                    print("Freeze Layers is ignored for a DINO backbone, which is always frozen.")
+                freeze_layers = dino_layers
+                print("DINO backbone frozen; training the layers after it.")
+            elif freeze_layers:
                 freeze_layers, num_layers, share = encoder_freeze_list(self.model.model, freeze_layers)
                 print(f"Encoder layers frozen ({len(freeze_layers)} of {num_layers}, "
                       f"{share:.0%} of encoder weights)")
@@ -849,12 +860,14 @@ class Base(QDialog):
         model_select_tab = QWidget()
         model_select_layout = QFormLayout(model_select_tab)
 
-        # Model combo box
-        self.model_combo = QComboBox()
+        # One dropdown, its models grouped under a heading per family
+        self.model_picker = ModelPicker(self)
+        self.model_combo = self.model_picker.model_combo
         self.load_model_combobox()
         self.model_combo.setToolTip(
-            "Select a pre-trained base model to train from.\n"
-            "Larger models (e.g., YOLOv8x) are more accurate but slower.\n"
+            "The pretrained model to train from, grouped by family.\n"
+            "Larger models (n, s, m, l, x) are more accurate but slower.\n"
+            "The box is editable, so any model name Ultralytics knows can be typed in.\n"
             "Used while this tab is the one selected, whatever the other tab holds.")
         model_select_layout.addRow("Model:", self.model_combo)
 
@@ -1128,7 +1141,7 @@ class Base(QDialog):
         self.freeze_layers_spinbox.setMaximum(1.0)
         self.freeze_layers_spinbox.setSingleStep(0.01)
         self.freeze_layers_spinbox.setValue(0.0)
-        self.freeze_layers_spinbox.setToolTip("Fraction of encoder layers to freeze for transfer learning (0.0 to 1.0).\n0.0 = train all layers, 0.5 = freeze bottom 50%, 1.0 = freeze all.\nA torchvision backbone (EfficientNet-B0, CoralNet's weights) counts its own stages.\nUseful when training on small datasets.")
+        self.freeze_layers_spinbox.setToolTip("Fraction of encoder layers to freeze for transfer learning (0.0 to 1.0).\n0.0 = train all layers, 0.5 = freeze bottom 50%, 1.0 = freeze all.\nA torchvision backbone (EfficientNet-B0, CoralNet's weights) counts its own stages.\nA DINOv2 backbone is always frozen, so this is ignored for it.\nUseful when training on small datasets.")
         form_layout.addRow("Freeze Layers:", self.freeze_layers_spinbox)
 
         # Dropout
@@ -1394,7 +1407,8 @@ class Base(QDialog):
         self.main_layout.addLayout(button_layout)
 
     def load_model_combobox(self):
-        raise NotImplementedError("Subclasses must implement this method.")
+        """Offer this task's model families (see ModelCatalog), starting on its default model."""
+        self.model_picker.set_families(model_families(self.task), default=default_model(self.task))
 
     def training_is_running(self):
         """Whether a run this dialog started is still going."""
@@ -1454,7 +1468,7 @@ class Base(QDialog):
         if on_existing_tab and existing:
             return existing, True
 
-        return self.model_combo.currentText(), False
+        return self.model_picker.current(), False
 
     def _autofill_output_fields(self, dataset_root):
         """

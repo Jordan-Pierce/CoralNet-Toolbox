@@ -184,26 +184,13 @@ def is_live_yolo_model(model_name: str) -> bool:
     return isinstance(model_name, str) and model_name.startswith(LIVE_YOLO_MODEL_PREFIX)
 
 
-def get_community_models(task: str = 'classify') -> dict:
-    """
-    Get available community models for a specific task.
-
-    Args:
-        task: The task type, default is 'classify'.
-
-    Returns:
-        Dictionary of community models.
-    """
-    try:
-        from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
-        return get_available_configs(task=task)
-    except Exception:
-        return {}
-
-
 def is_yolo_model(model_name: str) -> bool:
     """
     Determine if a model name refers to a YOLO model.
+
+    Community configs (MachineLearning/Community/cfg/*.yaml) are not feature
+    extractors: they are untrained architectures for Train Model, so their
+    names are deliberately not recognised here.
 
     Args:
         model_name: The model name to check.
@@ -219,11 +206,6 @@ def is_yolo_model(model_name: str) -> bool:
 
     if model_name in YOLO_MODELS.values():
         return True
-
-    community_models = get_community_models()
-    if community_models:
-        if model_name in community_models or model_name in community_models.values():
-            return True
 
     if model_name.lower().endswith('.pt'):
         return True
@@ -250,12 +232,7 @@ def get_yolo_model_task(model_name: str) -> str:
             return parts[2]
         return 'unknown'
 
-    community_models = get_community_models()
-    if community_models:
-        if model_name in community_models or model_name in community_models.values():
-            return 'classify'
-
-    filename = model_name.split('/')[-1].split('\\')[-1].lower()
+    filename =model_name.split('/')[-1].split('\\')[-1].lower()
 
     if '-cls' in filename:
         return 'classify'

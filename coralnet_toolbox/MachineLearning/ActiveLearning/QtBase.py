@@ -83,7 +83,6 @@ from coralnet_toolbox.Common.QtThresholdsWidget import ThresholdsWidget
 from coralnet_toolbox.Features.FeatureMapCodec import load_feature_vector
 
 from coralnet_toolbox.MachineLearning import InPlaceTraining
-from coralnet_toolbox.MachineLearning.Community.cfg import get_available_configs
 from coralnet_toolbox.MachineLearning.TrainModel.QtBase import TrainModelWorker
 from coralnet_toolbox.MachineLearning.PUDetection import (IGNORE_CONF, IGNORE_CONF_MAX,
                                                          IGNORE_CONF_MIN, PU_MODELS_NOTE,
@@ -91,8 +90,7 @@ from coralnet_toolbox.MachineLearning.PUDetection import (IGNORE_CONF, IGNORE_CO
                                                          pu_alternative,
                                                          pu_supported_model,
                                                          pu_unavailable_tooltip)
-from coralnet_toolbox.MachineLearning.TrainModel.QtDetect import STANDARD_MODELS as DETECT_MODELS
-from coralnet_toolbox.MachineLearning.TrainModel.QtSegment import STANDARD_MODELS as SEGMENT_MODELS
+from coralnet_toolbox.MachineLearning.TrainModel.ModelCatalog import ModelPicker, default_model, model_families
 
 from coralnet_toolbox.Rasters.extracted_images import has_active_set
 from coralnet_toolbox.Results.ResultsProcessor import ResultsProcessor
@@ -209,26 +207,17 @@ def warm_start_schedule(params, class_count):
     overrides['lr0'] = lr0 * WARM_START_LR_SCALE
     return overrides
 
-# Exactly what the Train Model dialog offers, imported rather than restated. The
-# short hand-written list this replaced had drifted: it contained 'yolo8n.pt',
-# which is not a model Ultralytics can resolve -- the real name is 'yolov8n.pt' --
-# so choosing it failed a round with a FileNotFoundError before training began.
-MODELS = {
-    'detect': DETECT_MODELS,
-    'segment': SEGMENT_MODELS,
-}
+# The models come from ModelCatalog, the same families and defaults the Train
+# Model dialog offers, rather than a list kept here. A hand-written list here once
+# drifted: it contained 'yolo8n.pt', which is not a model Ultralytics can resolve
+# -- the real name is 'yolov8n.pt' -- so choosing it failed a round with a
+# FileNotFoundError before training began. The defaults are nano models: rounds
+# are only useful if they are cheap enough to run often.
 
-# Small models by default. Rounds are only useful if they are cheap enough to run
-# often; a large model turns a five-minute loop into an afternoon.
 # Appended to a dropdown entry PU refuses, so the cost of choosing it is
 # visible before it is chosen rather than after. chosen_model() strips it back
 # off, and nothing but the dropdown text ever carries it.
 PU_SUFFIX = "  (no PU)"
-
-DEFAULT_MODEL = {
-    'detect': 'yolo11n.pt',
-    'segment': 'yolo11n-seg.pt',
-}
 
 # Ultralytics cache modes, as the Train Model dialog presents them.
 CACHE_OPTIONS = (
@@ -886,16 +875,18 @@ class Base(QDialog):
 
         # One editable combo plus Browse, rather than the Train Model dialog's two
         # tabs. Two fields where only one is visible is what let a stale path win
-        # over the dropdown there; one field cannot disagree with itself.
-        self.model_combo = QComboBox()
-        self.model_combo.setEditable(True)
+        # over the dropdown there; one field cannot disagree with itself. Browse
+        # adds to the same list, under Your Model.
+        self.model_picker = ModelPicker(self)
+        self.model_combo = self.model_picker.model_combo
         self.model_combo.setToolTip(
-            "The same list the Train Model dialog offers, including any community\n"
-            "models. A nano model is the default on purpose: rounds are only useful\n"
-            "if they are cheap enough to run often. Reach for a larger one once the\n"
-            "labels have settled.\n"
-            "The box is editable, and Browse fills it with a model of your own --\n"
-            "your file is only ever read, never trained over.")
+            "The same models the Train Model dialog offers, grouped by family.\n"
+            "Families marked (no PU) cannot train with PU Dataset and are listed last.\n"
+            "A nano model is the default on purpose: rounds are only useful if they\n"
+            "are cheap enough to run often. Reach for a larger one once the labels\n"
+            "have settled.\n"
+            "The box is editable, and Browse adds a model of your own under\n"
+            "Your Model. Your file is only ever read, never trained over.")
 
         self.browse_model_button = QPushButton("Browse...")
         self.browse_model_button.setToolTip(
@@ -1108,6 +1099,7 @@ class Base(QDialog):
         self.freeze_layers_spinbox.setToolTip(
             "Fraction of encoder layers to freeze for transfer learning.\n"
             "0.0 trains everything, 0.5 freezes the bottom half, 1.0 freezes all.\n"
+            "A DINOv2 backbone is always frozen, so this is ignored for it.\n"
             "Worth raising when a round has very few annotations to learn from.")
         layout.addRow("Freeze Layers:", self.freeze_layers_spinbox)
 
@@ -1828,46 +1820,34 @@ class Base(QDialog):
         self.layout.addLayout(button_layout)
 
     def load_models(self):
-        """Fill the model combo with the same models the Train Model dialog offers.
+        """Offer the same model families the Train Model dialog does.
 
-        For detect, the ones PU can run come first and the ones it refuses come
-        last, marked. Nothing is removed. PU is the default on one setting, not a
-        requirement of the dialog, and the combo is editable while Browse writes
-        straight into it, so a hidden family would still be reachable by typing
-        or browsing. Ordering plus a label says the same thing without taking
-        the model away, and without this dialog keeping its own model list to
-        drift against the shared one.
+        Where PU is offered, the families it can run come first and the ones it
+        refuses come last, marked, along with each of their models. Nothing is
+        removed. PU is the default on one setting, not a requirement of the
+        dialog, and the Model box is editable while Browse adds to it, so a
+        hidden family would still be reachable by typing or browsing. Ordering
+        plus a label says the same thing without taking the model away, and
+        without this dialog keeping its own model list to drift against the
+        shared one.
         """
-        self.model_combo.clear()
-        standard = list(MODELS.get(self.task, []))
-        community = list(get_available_configs(task=self.task) or [])
+        families = model_families(self.task)
+        mark = None
 
         # Only a task with a PU trainer offers PU at all, so only those get
         # reordered -- elsewhere the suffix would mark models for a control the
         # dialog never shows.
-        if self.task not in PU_TRAINERS:
-            capable, refused = standard + community, []
-        else:
-            capable = [m for m in standard + community if pu_supported_model(m)[0]]
-            refused = [m for m in standard + community if not pu_supported_model(m)[0]]
+        if self.task in PU_TRAINERS:
+            def refused(model):
+                return not pu_supported_model(model)[0]
 
-        standard_capable = [m for m in capable if m in set(standard)]
-        community_capable = [m for m in capable if m not in set(standard)]
+            def mark(model):
+                return PU_SUFFIX if refused(model) else ""
 
-        for model in standard_capable:
-            self.model_combo.addItem(model, model)
-        for group in (community_capable, refused):
-            if group:
-                self.model_combo.insertSeparator(self.model_combo.count())
-                for model in group:
-                    suffix = PU_SUFFIX if model in set(refused) else ""
-                    self.model_combo.addItem(model + suffix, model)
+            capable = {f: ms for f, ms in families.items() if not all(refused(m) for m in ms)}
+            families = {**capable, **{f: ms for f, ms in families.items() if f not in capable}}
 
-        default = DEFAULT_MODEL.get(self.task)
-        if default:
-            index = self.model_combo.findData(default)
-            if index >= 0:
-                self.model_combo.setCurrentIndex(index)
+        self.model_picker.set_families(families, default=default_model(self.task), mark=mark)
 
     def chosen_model(self):
         """The model name or path the dialog is set to, without the PU marker.
@@ -1877,13 +1857,7 @@ class Base(QDialog):
         of model_combo.currentText(). A typed or browsed path comes back as it
         was entered.
         """
-        text = self.model_combo.currentText().strip()
-
-        index = self.model_combo.currentIndex()
-        if index >= 0 and self.model_combo.itemText(index) == text:
-            data = self.model_combo.itemData(index)
-            if data:
-                return data
+        text = self.model_picker.current()
 
         # Pasted or typed with the marker still attached
         if text.endswith(PU_SUFFIX):
@@ -3000,7 +2974,7 @@ class Base(QDialog):
             QMessageBox.warning(self, "Cannot Use That Model", reason)
             return
 
-        self.model_combo.setEditText(self.protect_chosen_model(os.path.abspath(path)))
+        self.model_picker.add_your_model(self.protect_chosen_model(os.path.abspath(path)))
         self.refresh_dataset(quiet=False)
 
     def validate_base_model(self, path):

@@ -122,8 +122,11 @@ cuda-version = "12.9.*"
 # prompts) and takes min_mask_region_area, crop-layer prompts land in the right
 # place, set_image runs without autograd, and SAM 3 masks threshold correctly.
 # The SAM Generator dialog passes generate() keywords older versions reject.
+# 8.4.216 and up: semantic training is several times faster under Ultralytics'
+# default deterministic=True. Up to 8.4.171 the Dice loss's boolean-index backward
+# ran torch's deterministic index_put, most of each step (upstream PRs #27027, #27154, #27301).
 # Kept in step with requirements.txt.
-ultralytics = ">=8.4.153,<8.5"
+ultralytics = ">=8.4.216,<8.5"
 open-clip-torch = ">=2.20.0,<4"
 transformers = ">=5.0.0,<6"
 scikit-learn = "*"

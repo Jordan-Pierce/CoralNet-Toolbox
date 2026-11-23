@@ -1,6 +1,9 @@
 import os
 import glob
 
+# Registers DINOBackbone with Ultralytics, so the dinov2_*.yaml configs parse
+from coralnet_toolbox import dino  # noqa: F401
+
 
 # ----------------------------------------------------------------------------------------------------------------------
 # Constants

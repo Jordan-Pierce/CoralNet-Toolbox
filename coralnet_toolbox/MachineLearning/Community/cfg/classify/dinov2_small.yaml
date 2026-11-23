@@ -1,0 +1,14 @@
+# Metadata
+author: CoralNet-Toolbox
+task: classify
+keywords: [transformer, dinov2, frozen]
+description: Frozen DINOv2-Small (facebook/dinov2-small) with a Classify head on CLS + mean patch token. DINO is never trained.
+
+# Model
+nc: 1
+backbone:
+  # [from, repeats, module, args]
+  - [-1, 1, DINOBackbone, [facebook/dinov2-small, [11], True]]  # 0 [image, (B, 768, 1, 1)]
+  - [0, 1, Index, [768, 1]]                                   # 1 CLS ‖ mean patch token
+head:
+  - [-1, 1, Classify, [nc]]

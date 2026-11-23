@@ -1,0 +1,27 @@
+# Metadata
+author: CoralNet-Toolbox
+task: semantic
+keywords: [transformer, dinov2, frozen]
+description: Frozen DINOv2-Small (facebook/dinov2-small) blocks 3/6/9/12, a small CNN detail branch on the image for edges, and a SemanticSegment head. DINO is never trained.
+
+# Model
+nc: 1
+strides: [8, 16]
+backbone:
+  # [from, repeats, module, args]
+  - [-1, 1, DINOBackbone, [facebook/dinov2-small, [2, 5, 8, 11]]]  # 0 [image, 4 x (B, 384, H/16, W/16)]
+  - [0, 1, Index, [3, 0]]                   # 1  image
+  - [0, 1, Index, [384, 1]]                  # 2  block 3
+  - [0, 1, Index, [384, 2]]                  # 3  block 6
+  - [0, 1, Index, [384, 3]]                  # 4  block 9
+  - [0, 1, Index, [384, 4]]                  # 5  block 12
+  - [[2, 3, 4, 5], 1, Concat, [1]]          # 6  (B, 1536, H/16, W/16)
+  - [-1, 1, Conv, [256, 1, 1]]              # 7  P4/16
+head:
+  - [1, 1, Conv, [32, 3, 2]]                # 8  detail branch, s2
+  - [-1, 1, Conv, [64, 3, 2]]               # 9  s4
+  - [-1, 1, Conv, [64, 3, 2]]               # 10 s8
+  - [7, 1, ConvTranspose, [128, 2, 2]]      # 11 DINO up to s8
+  - [[-1, 10], 1, Concat, [1]]              # 12
+  - [-1, 2, C3k2, [128, True]]              # 13 P3/8
+  - [[13, 7], 1, SemanticSegment, [nc]]     # 14
